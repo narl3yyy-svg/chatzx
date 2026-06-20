@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "chatxz"
+version = "0.1.0"
+description = "Decentralized chat over Reticulum Network Stack"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = [
+    "rns>=0.8.0",
+]
+optional-dependencies = {
+    "voice": ["pyaudio"],
+    "tui": ["textual>=0.52.0"],
+    "full": ["pyaudio", "textual>=0.52.0"],
+}
