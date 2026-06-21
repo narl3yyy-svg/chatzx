@@ -144,7 +144,7 @@ body {
 /* Dialog */
 #connect-dialog, #settings-dialog, #save-contact-dialog {
   display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,.6); z-index: 100; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.6); z-index: 1000; align-items: center; justify-content: center;
 }
 #connect-dialog.open, #settings-dialog.open, #save-contact-dialog.open { display: flex; }
 .dialog {
@@ -472,8 +472,11 @@ function showContextMenu(e, hash) {
   menu.style.top = e.clientY + 'px';
 }
 
-document.addEventListener('click', () => {
-  document.getElementById('context-menu').classList.remove('open');
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('context-menu');
+  if (!menu.contains(e.target)) {
+    menu.classList.remove('open');
+  }
 });
 
 function ctxConnect() {

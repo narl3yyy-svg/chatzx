@@ -342,9 +342,8 @@ class MessagingBackend:
             packet = RNS.Packet(self.active_link, chat_msg.to_json().encode("utf-8"))
             packet.send()
 
-            with open(file_path, "rb") as f:
-                data = f.read()
-            resource = RNS.Resource(data, self.active_link,
+            f = open(file_path, "rb")
+            resource = RNS.Resource(f, self.active_link,
                                     callback=self._resource_send_callback(fname),
                                     auto_compress=False)
             print(f"[messaging] Sent file: {fname} ({fsize} bytes)")
