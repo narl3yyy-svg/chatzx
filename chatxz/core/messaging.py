@@ -175,30 +175,31 @@ class MessagingBackend:
     def connect_to(self, destination_hash_hex):
         try:
             clean = destination_hash_hex.replace("<", "").replace(">", "").strip()
-            dest_hash = bytes.fromhex(clean)
+            dest_hash = bytes.fromhex(clean.replace(":", ""))
         except:
             return False
 
+        try:
+            known_identity = RNS.Identity.recall(dest_hash)
+            if known_identity is None:
+                RNS.log(f"[connect] No known identity for {destination_hash_hex}, requesting...")
+                RNS.Identity.request(dest_hash)
+                time.sleep(1.0)
+                known_identity = RNS.Identity.recall(dest_hash)
+                if known_identity is None:
+                    RNS.log(f"[connect] Could not recall identity for {destination_hash_hex}")
+                    return False
+        except Exception as e:
+            RNS.log(f"[connect] Identity recall failed: {e}")
+            return False
+
         destination = RNS.Destination(
-            None,
+            known_identity,
             RNS.Destination.OUT,
             RNS.Destination.SINGLE,
             APP_NAME,
             "messages"
         )
-
-        try:
-            known_identity = RNS.Identity.recall(dest_hash)
-            if known_identity is None:
-                RNS.log(f"No known identity for {destination_hash_hex}, requesting...")
-                RNS.Identity.request(dest_hash)
-                time.sleep(0.5)
-                known_identity = RNS.Identity.recall(dest_hash)
-                if known_identity is None:
-                    return False
-            destination.set_identity(known_identity)
-        except:
-            return False
 
         try:
             link = RNS.Link(destination)
