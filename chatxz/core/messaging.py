@@ -224,8 +224,8 @@ class MessagingBackend:
     def _send_peer_info(self, link):
         if self.my_ip:
             try:
-                info = json.dumps({"type": "__peer_info", "ip": self.my_ip, "port": self.my_port}).encode("utf-8")
-                packet = RNS.Packet(link, info)
+                msg = ChatMessage("__peer_info", json.dumps({"ip": self.my_ip, "port": self.my_port}))
+                packet = RNS.Packet(link, msg.to_json().encode("utf-8"))
                 packet.send()
             except:
                 pass
