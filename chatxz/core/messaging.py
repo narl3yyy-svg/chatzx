@@ -202,10 +202,14 @@ class MessagingBackend:
         )
 
         try:
+            dest_hash_check = RNS.hexrep(destination.hash)
+            RNS.log(f"[connect] Created destination {dest_hash_check[:12]}...")
             link = RNS.Link(destination)
             link.set_link_established_callback(self._outgoing_link_callback(link))
+            RNS.log(f"[connect] Link initiated, waiting for establishment...")
             return True
-        except:
+        except Exception as e:
+            RNS.log(f"[connect] Link failed: {e}")
             return False
 
     def _outgoing_link_callback(self, link):
