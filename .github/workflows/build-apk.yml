@@ -18,6 +18,8 @@ jobs:
         run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
       - uses: actions/setup-python@v5
         with: { python-version: '3.13' }
+      - name: Sync Python sources into Android bundle
+        run: bash scripts/sync-android.sh
       - name: Build APK
         run: cd android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon
       - name: Rename
