@@ -72,6 +72,7 @@ class MessagingBackend:
         self.active_link = None
         self.running = False
         self._announce_thread = None
+        self._pending_files = {}
 
     def start(self):
         self.destination = RNS.Destination(
@@ -124,18 +125,32 @@ class MessagingBackend:
     def _get_remote_hash(self, link):
         try:
             ident = link.get_remote_identity()
-            if ident:
+            if ident and hasattr(ident, 'hash'):
                 return RNS.hexrep(ident.hash)
+        except:
+            pass
+        try:
+            if hasattr(link, 'destination') and link.destination:
+                return RNS.hexrep(link.destination.hash)
         except:
             pass
         return "unknown"
 
-    def _link_callback(self, link):
-        print(f"[messaging] Incoming link established: {link.link_id}")
-        remote_hash = self._get_remote_hash(link)
+    def _setup_link(self, link):
         self.links[link.link_id] = link
         link.set_link_closed_callback(self._link_closed(link))
         link.set_packet_callback(self._packet_callback(link))
+        try:
+            link.set_resource_strategy(RNS.Link.ACCEPT_ALL)
+            link.set_resource_concluded_callback(self._resource_concluded(link))
+            print(f"[messaging] Resource strategy set to ACCEPT_ALL for link {link.link_id.hex()[:12]}")
+        except Exception as e:
+            print(f"[messaging] Failed to set resource strategy: {e}")
+
+    def _link_callback(self, link):
+        print(f"[messaging] Incoming link established: {link.link_id.hex()[:12]}")
+        remote_hash = self._get_remote_hash(link)
+        self._setup_link(link)
 
         if self.on_message:
             system_msg = ChatMessage("system", f"Link established with {remote_hash}")
@@ -157,10 +172,11 @@ class MessagingBackend:
                 chat_msg = ChatMessage.from_json(message.decode("utf-8"))
                 remote_hash = self._get_remote_hash(link)
                 chat_msg.sender = remote_hash
-                print(f"[messaging] Received {chat_msg.msg_type} from {remote_hash[:12]}...")
+                print(f"[messaging] Received {chat_msg.msg_type} from {remote_hash[:16]}...")
 
                 if chat_msg.msg_type in (MESSAGE_TYPE_FILE, MESSAGE_TYPE_IMAGE, MESSAGE_TYPE_VOICE):
-                    self._receive_file_resource(link, chat_msg, remote_hash)
+                    self._pending_files[link.link_id] = chat_msg
+                    print(f"[messaging] Waiting for resource data for {chat_msg.file_name}...")
                 elif self.on_message:
                     self.on_message(chat_msg, remote_hash)
             except Exception as e:
@@ -172,32 +188,51 @@ class MessagingBackend:
                     )
         return callback
 
-    def _receive_file_resource(self, link, chat_msg, remote_hash):
-        def resource_callback(resource):
+    def _resource_concluded(self, link):
+        def callback(resource):
             try:
-                ext_map = {
-                    MESSAGE_TYPE_IMAGE: ".png",
-                    MESSAGE_TYPE_VOICE: ".opus",
-                    MESSAGE_TYPE_FILE: ".file",
-                }
-                ext = ext_map.get(chat_msg.msg_type, ".file")
-                receive_dir = os.path.join(self.config_dir, "received")
-                os.makedirs(receive_dir, exist_ok=True)
-                fname = chat_msg.file_name or f"{chat_msg.msg_type}_{int(time.time())}{ext}"
-                save_path = os.path.join(receive_dir, fname)
+                print(f"[messaging] Resource concluded, status={resource.status}")
+                if resource.status == RNS.Resource.COMPLETE:
+                    chat_msg = self._pending_files.pop(link.link_id, None)
+                    if chat_msg is None:
+                        chat_msg = ChatMessage(MESSAGE_TYPE_FILE, "", file_name="unknown")
 
-                if resource.write_to_file(save_path):
+                    receive_dir = os.path.join(self.config_dir, "received")
+                    os.makedirs(receive_dir, exist_ok=True)
+                    fname = chat_msg.file_name or f"file_{int(time.time())}"
+                    save_path = os.path.join(receive_dir, fname)
+
+                    if hasattr(resource, 'data') and resource.data is not None:
+                        if hasattr(resource.data, 'read'):
+                            data = resource.data.read()
+                        else:
+                            data = resource.data
+                        with open(save_path, "wb") as f:
+                            f.write(data)
+                        print(f"[messaging] File saved to {save_path}")
+                    elif hasattr(resource, 'storagepath') and os.path.exists(resource.storagepath):
+                        import shutil
+                        shutil.copy2(resource.storagepath, save_path)
+                        print(f"[messaging] File copied from storage to {save_path}")
+                    else:
+                        print(f"[messaging] No data available in resource")
+                        return
+
                     chat_msg.content = save_path
-                    chat_msg.file_name = fname
+                    remote_hash = self._get_remote_hash(link)
                     if self.on_message:
                         self.on_message(chat_msg, remote_hash)
+                else:
+                    print(f"[messaging] Resource transfer failed (status={resource.status})")
+                    chat_msg = self._pending_files.pop(link.link_id, None)
+                    if chat_msg and self.on_message:
+                        self.on_message(
+                            ChatMessage("system", f"File transfer failed: {chat_msg.file_name}"),
+                            self._get_remote_hash(link)
+                        )
             except Exception as e:
-                if self.on_message:
-                    self.on_message(
-                        ChatMessage("system", f"File receive failed: {e}"),
-                        remote_hash
-                    )
-        RNS.Resource.load_resource(link, resource_callback)
+                print(f"[messaging] Resource concluded error: {e}")
+        return callback
 
     def connect_to(self, destination_hash_hex):
         try:
@@ -273,10 +308,8 @@ class MessagingBackend:
     def _outgoing_link_callback(self, link):
         def callback(link):
             remote_hash = self._get_remote_hash(link)
-            print(f"[messaging] Outgoing link established: {link.link_id} -> {remote_hash[:12]}...")
-            self.links[link.link_id] = link
-            link.set_link_closed_callback(self._link_closed(link))
-            link.set_packet_callback(self._packet_callback(link))
+            print(f"[messaging] Outgoing link established: {link.link_id.hex()[:12]} -> {remote_hash[:16]}...")
+            self._setup_link(link)
             self.active_link = link
             if self.on_message:
                 self.on_message(
@@ -308,17 +341,19 @@ class MessagingBackend:
         try:
             packet = RNS.Packet(self.active_link, chat_msg.to_json().encode("utf-8"))
             packet.send()
+
             with open(file_path, "rb") as f:
-                resource = RNS.Resource(f.read(), self.active_link,
-                                        callback=self._resource_send_callback(file_path),
-                                        auto_compress=False)
+                data = f.read()
+            resource = RNS.Resource(data, self.active_link,
+                                    callback=self._resource_send_callback(fname),
+                                    auto_compress=False)
             print(f"[messaging] Sent file: {fname} ({fsize} bytes)")
             return chat_msg
         except Exception as e:
             print(f"[messaging] File send failed: {e}")
             return False
 
-    def _resource_send_callback(self, file_path):
+    def _resource_send_callback(self, fname):
         def callback(resource):
-            pass
+            print(f"[messaging] File transfer complete: {fname}")
         return callback

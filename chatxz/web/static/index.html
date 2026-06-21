@@ -142,11 +142,11 @@ body {
 #send-btn:hover { opacity: .8; }
 
 /* Dialog */
-#connect-dialog, #settings-dialog {
+#connect-dialog, #settings-dialog, #save-contact-dialog {
   display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
   background: rgba(0,0,0,.6); z-index: 100; align-items: center; justify-content: center;
 }
-#connect-dialog.open, #settings-dialog.open { display: flex; }
+#connect-dialog.open, #settings-dialog.open, #save-contact-dialog.open { display: flex; }
 .dialog {
   background: var(--surface); border-radius: 12px; padding: 24px;
   width: 400px; max-width: 90vw;
@@ -267,7 +267,21 @@ body {
 <!-- Context menu -->
 <div id="context-menu">
   <div class="ctx-item" onclick="ctxConnect()">Connect</div>
+  <div class="ctx-item" onclick="ctxSaveContact()">Save as Contact</div>
   <div class="ctx-item danger" onclick="ctxDelete()">Delete</div>
+</div>
+
+<!-- Save contact dialog -->
+<div id="save-contact-dialog">
+  <div class="dialog">
+    <h2>Save Contact</h2>
+    <input id="save-contact-hash" readonly style="font-size:11px;color:var(--text2)">
+    <input id="save-contact-name" placeholder="Contact name...">
+    <div class="dlg-btn-row">
+      <button class="dlg-btn secondary" onclick="closeSaveContact()">Cancel</button>
+      <button class="dlg-btn primary" onclick="doSaveContact()">Save</button>
+    </div>
+  </div>
 </div>
 
 <!-- Connect dialog -->
@@ -465,6 +479,35 @@ document.addEventListener('click', () => {
 function ctxConnect() {
   if (ctxHash) connectTo(ctxHash);
   document.getElementById('context-menu').classList.remove('open');
+}
+
+function ctxSaveContact() {
+  if (ctxHash) {
+    document.getElementById('save-contact-hash').value = ctxHash;
+    document.getElementById('save-contact-name').value = '';
+    document.getElementById('save-contact-dialog').classList.add('open');
+    document.getElementById('save-contact-name').focus();
+  }
+  document.getElementById('context-menu').classList.remove('open');
+}
+
+function closeSaveContact() {
+  document.getElementById('save-contact-dialog').classList.remove('open');
+}
+
+function doSaveContact() {
+  const hash = document.getElementById('save-contact-hash').value;
+  const name = document.getElementById('save-contact-name').value.trim();
+  if (!hash) return;
+  fetch('/api/contacts', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({hash, name: name || hash.substring(0, 12)})
+  }).then(() => {
+    toast('Contact saved');
+    closeSaveContact();
+    fetchIdentity();
+  });
 }
 
 function ctxDelete() {
