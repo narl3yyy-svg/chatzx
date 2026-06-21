@@ -66,31 +66,19 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        webView.loadDataWithBaseURL(null,
+            "<html><body style='background:#1a1a2e;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:sans-serif;font-size:18px'>Starting chatxz...</body></html>",
+            "text/html", "UTF-8", null);
+
         startPythonServer();
     }
 
     private void startPythonServer() {
-        try {
-            if (!Python.isStarted()) {
-                Python.start(new AndroidPlatform(getApplicationContext()));
-            }
-        } catch (Exception e) {
-            String msg = e.getMessage();
-            if (msg == null) msg = "Python.start() failed: null message";
-            String stack = android.util.Log.getStackTraceString(e);
-            final String fullError = msg + "\n\n" + stack;
-            runOnUiThread(() -> {
-                new AlertDialog.Builder(this)
-                    .setTitle("Python Start Error")
-                    .setMessage(fullError)
-                    .setPositiveButton("OK", null)
-                    .show();
-            });
-            return;
-        }
-
         new Thread(() -> {
             try {
+                if (!Python.isStarted()) {
+                    Python.start(new AndroidPlatform(getApplicationContext()));
+                }
                 Python python = Python.getInstance();
                 PyObject module = python.getModule("main");
                 PyObject result = module.callAttr("start_server");
