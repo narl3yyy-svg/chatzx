@@ -40,12 +40,16 @@ android {
 
 chaquopy {
     defaultConfig {
-        buildPython = "/usr/bin/python3"
+        buildPython("/usr/bin/python3")
         pip {
             install("rns")
             install("aiohttp")
         }
-        src("../../chatxz")
+    }
+    sourceSets {
+        getByName("main") {
+            srcDir("../../chatxz")
+        }
     }
 }
 

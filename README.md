@@ -14,7 +14,8 @@ Send text, emoji, files and folders of any size, images/screenshots (viewable in
 - **Emoji picker** — full Unicode emoji support
 - **Drag & drop** — drag files onto the page to upload
 - **Clipboard paste** — paste screenshots from clipboard
-- **Message queue** — messages queued when offline, auto-drained on connection
+- **Long text support** — messages exceeding the link MTU are automatically sent as file resources and reconstructed on the receiving end
+- **Copy button** — hover any text/emoji message to copy its content
 - **Delivery receipts** — sent/delivered/read indicators on messages
 - **Chat history** — persisted locally, configurable retention (1d / 1w / 1m / 6m / 12m / never / on restart / on close), clear anytime
 - **Contacts** — save peers with names, right-click sidebar panel
@@ -82,7 +83,7 @@ The web interface runs at **http://localhost:8742** (or your LAN IP when using `
 
 1. **Share your identity hash** — shown at the top of the sidebar and on server startup (e.g. `ab12cd34...`). Give this to your friend.
 2. **Get their hash** — they share theirs with you.
-3. **Click "+ Add"** in the sidebar, paste their hash, optionally save as a contact.
+3. **Connect panel** — click the sidebar peer icon, enter their hash, optionally save as a contact.
 4. **Click the contact** to connect. A green "Link: active" indicator appears.
 5. **Announce** — click "Announce" to broadcast your presence on the LAN. Others will appear under "Discovered on LAN".
 6. **Right-click** any contact or discovered peer to open the action panel (Connect, Save Contact, Delete).
@@ -104,23 +105,23 @@ Messages show status indicators:
 
 ### Settings
 
-Click ⚙ in the sidebar header:
+Click ⚙ in the sidebar header (toggles between Contacts and Settings view):
 
 | Setting | Description |
 |---------|-------------|
 | Display Name | Shown in LAN announces |
-| History Retention | Auto-delete by time, on restart, or on browser close |
+| History Retention | Auto-delete by time (1d/1w/1m/6m/12m/never/on restart/on close) |
 | Clear History Now | Immediately delete all chat history |
-| Save Received Files To | Directory where incoming files are saved |
-| Regenerate Identity | Create a new keypair (old key is deleted) |
+| Save Received Files To | Directory where incoming files are saved (editable with browse button) |
+| Regenerate Identity | Create a new keypair (old key is deleted, no backup) |
 | Restart Server | Restart the web server from the GUI |
 
 ### Sidebar Indicators
 
 - **WS dot** — WebSocket connection to the server (green = connected, orange = connecting, red = disconnected)
 - **Link dot** — Reticulum link to peer (green = active, gray = inactive)
-- **🌡** — Live CPU temperature (updates every 5 seconds)
-- **Peers** — Discovered LAN peers + connected peer count
+- **Peers** — Discovered LAN peers + connected peer count (e.g. "2 peers (1 connected)")
+- **🌡** — Live CPU temperature (updates every 5s, cross-distro: thermal_zone → hwmon → sensors → acpi)
 
 ## Android APK
 
@@ -128,12 +129,17 @@ Download the latest `chatxz.apk` from [Releases](https://github.com/narl3yyy-svg
 
 The APK bundles Python 3.13, RNS, aiohttp, and the chatxz web server. On launch it starts the server and opens a WebView — works offline, no Termux needed. CPU architecture: arm64-v8a (most modern Android phones).
 
-### Build from Source
+The APK is automatically built by GitHub Actions when a tag starting with `v` is pushed. Builds can be monitored at [Actions → Build Android APK](https://github.com/narl3yyy-svg/chatzx/actions/workflows/build-apk.yml).
+
+### Build from Source (requires SDK 34, JDK 17, Gradle 8.x)
 
 ```bash
 cd android
 ./gradlew assembleDebug
 # Output: android/app/build/outputs/apk/debug/app-debug.apk
+
+# Release build (signed)
+./gradlew assembleRelease
 ```
 
 Requires: Android SDK 34, JDK 17, Gradle 8.x.
