@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g. 0.3.1). Leave empty to use build.gradle + build number.'
+        description: 'Release version (e.g. 0.3.3). Leave empty to use build.gradle versionName + build number.'
         required: false
         default: ''
 
@@ -35,6 +35,15 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Read app version from build.gradle.kts
+        id: appver
+        run: |
+          VERSION_NAME=$(grep 'versionName' android/app/build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          VERSION_CODE=$(grep 'versionCode' android/app/build.gradle.kts | head -1 | sed -E 's/.*=\s*([0-9]+).*/\1/')
+          echo "name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
+          echo "code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
+          echo "Gradle version: ${VERSION_NAME} (${VERSION_CODE})"
+
       - name: Sync Python sources into Android bundle
         run: bash scripts/sync-android.sh
 
@@ -48,9 +57,10 @@ jobs:
             INPUT="${{ github.event.inputs.version }}"
             if [ -n "$INPUT" ]; then
               VERSION="${INPUT#v}"
-            else
-              VERSION=$(grep 'versionName' android/app/build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-              VERSION="${VERSION}-build.${GITHUB_RUN_NUMBER}"
+            fi
+            TAG="v${VERSION}"
+          else
+              VERSION="${{ steps.appver.outputs.name }}-build.${GITHUB_RUN_NUMBER}"
             fi
             TAG="v${VERSION}"
           fi
@@ -79,10 +89,20 @@ jobs:
           body: |
             Android APK (arm64-v8a) for chatxz.
 
-            - **Version:** ${{ steps.version.outputs.version }}
-            - **Build:** #${{ github.run_number }}
-            - **Commit:** ${{ github.sha }}
+            | Field | Value |
+            |-------|-------|
+            | Version | ${{ steps.version.outputs.version }} |
+            | Gradle versionName | ${{ steps.appver.outputs.name }} |
+            | Gradle versionCode | ${{ steps.appver.outputs.code }} |
+            | Build | #${{ github.run_number }} |
+            | Commit | `${{ github.sha }}` |
 
-            Download `${{ steps.version.outputs.apk }}` below and install on your device.
+            **Install:** download `${{ steps.version.outputs.apk }}` below and sideload on your device.
+
+            **Recent Android fixes (0.3.x):**
+            - Mobile sidebar overlay z-index fixed (menu no longer blurred; sidebar stays interactive)
+            - LAN announces use subnet-directed UDP broadcast on Android
+            - Wi-Fi multicast lock held while the app runs
+            - Chat starts disconnected after server restart; history loads per peer on connect
           files: ${{ steps.version.outputs.apk }}
           make_latest: true
