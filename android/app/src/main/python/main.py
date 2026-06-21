@@ -32,10 +32,43 @@ def start_server():
 
     app = web.Application()
 
-    INLINE_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>chatxz</title><style>body{background:#1a1a2e;color:#eee;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:12px;text-align:center;padding:20px}h1{color:#e94560;font-size:24px}p{color:#aaa;font-size:14px}</style></head><body><h1>chatxz</h1><p>Starting server...</p><p style="font-size:12px;color:#666">If this page persists, check python_crash_log.txt</p></body></html>"""
+    INLINE_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>chatxz</title><style>body{background:#1a1a2e;color:#eee;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:12px;text-align:center;padding:20px}h1{color:#e94560;font-size:24px}p{color:#aaa;font-size:14px}</style></head><body><h1>chatxz</h1><p id="msg">Starting...</p><pre id="diag" style="font-size:11px;color:#888;text-align:left;max-width:90vw;overflow:auto"></pre><script>fetch('/api/diag').then(r=>r.json()).then(d=>{document.getElementById('msg').textContent=d.msg||'Error';var pre=document.getElementById('diag');pre.textContent=JSON.stringify(d,null,2)}).catch(e=>{document.getElementById('diag').textContent=String(e)})</script></body></html>"""
+
+    async def diag(request):
+        info = {"msg": "Server running", "here": HERE, "static_tried": []}
+        for sp in [STATIC, os.path.join(HERE, "static"), "/data/data/com.chatzx.android/files/python/chatxz/web/static"]:
+            idx = os.path.join(sp, "index.html")
+            info["static_tried"].append({"path": sp, "exists": os.path.isdir(sp), "index_exists": os.path.isfile(idx)})
+        try:
+            info["here_listing"] = os.listdir(HERE)[:20]
+        except:
+            info["here_listing"] = "unlistable"
+        try:
+            py_dir = os.path.dirname(HERE)
+            info["py_dir"] = py_dir
+            info["py_dir_listing"] = os.listdir(py_dir)[:20]
+        except:
+            pass
+        try:
+            info["cwd"] = os.getcwd()
+            info["cwd_listing"] = os.listdir(".")[:20]
+        except:
+            pass
+        try:
+            import zipfile, sys
+            for p in sys.path:
+                if "base.apk" in p or "chatxz" in p:
+                    try:
+                        with zipfile.ZipFile(p) as z:
+                            py_files = [n for n in z.namelist() if "chatxz" in n or "main.py" in n]
+                            info["apk_python_files"] = py_files[:50]
+                    except:
+                        pass
+        except:
+            pass
+        return web.json_response(info)
 
     async def index(request):
-        # Try multiple possible locations for index.html
         for sp in [STATIC, os.path.join(HERE, "static"), "/data/data/com.chatzx.android/files/python/chatxz/web/static"]:
             idx_path = os.path.join(sp, "index.html")
             if os.path.isfile(idx_path):
@@ -152,6 +185,7 @@ def start_server():
     app.router.add_get("/api/temperature", temperature)
     app.router.add_get("/api/cpu", cpu)
     app.router.add_get("/api/health", health)
+    app.router.add_get("/api/diag", diag)
 
     # Stub endpoints so frontend JS doesn't break
     async def json_stub(request):
