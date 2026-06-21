@@ -28,18 +28,19 @@ Send text, emoji, files of any size, images/screenshots (viewable inline), and v
 
 ## Quick Start (Linux)
 
-### Arch Linux
+### Clone & run
 ```bash
-bash scripts/install-arch.sh
+git clone https://github.com/narl3yyy-svg/chatzx.git
+cd chatzx
+bash scripts/install-arch.sh    # Arch Linux
+# or
+bash scripts/install-debian.sh  # Ubuntu / Debian
 ```
 
-### Ubuntu / Debian
+### Manual install
 ```bash
-bash scripts/install-debian.sh
-```
-
-### Manual
-```bash
+git clone https://github.com/narl3yyy-svg/chatzx.git
+cd chatzx
 pip install rns
 pip install .
 ```
@@ -49,12 +50,17 @@ pip install .
 ### Web UI (recommended)
 
 ```bash
-# Start the web server (open http://localhost:8742 in your browser)
+# Development mode (hot-reload, verbose logging)
+./run.sh web --share --verbose
+
+# Production
 chatzx-web
 
-# Share with LAN
+# Share with LAN (auto-discovers peers on the same network)
 chatzx-web --share
 ```
+
+The web interface runs at **http://localhost:8742**. Share your identity hash (shown on startup) with friends so they can connect. Click *Connect* in the UI, paste their hash, and start chatting.
 
 The web interface includes:
 - Real-time messaging over WebSocket
@@ -67,10 +73,13 @@ The web interface includes:
 ### CLI
 
 ```bash
+# Development mode
+./run.sh cli
+
 # Start interactive mode
 chatzx
 
-# Send a one-off message
+# Send a one-off message to a peer
 chatzx --connect <peer_hash> --send "Hello!"
 
 # Send a file
@@ -82,6 +91,8 @@ chatzx --connect <peer_hash> --voice
 # Listen daemon
 chatzx --daemon
 ```
+
+> **Tip:** Run `./run.sh` to see all available commands.
 
 ### Interactive Commands
 
