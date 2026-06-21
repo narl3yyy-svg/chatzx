@@ -290,11 +290,16 @@ body {
     <div id="contacts-section">
       <h3>Contacts</h3>
       <div id="contacts-list"></div>
-      <div style="padding:8px">
-        <button class="input-btn" style="width:100%;border-radius:6px;font-size:13px;gap:6px;display:flex" onclick="showConnectDialog()">
-          <span>+</span> Connect / Add Contact
+      <div style="padding:8px;display:flex;gap:4px">
+        <button class="input-btn" style="flex:1;border-radius:6px;font-size:12px;gap:4px;display:flex;align-items:center;justify-content:center" onclick="showConnectDialog()">
+          <span>+</span> Add
+        </button>
+        <button class="input-btn" style="flex:1;border-radius:6px;font-size:12px;gap:4px;display:flex;align-items:center;justify-content:center" onclick="announceSelf()" title="Broadcast your identity on LAN">
+          📡 Announce
         </button>
       </div>
+      <h3 style="margin-top:12px">Discovered on LAN</h3>
+      <div id="discovered-list"></div>
     </div>
   </div>
 
@@ -374,6 +379,7 @@ function fetchIdentity() {
       myHash = d.hash;
       document.getElementById('identity-box').textContent = 'ID: ' + myHash;
       renderContacts(d.contacts);
+      renderDiscovered(d.discovered);
       if (d.connected) {
         setConnected(d.connected);
       }
@@ -395,6 +401,8 @@ function connectWS() {
 function handleWSMessage(msg) {
   if (msg.type === 'message') {
     addMessage(msg.data);
+  } else if (msg.type === 'peers') {
+    renderDiscovered(msg.data);
   }
 }
 
@@ -403,13 +411,36 @@ function renderContacts(contacts) {
   el.innerHTML = '';
   contacts.forEach(c => {
     const div = document.createElement('div');
+    const name = c.name || c.hash;
     div.className = 'contact-item' + (c.hash === connected ? ' active' : '');
-    div.innerHTML = `<div class="contact-avatar">${c.name.charAt(0).toUpperCase()}</div>
+    div.innerHTML = `<div class="contact-avatar">${name.charAt(0).toUpperCase()}</div>
       <div class="contact-info">
-        <div class="contact-name">${c.name}</div>
+        <div class="contact-name">${name}</div>
         <div class="contact-hash">${truncateHash(c.hash)}</div>
       </div>`;
     div.onclick = () => connectTo(c.hash);
+    el.appendChild(div);
+  });
+}
+
+function renderDiscovered(peers) {
+  const el = document.getElementById('discovered-list');
+  el.innerHTML = '';
+  if (!peers || peers.length === 0) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text2);padding:8px">No peers found on LAN</div>';
+    return;
+  }
+  peers.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'contact-item';
+    const name = p.name || truncateHash(p.hash);
+    div.innerHTML = `<div class="contact-avatar" style="background:#2d6a4f">${name.charAt(0).toUpperCase()}</div>
+      <div class="contact-info">
+        <div class="contact-name">${name}</div>
+        <div class="contact-hash">${truncateHash(p.hash)}</div>
+      </div>
+      <div style="font-size:11px;color:var(--text2)">LAN</div>`;
+    div.onclick = () => connectTo(p.hash);
     el.appendChild(div);
   });
 }
@@ -453,6 +484,13 @@ function connectTo(hash) {
       toast('Connection failed: ' + (d.error || 'unknown'));
     }
   });
+}
+
+function announceSelf() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({type: 'announce'}));
+  }
+  toast('Announcing on LAN...');
 }
 
 function setConnected(hash) {

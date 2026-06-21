@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import socket
 import base64
 import tempfile
 import mimetypes
@@ -15,6 +16,7 @@ from chatxz.core.identity import IdentityManager
 from chatxz.core.messaging import MessagingBackend, ChatMessage
 from chatxz.core.filetransfer import FileTransfer
 from chatxz.core.voice import VoiceRecorder, VoicePlayer
+from chatxz.core.discovery import PeerDiscovery, DISCOVERY_PORT
 from chatxz.utils.helpers import get_config_dir, get_data_dir, format_size, truncate_hash
 
 CONFIG_DIR = get_config_dir()
@@ -39,6 +41,7 @@ class ChatWebServer:
         self.message_history = []
         self.contact_list = {}
         self.active_peer = None
+        self.discovery = None
 
     def start_rns(self):
         RNS.Reticulum(self.config_dir)
@@ -49,7 +52,17 @@ class ChatWebServer:
         self.file_transfer = FileTransfer(self.config_dir)
         self.voice_recorder = VoiceRecorder(self.config_dir)
         dest = self.messaging.start()
-        return RNS.hexrep(dest.hash)
+
+        my_hash = RNS.hexrep(dest.hash)
+        self.discovery = PeerDiscovery(my_hash, display_name="")
+        self.discovery.start()
+
+        asyncio.run_coroutine_threadsafe(
+            self._discovery_broadcaster(),
+            self._loop
+        )
+
+        return my_hash
 
     def _on_message(self, chat_msg, sender_hash):
         entry = {
@@ -115,10 +128,12 @@ class ChatWebServer:
                 contacts.append({"hash": f, "name": name})
             except:
                 contacts.append({"hash": f, "name": f})
+        discovered = self.discovery.get_peers() if self.discovery else []
         return web.json_response({
             "hash": h,
             "connected": self.active_peer,
             "contacts": contacts,
+            "discovered": discovered,
         })
 
     async def handle_add_contact(self, request):
@@ -261,6 +276,20 @@ class ChatWebServer:
             self.websockets.discard(ws)
         return ws
 
+    async def _discovery_broadcaster(self):
+        while True:
+            await asyncio.sleep(3)
+            if self.discovery:
+                peers = self.discovery.get_peers()
+                if peers:
+                    await self._broadcast({"type": "peers", "data": peers})
+
+    async def handle_discover(self, request):
+        if self.discovery:
+            peers = self.discovery.get_peers()
+            return web.json_response({"peers": peers})
+        return web.json_response({"peers": []})
+
     async def _handle_ws_message(self, ws, data):
         msg_type = data.get("type")
         if msg_type == "send":
@@ -273,6 +302,14 @@ class ChatWebServer:
                 ok = self.messaging.connect_to(peer_hash)
                 if ok:
                     self.active_peer = peer_hash
+        elif msg_type == "announce":
+            if self.discovery:
+                self.discovery.make_beacon()
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                s.settimeout(1)
+                s.sendto(self.discovery.make_beacon(), ("255.255.255.255", DISCOVERY_PORT))
+                s.close()
 
     # Start server
 
@@ -293,6 +330,7 @@ class ChatWebServer:
         app.router.add_post("/api/voice", self.handle_voice_upload)
         app.router.add_post("/api/play", self.handle_play_voice)
         app.router.add_get("/api/history", self.handle_history)
+        app.router.add_get("/api/discover", self.handle_discover)
         app.router.add_get("/api/file/{filepath:.*}", self.handle_serve_file)
         app.router.add_get("/ws", self.handle_websocket)
 
