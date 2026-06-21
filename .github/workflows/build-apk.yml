@@ -1,20 +1,11 @@
-# Move this file to .github/workflows/build-apk.yml to enable:
-#   - Automatic APK builds on tags like v0.2.0
-#   - Manual workflow dispatch from GitHub Actions tab
-#
-# Requires: a GitHub PAT with 'workflow' scope for the initial push of this file.
-# Create one at: https://github.com/settings/tokens
-#
-# Usage:
-#   git mv ci/build-apk.yml .github/workflows/build-apk.yml
-#   git commit -m "Enable APK builds"
-#   git push  # (with PAT that has workflow scope)
-#   git tag v0.2.0 && git push origin v0.2.0
+# Automatic APK builds on tags like v0.2.0, and manual dispatch from GitHub Actions tab.
 
 name: Build Android APK
 on:
   push: { tags: ['v*'] }
   workflow_dispatch: {}
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -28,12 +19,11 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: '3.13' }
       - name: Build APK
-        run: cd android && chmod +x gradlew && ./gradlew assembleRelease --no-daemon
+        run: cd android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon
       - name: Rename
         run: |
           V=${GITHUB_REF_NAME#v}
-          cp android/app/build/outputs/apk/release/app-release-unsigned.apk chatxz-${V}.apk 2>/dev/null || \
-          cp android/app/build/outputs/apk/release/app-release.apk chatxz-${V}.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk chatxz-${V}.apk
       - uses: actions/upload-artifact@v4
         with: { name: chatxz-apk, path: chatxz-*.apk }
       - uses: softprops/action-gh-release@v2
