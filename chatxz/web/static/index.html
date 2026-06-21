@@ -775,6 +775,11 @@ body.sidebar-open #sidebar-backdrop { display: block; }
           <span>📡</span> Announce
         </button>
       </div>
+      <div class="sidebar-actions" style="margin-top:-8px">
+        <button class="sidebar-btn" onclick="openNetworkSettings()" title="Network interfaces and discovery status">
+          <span>🌐</span> Network
+        </button>
+      </div>
 
       <div class="contacts-scroll">
         <div class="section-header">
@@ -806,10 +811,15 @@ body.sidebar-open #sidebar-backdrop { display: block; }
 
     <div id="settings-panel" class="overlay-panel">
       <div class="panel-header">
-        <h3>Settings</h3>
+        <h3>Settings <span id="settings-version" style="font-size:11px;color:var(--text3);font-weight:500"></span></h3>
         <button class="panel-close" onclick="toggleSettings()" title="Close">&times;</button>
       </div>
       <div class="settings-scroll">
+        <div class="settings-card" id="network-settings-card">
+          <h4>📡 Network</h4>
+          <button class="btn-block" onclick="refreshNetworkStatus()">Refresh status</button>
+          <div id="network-status-panel" class="network-status">Tap Refresh to load network status.</div>
+        </div>
         <div class="settings-card">
           <h4>👤 Profile</h4>
           <div class="settings-section">
@@ -845,11 +855,6 @@ body.sidebar-open #sidebar-backdrop { display: block; }
             <p class="field-hint" id="settings-received-hint">Browse picks a native folder path. Click Save to apply.</p>
             <input type="file" id="dir-picker-fallback" style="display:none" webkitdirectory onchange="pickReceivedDirFallback(this)">
           </div>
-        </div>
-        <div class="settings-card">
-          <h4>📡 Network</h4>
-          <button class="btn-block" onclick="refreshNetworkStatus()">Refresh status</button>
-          <div id="network-status-panel" class="network-status">Open settings or tap Refresh to load network status.</div>
         </div>
         <div class="settings-card danger">
           <h4>⚠ Advanced</h4>
@@ -1132,6 +1137,10 @@ function fetchIdentity() {
       if (sh) sh.value = myHash;
       renderContacts(d.contacts);
       renderDiscovered(d.discovered);
+      if (d.app_version) {
+        const ver = document.getElementById('settings-version');
+        if (ver) ver.textContent = 'v' + d.app_version;
+      }
       if (d.platform === 'android') {
         const hint = document.getElementById('settings-received-hint');
         if (hint) hint.textContent = 'Tap Browse to open the Android folder picker, then Save to apply.';
@@ -1512,6 +1521,14 @@ let connectShown = false;
 
 function netClass(ok) {
   return ok ? 'net-ok' : 'net-bad';
+}
+
+function openNetworkSettings() {
+  if (!settingsShown) toggleSettings();
+  refreshNetworkStatus();
+  setTimeout(() => {
+    document.getElementById('network-settings-card')?.scrollIntoView({behavior: 'smooth', block: 'start'});
+  }, 80);
 }
 
 function refreshNetworkStatus() {

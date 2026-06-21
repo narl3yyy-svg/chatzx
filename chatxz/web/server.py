@@ -24,6 +24,7 @@ from chatxz.utils.system import get_avg_cpu_temperature, get_cpu_percent
 CONFIG_DIR = get_config_dir()
 DATA_DIR = get_data_dir()
 SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
+APP_VERSION = "0.3.8"
 
 def build_desktop_rns_config(broadcast_ip="255.255.255.255"):
     return f"""[reticulum]
@@ -524,7 +525,10 @@ class ChatWebServer:
         index_path = static_dir / "index.html"
         if not index_path.exists():
             return web.Response(text="Frontend not found", status=500)
-        return web.FileResponse(index_path)
+        resp = web.FileResponse(index_path)
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        resp.headers["Pragma"] = "no-cache"
+        return resp
 
     async def handle_static(self, request):
         static_dir = self._static_dir()
@@ -564,6 +568,7 @@ class ChatWebServer:
             "contacts": contacts,
             "discovered": discovered,
             "platform": "android" if is_android() else "desktop",
+            "app_version": APP_VERSION,
             "rns_ready": bool(self.messaging and self.messaging.destination),
             "rns_error": self.rns_init_error,
         })
@@ -679,6 +684,7 @@ class ChatWebServer:
         link_active = bool(self.messaging and self.messaging.active_link)
         return web.json_response({
             "platform": "android" if is_android() else "desktop",
+            "app_version": APP_VERSION,
             "http_bind": f"{self.host}:{self.port}",
             "lan_ip": detect_lan_ip(),
             "broadcast": lan_broadcast(),
