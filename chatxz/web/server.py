@@ -53,6 +53,8 @@ class ChatWebServer:
         self.data_dir = DATA_DIR
         os.makedirs(self.config_dir, exist_ok=True)
         os.makedirs(self.data_dir, exist_ok=True)
+        os.makedirs(os.path.join(self.config_dir, "received"), exist_ok=True)
+        os.makedirs(os.path.join(self.config_dir, "sent"), exist_ok=True)
 
         self.identity_mgr = IdentityManager(self.config_dir)
         self.identity = None
@@ -61,7 +63,7 @@ class ChatWebServer:
         self.voice_recorder = None
 
         self.websockets = set()
-        self.message_history = []
+        self.message_history = self._load_history()
         self.contact_list = {}
         self.active_peer = None
         self.discovery = None
@@ -70,13 +72,55 @@ class ChatWebServer:
     def load_settings(self):
         try:
             with open(SETTINGS_FILE) as f:
-                return json.load(f)
+                s = json.load(f)
+                s.setdefault("name", "")
+                s.setdefault("announce_interval", 30)
+                s.setdefault("history_retention", "never")
+                return s
         except:
-            return {"name": "", "announce_interval": 30}
+            return {"name": "", "announce_interval": 30, "history_retention": "never"}
 
     def save_settings(self, settings):
         with open(SETTINGS_FILE, "w") as f:
             json.dump(settings, f, indent=2)
+
+    HISTORY_FILE = None
+
+    def _history_file(self):
+        return os.path.join(self.config_dir, "history.json")
+
+    def _load_history(self):
+        try:
+            with open(self._history_file()) as f:
+                return json.load(f)
+        except:
+            return []
+
+    def _save_history(self):
+        try:
+            with open(self._history_file(), "w") as f:
+                json.dump(self.message_history[-1000:], f)
+        except:
+            pass
+
+    def _apply_retention(self):
+        retention = self.load_settings().get("history_retention", "never")
+        if retention == "never":
+            return
+        now = time.time()
+        limits = {
+            "1d": 86400,
+            "1w": 604800,
+            "1m": 2592000,
+            "6m": 15552000,
+            "12m": 31536000,
+        }
+        seconds = limits.get(retention)
+        if seconds:
+            self.message_history = [
+                m for m in self.message_history
+                if now - m.get("timestamp", 0) < seconds
+            ]
 
     def start_rns(self):
         rns_config_path = os.path.join(self.config_dir, "config")
@@ -149,6 +193,7 @@ class ChatWebServer:
             "file_size": chat_msg.file_size,
         }
         self.message_history.append(entry)
+        self._save_history()
         if self.websockets and self._loop:
             asyncio.run_coroutine_threadsafe(
                 self._broadcast({"type": "message", "data": entry}),
@@ -286,10 +331,16 @@ class ChatWebServer:
             if "announce_interval" in data:
                 val = int(data["announce_interval"])
                 settings["announce_interval"] = max(5, min(3600, val))
+            if "history_retention" in data:
+                valid = ["1d", "1w", "1m", "6m", "12m", "never"]
+                if data["history_retention"] in valid:
+                    settings["history_retention"] = data["history_retention"]
             self.save_settings(settings)
             if self.messaging:
                 self.messaging.display_name = settings.get("name", "")
                 self.messaging.announce_interval = settings.get("announce_interval", 30)
+            self._apply_retention()
+            self._save_history()
             return web.json_response({"status": "ok", "settings": settings})
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
@@ -334,7 +385,8 @@ class ChatWebServer:
                     size += len(chunk)
 
             msg_type = "image" if is_image else "file"
-            result = self.messaging.send_file(save_path, msg_type)
+            result = self.messaging.send_file(save_path, msg_type,
+                                               progress_callback=self._make_progress_callback(fname, size))
             if result:
                 result.content = save_path
                 my_hash = self.identity_mgr.get_hex_hash()
@@ -347,11 +399,30 @@ class ChatWebServer:
                     "file_size": result.file_size,
                 }
                 self.message_history.append(entry)
+                self._save_history()
                 await self._broadcast({"type": "message", "data": entry})
                 return web.json_response({"status": "ok", "name": fname, "size": size})
             return web.json_response({"error": "send failed"}, status=400)
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
+
+    def _make_progress_callback(self, fname, total_size):
+        def callback(resource):
+            try:
+                progress = resource.get_progress()
+                pct = int(progress * 100)
+                if self.websockets and self._loop:
+                    asyncio.run_coroutine_threadsafe(
+                        self._broadcast({"type": "progress", "data": {
+                            "file_name": fname,
+                            "progress": pct,
+                            "size": total_size,
+                        }}),
+                        self._loop
+                    )
+            except:
+                pass
+        return callback
 
     async def handle_voice_upload(self, request):
         if not self.messaging or not self.messaging.active_link:
@@ -380,6 +451,7 @@ class ChatWebServer:
                     "file_size": result.file_size,
                 }
                 self.message_history.append(entry)
+                self._save_history()
                 await self._broadcast({"type": "message", "data": entry})
                 return web.json_response({"status": "ok"})
             return web.json_response({"error": "send failed"}, status=400)
@@ -406,7 +478,7 @@ class ChatWebServer:
         if not (full_path.startswith(received_dir) or full_path.startswith(sent_dir)):
             return web.Response(text="Forbidden", status=403)
         if not os.path.exists(full_path) or not os.path.isfile(full_path):
-            return web.Response(text="Not found", status=404)
+            return web.Response(text="Not found: " + full_path, status=404)
         ct, _ = mimetypes.guess_type(full_path)
         resp = web.FileResponse(full_path)
         if ct:
@@ -414,7 +486,8 @@ class ChatWebServer:
         return resp
 
     async def handle_history(self, request):
-        limit = int(request.query.get("limit", 100))
+        self._apply_retention()
+        limit = int(request.query.get("limit", 500))
         return web.json_response(self.message_history[-limit:])
 
     async def handle_websocket(self, request):
@@ -477,6 +550,7 @@ class ChatWebServer:
                         "timestamp": result.timestamp,
                     }
                     self.message_history.append(entry)
+                    self._save_history()
                     await self._broadcast({"type": "message", "data": entry})
         elif msg_type == "connect":
             peer_hash = data.get("hash", "")

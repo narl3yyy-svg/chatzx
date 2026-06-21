@@ -197,6 +197,23 @@ body {
 #image-modal.open { display: flex; }
 #image-modal img { max-width: 90vw; max-height: 90vh; border-radius: 8px; }
 
+/* Progress bar */
+#progress-bar {
+  display: none; padding: 8px 20px; background: var(--surface);
+  border-top: 1px solid rgba(255,255,255,.05);
+}
+#progress-bar .progress-track {
+  width: 100%; height: 20px; background: var(--bg);
+  border-radius: 10px; overflow: hidden; position: relative;
+}
+#progress-bar .progress-fill {
+  height: 100%; background: var(--primary); border-radius: 10px;
+  transition: width .3s; width: 0%;
+}
+#progress-bar #progress-label {
+  font-size: 11px; color: var(--text2); margin-top: 4px; text-align: center;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -261,6 +278,10 @@ body {
         </div>
       </div>
     </div>
+    <div id="progress-bar">
+      <div class="progress-track"><div class="progress-fill"></div></div>
+      <div id="progress-label">Sending...</div>
+    </div>
   </div>
 </div>
 
@@ -310,6 +331,17 @@ body {
       <input id="settings-interval" type="number" value="30" min="5" max="3600">
     </div>
     <div class="settings-section">
+      <label>Chat History Retention</label>
+      <select id="settings-retention">
+        <option value="1d">1 day</option>
+        <option value="1w">1 week</option>
+        <option value="1m">1 month</option>
+        <option value="6m">6 months</option>
+        <option value="12m">12 months</option>
+        <option value="never">Never delete</option>
+      </select>
+    </div>
+    <div class="settings-section">
       <p>Your identity hash:</p>
       <input id="settings-hash" readonly style="font-size:11px;color:var(--text2)">
     </div>
@@ -349,6 +381,20 @@ function init() {
   connectWS();
   buildEmojiPicker();
   startPeerPolling();
+  loadHistory();
+}
+
+function loadHistory() {
+  fetch('/api/history?limit=500')
+    .then(r => r.json())
+    .then(msgs => {
+      console.log('[history] Loaded', msgs.length, 'messages');
+      if (msgs.length > 0) {
+        document.getElementById('placeholder').style.display = 'none';
+        document.getElementById('messages').style.display = 'flex';
+        msgs.forEach(m => addMessage(m));
+      }
+    });
 }
 
 function fetchIdentity() {
@@ -396,11 +442,26 @@ function handleWSMessage(msg) {
   } else if (msg.type === 'peers') {
     console.log('[ws] Peers received:', msg.data ? msg.data.length : 0, msg.data);
     renderDiscovered(msg.data);
+  } else if (msg.type === 'progress') {
+    showProgress(msg.data);
   } else if (msg.type === 'connect_ok') {
     setConnected(msg.hash);
     toast('Connected!');
   } else if (msg.type === 'connect_fail') {
     toast('Connection failed: ' + (msg.error || 'unknown'));
+  }
+}
+
+function showProgress(data) {
+  var bar = document.getElementById('progress-bar');
+  var label = document.getElementById('progress-label');
+  if (!bar) return;
+  bar.style.display = 'block';
+  var pct = data.progress || 0;
+  bar.querySelector('.progress-fill').style.width = pct + '%';
+  label.textContent = data.file_name + ' — ' + pct + '%' + (data.size ? ' (' + formatSize(data.size) + ')' : '');
+  if (pct >= 100) {
+    setTimeout(function() { bar.style.display = 'none'; }, 2000);
   }
 }
 
@@ -581,6 +642,7 @@ function showSettings() {
     .then(s => {
       document.getElementById('settings-name').value = s.name || '';
       document.getElementById('settings-interval').value = s.announce_interval || 30;
+      document.getElementById('settings-retention').value = s.history_retention || 'never';
       document.getElementById('settings-hash').value = myHash;
       document.getElementById('settings-dialog').classList.add('open');
     });
@@ -598,10 +660,11 @@ function closeSettings() {
 function saveSettings() {
   const name = document.getElementById('settings-name').value.trim();
   const interval = parseInt(document.getElementById('settings-interval').value) || 30;
+  const retention = document.getElementById('settings-retention').value;
   fetch('/api/settings', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name, announce_interval: interval})
+    body: JSON.stringify({name, announce_interval: interval, history_retention: retention})
   }).then(r => r.json()).then(d => {
     if (d.status === 'ok') {
       toast('Settings saved');
@@ -659,7 +722,11 @@ function autoResize(el) {
 
 function fileUrl(path) {
   if (!path) return '';
-  return '/api/file/' + path.replace(/^\/+/, '');
+  var idx = path.indexOf('/received/');
+  if (idx >= 0) return '/api/file/received/' + encodeURIComponent(path.substring(idx + 10));
+  idx = path.indexOf('/sent/');
+  if (idx >= 0) return '/api/file/sent/' + encodeURIComponent(path.substring(idx + 6));
+  return '';
 }
 
 function addMessage(data) {

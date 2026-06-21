@@ -332,7 +332,7 @@ class MessagingBackend:
             print(f"[messaging] Send failed: {e}")
             return False
 
-    def send_file(self, file_path, msg_type=MESSAGE_TYPE_FILE):
+    def send_file(self, file_path, msg_type=MESSAGE_TYPE_FILE, progress_callback=None):
         if not self.active_link or not os.path.exists(file_path):
             return False
         fname = os.path.basename(file_path)
@@ -345,6 +345,7 @@ class MessagingBackend:
             f = open(file_path, "rb")
             resource = RNS.Resource(f, self.active_link,
                                     callback=self._resource_send_callback(fname),
+                                    progress_callback=progress_callback,
                                     auto_compress=False)
             print(f"[messaging] Sent file: {fname} ({fsize} bytes)")
             return chat_msg
