@@ -9,7 +9,7 @@ from chatxz.core.messaging import MessagingBackend
 from chatxz.core.voice import VoiceRecorder, VoicePlayer
 from chatxz.core.discovery import PeerDiscovery
 from chatxz.utils.helpers import get_config_dir, get_data_dir, format_speed
-from chatxz.utils.platform import is_android, lan_ip as platform_lan_ip
+from chatxz.utils.platform import is_android, lan_ip as platform_lan_ip, lan_broadcast
 from chatxz.utils.system import get_avg_cpu_temperature, get_cpu_percent
 
 CONFIG_DIR = get_config_dir()
@@ -38,7 +38,8 @@ loglevel = 3
     ifac_size = 16
 """
 
-ANDROID_RNS_CONFIG = """[reticulum]
+def build_android_rns_config(broadcast_ip="255.255.255.255"):
+    return f"""[reticulum]
 enable_transport = No
 share_instance = No
 
@@ -51,7 +52,7 @@ loglevel = 4
     enabled = Yes
     listen_ip = 0.0.0.0
     listen_port = 4242
-    forward_ip = 255.255.255.255
+    forward_ip = {broadcast_ip}
     forward_port = 4242
     ifac_size = 16
 """
@@ -318,9 +319,10 @@ class ChatWebServer:
         rns_config_path = os.path.join(self.config_dir, "config")
         os.makedirs(self.config_dir, exist_ok=True)
         if is_android():
+            bcast = lan_broadcast()
             with open(rns_config_path, "w") as f:
-                f.write(ANDROID_RNS_CONFIG)
-            print(f"[config] Applied Android RNS config at {rns_config_path}")
+                f.write(build_android_rns_config(bcast))
+            print(f"[config] Applied Android RNS config at {rns_config_path} (broadcast={bcast})")
         elif os.path.exists(rns_config_path):
             with open(rns_config_path) as f:
                 existing = f.read()
@@ -359,7 +361,7 @@ class ChatWebServer:
                     f.write(existing)
                 print(f"[config] Disabled share_instance")
         else:
-            template = ANDROID_RNS_CONFIG if is_android() else DEFAULT_RNS_CONFIG
+            template = build_android_rns_config(lan_broadcast()) if is_android() else DEFAULT_RNS_CONFIG
             with open(rns_config_path, "w") as f:
                 f.write(template)
             print(f"[config] Created RNS config at {rns_config_path}")
@@ -557,6 +559,23 @@ class ChatWebServer:
                 self.active_peer = clean
                 return web.json_response({"status": "ok"})
             return web.json_response({"error": "connection failed"}, status=400)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def handle_announce(self, request):
+        if not self.messaging or not self.messaging.destination:
+            return web.json_response({"error": "not ready"}, status=400)
+        try:
+            for i in range(3):
+                await asyncio.to_thread(self.messaging.announce)
+                if i < 2:
+                    await asyncio.sleep(0.4)
+            bcast = lan_broadcast() if is_android() else None
+            return web.json_response({
+                "status": "ok",
+                "broadcast": bcast,
+                "lan_ip": detect_lan_ip(),
+            })
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
 
@@ -1157,7 +1176,10 @@ class ChatWebServer:
                     await ws.send_str(json.dumps({"type": "connect_fail", "error": "connection failed"}))
         elif msg_type == "announce":
             if self.messaging and self.messaging.destination:
-                self.messaging.announce()
+                for i in range(3):
+                    await asyncio.to_thread(self.messaging.announce)
+                    if i < 2:
+                        await asyncio.sleep(0.4)
         elif msg_type == "read_receipt":
             msg_id = data.get("msg_id", "")
             if msg_id and self.messaging and self.messaging.active_link:
@@ -1181,6 +1203,7 @@ class ChatWebServer:
         app.router.add_post("/api/contacts", self.handle_add_contact)
         app.router.add_delete("/api/contacts/{hash}", self.handle_delete_contact)
         app.router.add_post("/api/connect", self.handle_connect)
+        app.router.add_post("/api/announce", self.handle_announce)
         app.router.add_post("/api/disconnect", self.handle_disconnect)
         app.router.add_post("/api/file", self.handle_file_upload)
         app.router.add_post("/api/folder", self.handle_folder_upload)

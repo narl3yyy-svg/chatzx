@@ -1,7 +1,9 @@
 package com.chatzx.android;
 
 import android.Manifest;
+import android.content.Context;
 import android.content.pm.PackageManager;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.webkit.WebView;
@@ -31,6 +33,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int PERM_REQUEST = 1001;
 
     private WebView webView;
+    private WifiManager.MulticastLock multicastLock;
     private String serverUrl = "http://127.0.0.1:8742";
     private boolean serverStarted = false;
 
@@ -51,12 +54,25 @@ public class MainActivity extends AppCompatActivity {
             } catch (Exception ignored) {}
         });
 
+        acquireMulticastLock();
+
         webView = new WebView(this);
         setContentView(webView);
         setupWebView();
 
         showLoading("Starting chatxz...");
         requestNeededPermissions();
+    }
+
+    private void acquireMulticastLock() {
+        try {
+            WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wifi != null) {
+                multicastLock = wifi.createMulticastLock("chatxz");
+                multicastLock.setReferenceCounted(true);
+                multicastLock.acquire();
+            }
+        } catch (Exception ignored) {}
     }
 
     private void setupWebView() {
@@ -191,6 +207,14 @@ public class MainActivity extends AppCompatActivity {
                 runOnUiThread(() -> showError("Python Error", fullError));
             }
         }, "chatxz-python").start();
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (multicastLock != null && multicastLock.isHeld()) {
+            multicastLock.release();
+        }
+        super.onDestroy();
     }
 
     @Override

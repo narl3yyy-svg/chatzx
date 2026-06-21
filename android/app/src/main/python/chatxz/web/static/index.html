@@ -663,14 +663,14 @@ body.modal-open #save-contact-dialog * { pointer-events: auto; user-select: auto
   display: none;
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  z-index: 40;
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 44;
+  touch-action: none;
 }
 body.sidebar-open #sidebar-backdrop { display: block; }
 
 @media (max-width: 860px), (hover: none) and (pointer: coarse) {
+  #workspace { position: relative; }
   #sidebar {
     position: fixed;
     left: 0;
@@ -680,10 +680,16 @@ body.sidebar-open #sidebar-backdrop { display: block; }
     width: min(var(--sidebar-width), 88vw);
     transform: translateX(-100%);
     box-shadow: var(--shadow-lg);
+    -webkit-overflow-scrolling: touch;
   }
   #sidebar:not(.collapsed) { transform: translateX(0); }
-  #sidebar-toggle { display: flex; }
-  #main { width: 100%; flex: 1; }
+  #sidebar-toggle {
+    display: flex;
+    position: relative;
+    z-index: 43;
+    touch-action: manipulation;
+  }
+  #main { width: 100%; flex: 1; position: relative; z-index: 1; }
   #chat-header { padding: 10px 12px; }
   #chat-header .peer-info { font-size: 14px; }
   :root { --sidebar-width: 300px; }
@@ -711,10 +717,10 @@ body.sidebar-open #sidebar-backdrop { display: block; }
 </style>
 </head>
 <body>
-<div id="sidebar-backdrop" onclick="closeSidebar()"></div>
 <div id="app">
   <div id="workspace">
-  <aside id="sidebar">
+  <div id="sidebar-backdrop" onclick="closeSidebarOnBackdrop(event)"></div>
+  <aside id="sidebar" onclick="event.stopPropagation()">
     <div id="sidebar-header">
       <div class="brand-mark">cx</div>
       <div class="brand-text">
@@ -848,7 +854,7 @@ body.sidebar-open #sidebar-backdrop { display: block; }
   <main id="main">
     <div id="chat-header">
       <div class="header-left">
-        <button id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">☰</button>
+        <button id="sidebar-toggle" onclick="event.stopPropagation(); toggleSidebar()" title="Toggle sidebar">☰</button>
         <div class="peer-info">
           <span id="peer-name">No one connected</span>
           <div class="status" id="peer-status">Select a peer to start chatting</div>
@@ -972,6 +978,10 @@ function setSidebarOpen(open) {
 
 function closeSidebar() {
   if (isMobileLayout() && sidebarOpen) setSidebarOpen(false);
+}
+
+function closeSidebarOnBackdrop(e) {
+  if (e.target === e.currentTarget) closeSidebar();
 }
 
 function initMobileLayout() {
@@ -1417,12 +1427,24 @@ function connectTo(hash) {
 }
 
 function announceSelf() {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({type: 'announce'}));
-  } else {
-    fetch('/api/identity').then(() => {});
-  }
-  toast('Announcing on LAN...');
+  fetch('/api/announce', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'})
+    .then(r => r.json())
+    .then(d => {
+      if (d.status === 'ok') {
+        const hint = d.broadcast ? ` (${d.broadcast})` : '';
+        toast('Announcing on LAN' + hint);
+      } else {
+        toast('Announce failed: ' + (d.error || 'unknown'));
+      }
+    })
+    .catch(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({type: 'announce'}));
+        toast('Announcing on LAN...');
+      } else {
+        toast('Announce failed — server not ready');
+      }
+    });
 }
 
 let settingsShown = false;

@@ -192,7 +192,9 @@ Download `chatxz.apk` from [Releases](https://github.com/narl3yyy-svg/chatzx/rel
 
 The APK bundles Python 3.13, RNS, cryptography, aiohttp, and the full chatxz web server in a WebView. On launch it starts the same `ChatWebServer` used on desktop (Reticulum + WebSocket + file transfer), with Android-specific storage paths and RNS config.
 
-On phone-sized screens the chat area fills the display by default. Tap **☰** in the header to open the sidebar (contacts, connect, settings). The sidebar closes when you connect to a peer or press the Android back button.
+On phone-sized screens the chat area fills the display by default. Tap **☰** in the header to open the sidebar (contacts, connect, settings). The sidebar stays open while you use it and only closes when you connect to a peer, tap outside, or press the Android back button.
+
+**LAN discovery from Android:** the app uses directed UDP broadcast (e.g. `192.168.1.255`) instead of `255.255.255.255`, which Android often blocks. Tap **Announce** on the phone; your desktop instance should show the device under **Discovered** within a few seconds when both are on the same Wi‑Fi.
 
 ### Build locally
 

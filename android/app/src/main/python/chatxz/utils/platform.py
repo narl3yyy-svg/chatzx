@@ -49,9 +49,40 @@ def storage_root():
     return os.path.join(os.path.expanduser("~"), ".config", "chatxz")
 
 
+def _java_lan_addresses():
+    """Enumerate IPv4 LAN addresses via Android/Java network APIs."""
+    try:
+        from java import jclass
+        network_interface = jclass("java.net.NetworkInterface")
+        interfaces = network_interface.getNetworkInterfaces()
+        found = []
+        while interfaces.hasMoreElements():
+            iface = interfaces.nextElement()
+            if not iface.isUp() or iface.isLoopback():
+                continue
+            addrs = iface.getInterfaceAddresses()
+            while addrs.hasMoreElements():
+                ia = addrs.nextElement()
+                addr = ia.getAddress()
+                host = str(addr.getHostAddress())
+                if ":" in host or host.startswith("127.") or host.startswith("169.254."):
+                    continue
+                broadcast = ia.getBroadcast()
+                bcast = str(broadcast.getHostAddress()) if broadcast else None
+                found.append((host, bcast))
+        return found
+    except Exception:
+        return []
+
+
 def lan_ip():
     """Best-effort LAN IP for direct file transfers."""
     import socket
+
+    if is_android():
+        for host, _ in _java_lan_addresses():
+            return host
+
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(0.5)
@@ -63,3 +94,18 @@ def lan_ip():
     except OSError:
         pass
     return None
+
+
+def lan_broadcast():
+    """Subnet broadcast address for RNS UDP announces (Android needs directed broadcast)."""
+    if is_android():
+        for host, bcast in _java_lan_addresses():
+            if bcast:
+                return bcast
+
+    ip = lan_ip()
+    if ip:
+        parts = ip.split(".")
+        if len(parts) == 4:
+            return f"{parts[0]}.{parts[1]}.{parts[2]}.255"
+    return "255.255.255.255"
