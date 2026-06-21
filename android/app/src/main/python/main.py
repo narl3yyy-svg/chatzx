@@ -28,8 +28,16 @@ def start_server():
 
     app = web.Application()
 
+    INLINE_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>chatxz</title><style>body{background:#1a1a2e;color:#eee;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:12px;text-align:center;padding:20px}h1{color:#e94560;font-size:24px}p{color:#aaa;font-size:14px}</style></head><body><h1>chatxz</h1><p>Starting server...</p><p style="font-size:12px;color:#666">If this page persists, check python_crash_log.txt</p></body></html>"""
+
     async def index(request):
-        return web.FileResponse(os.path.join(STATIC, "index.html"))
+        idx_path = os.path.join(STATIC, "index.html")
+        if os.path.isfile(idx_path):
+            try:
+                return web.FileResponse(idx_path)
+            except Exception:
+                pass
+        return web.Response(text=INLINE_HTML, content_type="text/html")
 
     async def static(request):
         fn = request.match_info.get("filename", "")
@@ -105,7 +113,8 @@ def start_server():
                 with open("/proc/stat") as f:
                     p = [int(x) for x in f.readline().split()[1:]]
                 t1, i1 = sum(p), p[3]
-                await asyncio.sleep(0.3)
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, lambda: time.sleep(0.3))
                 with open("/proc/stat") as f:
                     p = [int(x) for x in f.readline().split()[1:]]
                 t2, i2 = sum(p), p[3]
@@ -132,6 +141,26 @@ def start_server():
     app.router.add_get("/static/{filename:.*}", static)
     app.router.add_get("/api/temperature", temperature)
     app.router.add_get("/api/cpu", cpu)
+
+    # Stub endpoints so frontend JS doesn't break
+    async def json_stub(request):
+        return web.json_response({"hash": "", "connected": None, "contacts": [], "discovered": []})
+    app.router.add_get("/api/identity", json_stub)
+    async def settings_get(request):
+        return web.json_response({"name": "", "history_retention": "never", "received_dir": ""})
+    app.router.add_get("/api/settings", settings_get)
+    async def settings_post(request):
+        return web.json_response({"status": "ok", "settings": {}})
+    app.router.add_post("/api/settings", settings_post)
+    async def discover(request):
+        return web.json_response({"peers": []})
+    app.router.add_get("/api/discover", discover)
+    async def history(request):
+        return web.json_response([])
+    app.router.add_get("/api/history", history)
+    async def queue(request):
+        return web.json_response({"count": 0, "items": []})
+    app.router.add_get("/api/queue", queue)
 
     async def run_server():
         runner = web.AppRunner(app)

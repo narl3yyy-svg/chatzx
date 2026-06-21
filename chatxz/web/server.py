@@ -519,6 +519,45 @@ class ChatWebServer:
         except:
             return web.json_response({"temperatures": {}})
 
+    async def handle_cpu(self, request):
+        try:
+            nproc = 0
+            try:
+                with open("/proc/cpuinfo") as f:
+                    nproc = sum(1 for l in f if l.startswith("processor"))
+            except:
+                pass
+            if nproc == 0:
+                try:
+                    nproc = len(os.listdir("/sys/devices/system/cpu/"))
+                except:
+                    pass
+            try:
+                with open("/proc/stat") as f:
+                    p = [int(x) for x in f.readline().split()[1:]]
+                t1, i1 = sum(p), p[3]
+                await asyncio.sleep(0.3)
+                with open("/proc/stat") as f:
+                    p = [int(x) for x in f.readline().split()[1:]]
+                t2, i2 = sum(p), p[3]
+                td, id_ = t2 - t1, i2 - i1
+                pct = round(100.0 * (1.0 - id_ / td), 1) if td > 0 else 0.0
+                return web.json_response({"cpu_percent": pct})
+            except (PermissionError, FileNotFoundError, IndexError, ValueError) as e:
+                try:
+                    with open("/proc/loadavg") as f:
+                        la = float(f.read().split()[0])
+                    if nproc > 0:
+                        pct = min(round(la / nproc * 100, 1), 100.0)
+                        return web.json_response({"cpu_percent": pct, "approx": True})
+                except:
+                    pass
+                raise
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            return web.json_response({"cpu_percent": None, "error": str(e), "traceback": tb})
+
     async def handle_debug(self, request):
         peers = self.discovery.get_peers() if self.discovery else []
         settings = self.load_settings()
@@ -582,7 +621,6 @@ class ChatWebServer:
             self._save_history()
             await self._broadcast({"type": "message", "data": entry})
 
-            self.messaging.direct_send_file(save_path, msg_type)
             result = self.messaging.send_file(save_path, msg_type,
                                                progress_callback=self._make_progress_callback(fname, size))
             if result:
@@ -650,7 +688,6 @@ class ChatWebServer:
             self.message_history.append(entry)
             self._save_history()
             await self._broadcast({"type": "message", "data": entry})
-            self.messaging.direct_send_file(zip_path, "file")
             result = self.messaging.send_file(zip_path, "file",
                                                progress_callback=self._make_progress_callback(zip_name, zsize))
             if result:
@@ -719,7 +756,6 @@ class ChatWebServer:
             self._save_history()
             await self._broadcast({"type": "message", "data": entry})
 
-            self.messaging.direct_send_file(voice_path, "voice")
             result = self.messaging.send_file(voice_path, "voice",
                                                progress_callback=self._make_progress_callback(os.path.basename(voice_path), len(audio_bytes)))
             if result:
@@ -751,6 +787,9 @@ class ChatWebServer:
         if not os.path.exists(full_path) or not os.path.isfile(full_path):
             return web.Response(text="Not found: " + full_path, status=404)
         ct, _ = mimetypes.guess_type(full_path)
+        if not ct:
+            ext = os.path.splitext(full_path)[1].lower()
+            ct = {"webm": "audio/webm"}.get(ext.lstrip("."))
         resp = web.FileResponse(full_path)
         if ct:
             resp.headers['Content-Type'] = ct
@@ -932,6 +971,7 @@ class ChatWebServer:
         app.router.add_post("/api/identity/regenerate", self.handle_regenerate_identity)
         app.router.add_post("/api/restart", self.handle_restart)
         app.router.add_get("/api/temperature", self.handle_temperature)
+        app.router.add_get("/api/cpu", self.handle_cpu)
         app.router.add_get("/ws", self.handle_websocket)
 
         my_hash = self.start_rns()

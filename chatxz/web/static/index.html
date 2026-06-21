@@ -285,7 +285,11 @@ body {
       </div>
       <div class="settings-section">
         <label>Received Files Directory</label>
-        <input id="settings-received-dir" placeholder="e.g. /storage/emulated/0/Download">
+        <div style="display:flex;gap:4px">
+          <input id="settings-received-dir" placeholder="e.g. /storage/emulated/0/Download" style="flex:1">
+          <button class="input-btn" onclick="document.getElementById('dir-picker').click()" style="width:36px;height:36px;font-size:14px;flex-shrink:0" title="Browse...">📁</button>
+        </div>
+        <input type="file" id="dir-picker" style="display:none" webkitdirectory onchange="pickReceivedDir(this)">
         <div style="font-size:11px;color:var(--text2);margin-top:4px">Leave empty for default: ~/.config/chatxz/received/</div>
       </div>
       <div style="margin-top:auto;padding-top:12px">
@@ -728,8 +732,7 @@ function toggleSettings() {
       .then(s => {
         document.getElementById('settings-name').value = s.name || '';
         document.getElementById('settings-retention').value = s.history_retention || 'never';
-        document.getElementById('settings-hash').value = myHash;
-        document.getElementById('settings-files-dir').value = s.received_dir || '';
+        document.getElementById('settings-received-dir').value = s.received_dir || '';
       });
   } else {
     contacts.style.display = '';
@@ -784,7 +787,7 @@ function saveRetentionOnly() {
 function saveSettings() {
   const name = document.getElementById('settings-name').value.trim();
   const retention = document.getElementById('settings-retention').value;
-  const received_dir = document.getElementById('settings-files-dir').value.trim();
+  const received_dir = document.getElementById('settings-received-dir').value.trim();
   fetch('/api/settings', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
