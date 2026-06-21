@@ -6,8 +6,8 @@ import time
 import threading
 
 DISCOVERY_PORT = 8743
-DISCOVERY_INTERVAL = 5
-DISCOVERY_TIMEOUT = 18
+DISCOVERY_INTERVAL = 4
+DISCOVERY_TIMEOUT = 15
 
 class PeerDiscovery:
     def __init__(self, identity_hash, display_name="", port=DISCOVERY_PORT):
@@ -19,6 +19,7 @@ class PeerDiscovery:
         self._broadcast_thread = None
         self._listen_thread = None
         self._sock = None
+        self._broadcast_sock = None
         self._beacon = None
 
     def make_beacon(self):
@@ -35,35 +36,76 @@ class PeerDiscovery:
         self._beacon = self.make_beacon()
         self.running = True
 
+        # Listen socket: receive beacons from anyone
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.bind(("", self.port))
-        self._sock.settimeout(1)
+        self._sock.settimeout(0.5)
+
+        # Broadcast socket: send beacons to LAN
+        self._broadcast_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._broadcast_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        self._broadcast_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._broadcast_sock.bind(("", 0))
+        self._broadcast_sock.settimeout(0.5)
 
         self._broadcast_thread = threading.Thread(target=self._broadcast_loop, daemon=True)
         self._listen_thread = threading.Thread(target=self._listen_loop, daemon=True)
         self._broadcast_thread.start()
         self._listen_thread.start()
 
+        print(f"[discovery] Started on UDP {self.port}")
+
     def stop(self):
         self.running = False
-        if self._sock:
-            try:
-                self._sock.close()
-            except:
-                pass
+        for s in (self._sock, self._broadcast_sock):
+            if s:
+                try:
+                    s.close()
+                except:
+                    pass
+        print(f"[discovery] Stopped")
+
+    def send_beacon(self):
+        """Send one immediate beacon to broadcast address."""
+        try:
+            self._broadcast_sock.sendto(self._beacon, ("255.255.255.255", self.port))
+            # Also try subnet-directed broadcasts for each interface
+            ifaces = self._get_broadcast_addrs()
+            for bcast in ifaces:
+                try:
+                    self._broadcast_sock.sendto(self._beacon, (bcast, self.port))
+                except:
+                    pass
+            return True
+        except Exception as e:
+            print(f"[discovery] Send error: {e}")
+            return False
+
+    def _get_broadcast_addrs(self):
+        """Discover broadcast addresses for all network interfaces."""
+        addrs = []
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["ip", "-4", "addr", "show", "scope", "global"],
+                capture_output=True, text=True, timeout=3
+            )
+            for line in result.stdout.splitlines():
+                if "brd" in line:
+                    parts = line.split()
+                    for i, p in enumerate(parts):
+                        if p == "brd" and i + 1 < len(parts):
+                            addrs.append(parts[i + 1])
+        except:
+            pass
+        if not addrs:
+            addrs.append("255.255.255.255")
+        return addrs
 
     def _broadcast_loop(self):
         while self.running:
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-                s.settimeout(1)
-                s.sendto(self._beacon, ("255.255.255.255", self.port))
-                s.close()
-            except:
-                pass
+            self.send_beacon()
             for _ in range(DISCOVERY_INTERVAL):
                 if not self.running:
                     return

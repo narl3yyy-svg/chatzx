@@ -304,12 +304,7 @@ class ChatWebServer:
                     self.active_peer = peer_hash
         elif msg_type == "announce":
             if self.discovery:
-                self.discovery.make_beacon()
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-                s.settimeout(1)
-                s.sendto(self.discovery.make_beacon(), ("255.255.255.255", DISCOVERY_PORT))
-                s.close()
+                self.discovery.send_beacon()
 
     # Start server
 
