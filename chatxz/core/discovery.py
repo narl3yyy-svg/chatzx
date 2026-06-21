@@ -24,24 +24,27 @@ class PeerDiscovery:
         if not self.running:
             return
         try:
-            if app_data:
-                try:
-                    data = json.loads(app_data.decode("utf-8"))
-                    if data.get("app") != APP_NAME:
-                        return
-                except:
-                    return
-            else:
+            if not app_data:
+                return
+
+            try:
+                data = json.loads(app_data.decode("utf-8"))
+            except:
+                return
+
+            app_name = data.get("app", "")
+            if app_name != APP_NAME:
                 return
 
             hash_hex = RNS.hexrep(destination_hash)
-            name = data.get("name", "") if app_data else ""
+            name = data.get("name", "") or hash_hex[:8]
 
             self.peers[hash_hex] = {
                 "hash": hash_hex,
-                "name": name or hash_hex[:8],
+                "name": name,
                 "last_seen": time.time(),
             }
+            print(f"[discovery] Peer seen: {hash_hex[:12]}... ({name})")
         except:
             pass
 

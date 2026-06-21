@@ -21,10 +21,28 @@ from chatxz.utils.helpers import get_config_dir, get_data_dir, format_size, trun
 CONFIG_DIR = get_config_dir()
 DATA_DIR = get_data_dir()
 
+DEFAULT_RNS_CONFIG = """[reticulum]
+enable_transport = Yes
+share_identity = Yes
+
+[logging]
+loglevel = 3
+
+[interfaces]
+  [[UDP Interface]]
+    type = UDPInterface
+    listen_ip = 0.0.0.0
+    listen_port = 4242
+    forward_ip = 255.255.255.255
+    forward_port = 4242
+    ifac_size = 8
+"""
+
 class ChatWebServer:
-    def __init__(self, host="127.0.0.1", port=8742):
+    def __init__(self, host="127.0.0.1", port=8742, verbose=False):
         self.host = host
         self.port = port
+        self.verbose = verbose
         self.config_dir = CONFIG_DIR
         self.data_dir = DATA_DIR
         os.makedirs(self.config_dir, exist_ok=True)
@@ -43,7 +61,15 @@ class ChatWebServer:
         self.discovery = None
 
     def start_rns(self):
-        RNS.Reticulum(self.config_dir)
+        rns_config_path = os.path.join(self.config_dir, "config")
+        if not os.path.exists(rns_config_path):
+            os.makedirs(self.config_dir, exist_ok=True)
+            with open(rns_config_path, "w") as f:
+                f.write(DEFAULT_RNS_CONFIG)
+            print(f"[config] Created RNS config at {rns_config_path}")
+
+        loglevel = RNS.LOG_DEBUG if self.verbose else RNS.LOG_NOTICE
+        RNS.Reticulum(self.config_dir, loglevel=loglevel)
         self.identity = self.identity_mgr.load_or_create()
         self.messaging = MessagingBackend(
             self.identity, self.config_dir, on_message=self._on_message
@@ -304,7 +330,7 @@ class ChatWebServer:
         elif msg_type == "announce":
             if self.messaging and self.messaging.destination:
                 import json as _json
-                ad = _json.dumps({"app": "chatzx", "name": ""}).encode("utf-8")
+                ad = _json.dumps({"app": "chatxz", "name": ""}).encode("utf-8")
                 self.messaging.destination.announce(app_data=ad)
 
     # Start server
@@ -346,9 +372,10 @@ def main():
     parser.add_argument("--host", default="127.0.0.1", help="Bind address")
     parser.add_argument("--port", type=int, default=8742, help="Port")
     parser.add_argument("--share", action="store_true", help="Listen on 0.0.0.0 (accessible on LAN)")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Show RNS debug logs")
     args = parser.parse_args()
     host = "0.0.0.0" if args.share else args.host
-    server = ChatWebServer(host=host, port=args.port)
+    server = ChatWebServer(host=host, port=args.port, verbose=args.verbose)
     server.run()
 
 

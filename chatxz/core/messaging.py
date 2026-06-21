@@ -8,6 +8,7 @@ import tempfile
 from datetime import datetime
 
 APP_NAME = "chatxz"
+ANNOUNCE_INTERVAL = 30
 
 MESSAGE_TYPE_TEXT = "text"
 MESSAGE_TYPE_FILE = "file"
@@ -77,10 +78,24 @@ class MessagingBackend:
         )
         self.destination.set_proof_strategy(RNS.Destination.PROVE_ALL)
         self.destination.set_link_established_callback(self._link_callback)
-        announce_data = json.dumps({"app": APP_NAME, "name": ""}).encode("utf-8")
-        self.destination.announce(app_data=announce_data)
+        self._announce()
+        self._announce_thread = threading.Thread(target=self._announce_loop, daemon=True)
+        self._announce_thread.start()
         self.running = True
         return self.destination
+
+    def _announce(self):
+        if self.destination:
+            announce_data = json.dumps({"app": APP_NAME, "name": ""}).encode("utf-8")
+            self.destination.announce(app_data=announce_data)
+
+    def _announce_loop(self):
+        while True:
+            for _ in range(ANNOUNCE_INTERVAL):
+                if not self.running:
+                    return
+                time.sleep(1)
+            self._announce()
 
     def stop(self):
         self.running = False
