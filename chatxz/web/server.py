@@ -30,6 +30,10 @@ share_instance = Yes
 loglevel = 3
 
 [interfaces]
+  [[Default Interface]]
+    type = AutoInterface
+    enabled = Yes
+
   [[UDP Interface]]
     type = UDPInterface
     enabled = Yes
