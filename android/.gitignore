@@ -1,0 +1,13 @@
+# Gradle
+.gradle/
+gradle/wrapper/gradle-wrapper.jar
+build/
+
+# IDE
+.idea/
+*.iml
+local.properties
+
+# Android
+app/build/
+app/release/

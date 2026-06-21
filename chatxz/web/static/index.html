@@ -4,9 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>chatxz</title>
-<link rel="manifest" href="/static/manifest.json">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 :root {
@@ -1143,9 +1141,6 @@ window.addEventListener('beforeunload', () => {
   }
 });
 
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/static/sw.js');
-}
 </script>
 </body>
 </html>

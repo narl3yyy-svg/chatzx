@@ -1,0 +1,33 @@
+#!/bin/sh
+# Gradle wrapper - downloads gradle-wrapper.jar if missing
+
+APP_HOME=$( cd "${0%[/\\]*}" > /dev/null && pwd )
+APP_NAME="Gradle"
+APP_BASE_NAME=$(basename "$0")
+
+JAVACMD=java
+if [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+    JAVACMD="$JAVA_HOME/bin/java"
+fi
+
+# Download gradle-wrapper.jar if not present
+JAR="$APP_HOME/gradle/wrapper/gradle-wrapper.jar"
+JAR_URL="https://raw.githubusercontent.com/gradle/gradle/v8.11.1/gradle/wrapper/gradle-wrapper.jar"
+if [ ! -f "$JAR" ]; then
+    echo "Downloading gradle-wrapper.jar..."
+    if command -v curl > /dev/null 2>&1; then
+        curl -sS -o "$JAR" "$JAR_URL" || true
+    elif command -v wget > /dev/null 2>&1; then
+        wget -q -O "$JAR" "$JAR_URL" || true
+    fi
+    if [ ! -f "$JAR" ]; then
+        echo "Warning: Could not download gradle-wrapper.jar. Run: gradle wrapper"
+    fi
+fi
+
+if [ -f "$JAR" ]; then
+    exec "$JAVACMD" $JAVA_OPTS $GRADLE_OPTS -classpath "$JAR" org.gradle.wrapper.GradleWrapperMain "$@"
+else
+    echo "Error: gradle-wrapper.jar not found. Install Gradle and run 'gradle wrapper' in android/"
+    exit 1
+fi

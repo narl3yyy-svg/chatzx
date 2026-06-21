@@ -26,7 +26,7 @@ Send text, emoji, files and folders of any size, images/screenshots (viewable in
 - **Restart server** — restart from the GUI
 - **Configurable received files directory** — choose where incoming files are saved
 - **Off-grid capable** — works over LoRa, packet radio, WiFi, or the internet
-- **PWA ready** — install as standalone app on Android/iOS via Chrome "Add to Home Screen"
+- **Android APK** — standalone app with embedded Python, download from Releases
 - **No accounts, no servers** — your identity is your key
 
 ## Platform Support
@@ -36,7 +36,7 @@ Send text, emoji, files and folders of any size, images/screenshots (viewable in
 | Arch Linux | Supported |
 | Ubuntu | Supported |
 | Debian | Supported |
-| Android (PWA) | Supported |
+| Android (APK) | Supported |
 | macOS | Planned |
 | Windows | Planned |
 
@@ -122,26 +122,21 @@ Click ⚙ in the sidebar header:
 - **🌡** — Live CPU temperature (updates every 5 seconds)
 - **Peers** — Discovered LAN peers + connected peer count
 
-## Android (PWA)
+## Android APK
 
-chatxz is PWA-ready — install it as a standalone app on your phone:
+Download the latest `chatxz.apk` from [Releases](https://github.com/narl3yyy-svg/chatzx/releases).
 
-1. **Run the server** on your LAN machine with `--share` flag
-2. **Open** `http://<server-lan-ip>:8742` in Chrome on Android
-3. **Tap menu** → "Add to Home Screen"
-4. A native-feeling app icon appears on your home screen
+The APK bundles Python 3.13, RNS, aiohttp, and the chatxz web server. On launch it starts the server and opens a WebView — works offline, no Termux needed. CPU architecture: arm64-v8a (most modern Android phones).
 
-### Run Server on Phone (Termux)
+### Build from Source
 
 ```bash
-pkg install python git
-pip install rns aiohttp
-git clone https://github.com/narl3yyy-svg/chatzx.git
-cd chatzx
-python -m chatxz.web.server --share --port 8742
+cd android
+./gradlew assembleDebug
+# Output: android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-For a standalone APK with embedded Python, see `build-android.sh`.
+Requires: Android SDK 34, JDK 17, Gradle 8.x.
 
 ## CLI Usage
 
