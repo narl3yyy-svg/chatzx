@@ -335,6 +335,9 @@ class ChatWebServer:
             await asyncio.sleep(3)
             if self.discovery:
                 peers = self.discovery.get_peers()
+                print(f"[broadcaster] peers={len(peers)}")
+                for p in peers:
+                    print(f"[broadcaster]   {p['hash'][:12]}...")
                 if peers:
                     await self._broadcast({"type": "peers", "data": peers})
 
