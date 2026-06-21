@@ -294,7 +294,7 @@ class MessagingBackend:
             packet = RNS.Packet(self.active_link, msg.to_json().encode("utf-8"))
             packet.send()
             print(f"[messaging] Sent text message: {text[:50]}...")
-            return True
+            return msg
         except Exception as e:
             print(f"[messaging] Send failed: {e}")
             return False
@@ -308,8 +308,12 @@ class MessagingBackend:
         try:
             packet = RNS.Packet(self.active_link, chat_msg.to_json().encode("utf-8"))
             packet.send()
-            resource = RNS.Resource(file_path, self.active_link, callback=self._resource_send_callback(file_path))
-            return True
+            with open(file_path, "rb") as f:
+                resource = RNS.Resource(f.read(), self.active_link,
+                                        callback=self._resource_send_callback(file_path),
+                                        auto_compress=False)
+            print(f"[messaging] Sent file: {fname} ({fsize} bytes)")
+            return chat_msg
         except Exception as e:
             print(f"[messaging] File send failed: {e}")
             return False

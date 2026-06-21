@@ -293,6 +293,7 @@ class ChatWebServer:
 
     async def handle_debug(self, request):
         peers = self.discovery.get_peers() if self.discovery else []
+        received_dir = os.path.join(self.config_dir, "received")
         return web.json_response({
             "identity_hash": self.identity_mgr.get_hex_hash() if self.identity_mgr else None,
             "ws_clients": len(self.websockets),
@@ -302,6 +303,7 @@ class ChatWebServer:
             "message_count": len(self.message_history),
             "loop_running": self._loop is not None and self._loop.is_running(),
             "rns_interfaces": len(RNS.Transport.interfaces) if hasattr(RNS.Transport, 'interfaces') else "unknown",
+            "received_files_dir": received_dir,
         })
 
     async def handle_file_upload(self, request):
@@ -327,9 +329,20 @@ class ChatWebServer:
             tmp.close()
 
             msg_type = "image" if is_image else "file"
-            ok = self.messaging.send_file(tmp.name, msg_type)
+            result = self.messaging.send_file(tmp.name, msg_type)
             os.unlink(tmp.name)
-            if ok:
+            if result:
+                my_hash = self.identity_mgr.get_hex_hash()
+                entry = {
+                    "type": result.msg_type,
+                    "content": result.content,
+                    "sender": my_hash,
+                    "timestamp": result.timestamp,
+                    "file_name": result.file_name,
+                    "file_size": result.file_size,
+                }
+                self.message_history.append(entry)
+                await self._broadcast({"type": "message", "data": entry})
                 return web.json_response({"status": "ok", "name": fname, "size": size})
             return web.json_response({"error": "send failed"}, status=400)
         except Exception as e:
@@ -347,9 +360,20 @@ class ChatWebServer:
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".webm")
             tmp.write(audio_bytes)
             tmp.close()
-            ok = self.messaging.send_file(tmp.name, "voice")
+            result = self.messaging.send_file(tmp.name, "voice")
             os.unlink(tmp.name)
-            if ok:
+            if result:
+                my_hash = self.identity_mgr.get_hex_hash()
+                entry = {
+                    "type": result.msg_type,
+                    "content": result.content,
+                    "sender": my_hash,
+                    "timestamp": result.timestamp,
+                    "file_name": result.file_name,
+                    "file_size": result.file_size,
+                }
+                self.message_history.append(entry)
+                await self._broadcast({"type": "message", "data": entry})
                 return web.json_response({"status": "ok"})
             return web.json_response({"error": "send failed"}, status=400)
         except Exception as e:
@@ -427,7 +451,17 @@ class ChatWebServer:
         if msg_type == "send":
             text = data.get("text", "")
             if text and self.messaging:
-                self.messaging.send_message(text)
+                result = self.messaging.send_message(text)
+                if result:
+                    my_hash = self.identity_mgr.get_hex_hash()
+                    entry = {
+                        "type": result.msg_type,
+                        "content": result.content,
+                        "sender": my_hash,
+                        "timestamp": result.timestamp,
+                    }
+                    self.message_history.append(entry)
+                    await self._broadcast({"type": "message", "data": entry})
         elif msg_type == "connect":
             peer_hash = data.get("hash", "")
             if peer_hash and self.messaging:

@@ -299,6 +299,10 @@ body {
       <p>Your identity hash:</p>
       <input id="settings-hash" readonly style="font-size:11px;color:var(--text2)">
     </div>
+    <div class="settings-section">
+      <p>Received files are saved to:</p>
+      <input id="settings-files-dir" readonly style="font-size:11px;color:var(--text2)">
+    </div>
     <div class="dlg-btn-row">
       <button class="dlg-btn secondary" onclick="closeSettings()">Cancel</button>
       <button class="dlg-btn primary" onclick="saveSettings()">Save</button>
@@ -533,6 +537,11 @@ function showSettings() {
       document.getElementById('settings-interval').value = s.announce_interval || 30;
       document.getElementById('settings-hash').value = myHash;
       document.getElementById('settings-dialog').classList.add('open');
+    });
+  fetch('/api/debug')
+    .then(r => r.json())
+    .then(d => {
+      document.getElementById('settings-files-dir').value = d.received_files_dir || '~/.config/chatxz/received';
     });
 }
 
