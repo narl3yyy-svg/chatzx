@@ -11,6 +11,7 @@ MESSAGE_TYPE_FILE = "file"
 MESSAGE_TYPE_IMAGE = "image"
 MESSAGE_TYPE_VOICE = "voice"
 MESSAGE_TYPE_EMOJI = "emoji"
+MESSAGE_TYPE_LONGTEXT = "longtext"
 
 class ChatMessage:
     def __init__(self, msg_type, content, sender=None, timestamp=None, file_name=None, file_size=None, msg_id=None):
@@ -323,7 +324,7 @@ class MessagingBackend:
                 chat_msg.sender = remote_hash
                 print(f"[messaging] Received {chat_msg.msg_type} from {remote_hash[:16]}...")
 
-                if chat_msg.msg_type in (MESSAGE_TYPE_FILE, MESSAGE_TYPE_IMAGE, MESSAGE_TYPE_VOICE):
+                if chat_msg.msg_type in (MESSAGE_TYPE_FILE, MESSAGE_TYPE_IMAGE, MESSAGE_TYPE_VOICE, MESSAGE_TYPE_LONGTEXT):
                     self._pending_files[link.link_id] = chat_msg
                     print(f"[messaging] Waiting for resource data for {chat_msg.file_name}...")
                 elif self.on_message:
@@ -369,7 +370,17 @@ class MessagingBackend:
                         print(f"[messaging] No data available in resource")
                         return
 
-                    chat_msg.content = save_path
+                    if chat_msg.msg_type == MESSAGE_TYPE_LONGTEXT:
+                        try:
+                            with open(save_path, "r", encoding="utf-8") as f:
+                                long_text = f.read()
+                            chat_msg.msg_type = MESSAGE_TYPE_TEXT
+                            chat_msg.content = long_text
+                            os.unlink(save_path)
+                        except Exception as e:
+                            print(f"[messaging] Failed to read long text: {e}")
+                    else:
+                        chat_msg.content = save_path
                     remote_hash = self._get_remote_hash(link)
                     if self.on_message:
                         self.on_message(chat_msg, remote_hash)
@@ -514,8 +525,12 @@ class MessagingBackend:
             print("[messaging] send_message: no active link")
             return False
         msg = ChatMessage(MESSAGE_TYPE_TEXT, text)
+        data = msg.to_json().encode("utf-8")
+        mtu = getattr(self.active_link, 'mtu', 500)
         try:
-            packet = RNS.Packet(self.active_link, msg.to_json().encode("utf-8"))
+            if len(data) > mtu - 50:
+                return self._send_long_text(msg, text, data, receipt_callback)
+            packet = RNS.Packet(self.active_link, data)
             packet.send()
             print(f"[messaging] Sent text message: {text[:50]}...")
             self._sent_messages[msg.msg_id] = msg
@@ -524,6 +539,35 @@ class MessagingBackend:
             return msg
         except Exception as e:
             print(f"[messaging] Send failed: {e}")
+            return False
+
+    def _send_long_text(self, msg, text, data, receipt_callback):
+        import tempfile as _tf
+        tmp = _tf.NamedTemporaryFile(delete=False, suffix=".txt", mode="w")
+        tmp.write(text)
+        tmp_path = tmp.name
+        tmp.close()
+        meta = ChatMessage(MESSAGE_TYPE_LONGTEXT, json.dumps({"msg_id": msg.msg_id, "file_name": "longtext.txt"}))
+        try:
+            packet = RNS.Packet(self.active_link, meta.to_json().encode("utf-8"))
+            packet.send()
+        except Exception as e:
+            print(f"[messaging] Long text metadata send failed: {e}")
+            os.unlink(tmp_path)
+            return False
+        try:
+            with open(tmp_path, "rb") as f:
+                RNS.Resource(f, self.active_link, callback=self._resource_send_callback("longtext"),
+                             progress_callback=None, auto_compress=True)
+            print(f"[messaging] Sent long text: {text[:50]}... ({len(data)} bytes as resource)")
+            self._sent_messages[msg.msg_id] = msg
+            if receipt_callback:
+                self._receipt_callbacks[msg.msg_id] = receipt_callback
+            os.unlink(tmp_path)
+            return msg
+        except Exception as e:
+            print(f"[messaging] Long text resource send failed: {e}")
+            os.unlink(tmp_path)
             return False
 
     def send_file(self, file_path, msg_type=MESSAGE_TYPE_FILE, progress_callback=None):
