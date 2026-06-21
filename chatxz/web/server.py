@@ -321,20 +321,22 @@ class ChatWebServer:
             ext = os.path.splitext(fname)[1].lower()
             is_image = ext in ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp')
 
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
+            sent_dir = os.path.join(self.config_dir, "sent")
+            os.makedirs(sent_dir, exist_ok=True)
+            save_path = os.path.join(sent_dir, fname)
             size = 0
-            while True:
-                chunk = await field.read_chunk(8192)
-                if not chunk:
-                    break
-                tmp.write(chunk)
-                size += len(chunk)
-            tmp.close()
+            with open(save_path, "wb") as f:
+                while True:
+                    chunk = await field.read_chunk(8192)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    size += len(chunk)
 
             msg_type = "image" if is_image else "file"
-            result = self.messaging.send_file(tmp.name, msg_type)
-            os.unlink(tmp.name)
+            result = self.messaging.send_file(save_path, msg_type)
             if result:
+                result.content = save_path
                 my_hash = self.identity_mgr.get_hex_hash()
                 entry = {
                     "type": result.msg_type,
@@ -360,12 +362,14 @@ class ChatWebServer:
             if not audio_b64:
                 return web.json_response({"error": "no audio data"}, status=400)
             audio_bytes = base64.b64decode(audio_b64)
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".webm")
-            tmp.write(audio_bytes)
-            tmp.close()
-            result = self.messaging.send_file(tmp.name, "voice")
-            os.unlink(tmp.name)
+            sent_dir = os.path.join(self.config_dir, "sent")
+            os.makedirs(sent_dir, exist_ok=True)
+            voice_path = os.path.join(sent_dir, f"voice_{int(time.time())}.webm")
+            with open(voice_path, "wb") as f:
+                f.write(audio_bytes)
+            result = self.messaging.send_file(voice_path, "voice")
             if result:
+                result.content = voice_path
                 my_hash = self.identity_mgr.get_hex_hash()
                 entry = {
                     "type": result.msg_type,
@@ -395,9 +399,11 @@ class ChatWebServer:
 
     async def handle_serve_file(self, request):
         filepath = request.match_info["filepath"]
-        received_dir = os.path.join(self.config_dir, "received")
-        full_path = os.path.normpath(os.path.join(received_dir, filepath))
-        if not full_path.startswith(os.path.normpath(received_dir)):
+        received_dir = os.path.normpath(os.path.join(self.config_dir, "received"))
+        sent_dir = os.path.normpath(os.path.join(self.config_dir, "sent"))
+        full_path = os.path.normpath(os.path.join(self.config_dir, filepath))
+
+        if not (full_path.startswith(received_dir) or full_path.startswith(sent_dir)):
             return web.Response(text="Forbidden", status=403)
         if not os.path.exists(full_path) or not os.path.isfile(full_path):
             return web.Response(text="Not found", status=404)

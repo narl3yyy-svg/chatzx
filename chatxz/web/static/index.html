@@ -657,6 +657,11 @@ function autoResize(el) {
   el.style.height = Math.min(el.scrollHeight, 120) + 'px';
 }
 
+function fileUrl(path) {
+  if (!path) return '';
+  return '/api/file/' + path.replace(/^\/+/, '');
+}
+
 function addMessage(data) {
   const msgs = document.getElementById('messages');
   if (msgs.style.display === 'none') return;
@@ -670,19 +675,22 @@ function addMessage(data) {
     html = escapeHtml(data.content);
   } else if (data.type === 'image') {
     html = `<div>📷 ${escapeHtml(data.file_name || 'Image')}</div>`;
-    if (data.content && data.content.startsWith('/')) {
-      html += `<img class="msg-img" src="/api/file/${encodeURIComponent(data.content)}" onclick="showImage(this.src)">`;
+    if (data.content) {
+      const url = fileUrl(data.content);
+      html += `<img class="msg-img" src="${url}" onclick="showImage(this.src)">`;
     }
   } else if (data.type === 'voice') {
     html = `<div>🎤 ${escapeHtml(data.file_name || 'Voice note')}</div>`;
-    if (data.content && data.content.startsWith('/')) {
-      html += `<audio class="voice-player" controls src="/api/file/${encodeURIComponent(data.content)}"></audio>`;
+    if (data.content) {
+      const url = fileUrl(data.content);
+      html += `<audio class="voice-player" controls src="${url}"></audio>`;
     }
   } else if (data.type === 'file') {
     const sz = data.file_size ? formatSize(data.file_size) : '';
     html = `<div class="file-info"><span class="file-icon">📄</span><span>${escapeHtml(data.file_name || 'File')} ${sz}</span></div>`;
-    if (data.content && data.content.startsWith('/')) {
-      html += `<div style="margin-top:4px"><a href="/api/file/${encodeURIComponent(data.content)}" download="${escapeHtml(data.file_name || 'file')}" style="color:var(--primary);font-size:12px">Download</a></div>`;
+    if (data.content) {
+      const url = fileUrl(data.content);
+      html += `<div style="margin-top:4px"><a href="${url}" download="${escapeHtml(data.file_name || 'file')}" style="color:var(--primary);font-size:12px">Download</a></div>`;
     }
   } else if (data.type === 'system') {
     html = escapeHtml(data.content);
