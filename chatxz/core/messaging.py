@@ -70,6 +70,7 @@ class MessagingBackend:
         self.on_file = on_file
         self.display_name = display_name
         self.auto_announce = auto_announce
+        self.announce_interval = 30
         self.my_ip = my_ip
         self.my_port = my_port
         self.destination = None
