@@ -13,6 +13,7 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import com.chaquo.python.Python;
 import com.chaquo.python.PyObject;
+import com.chaquo.python.android.AndroidPlatform;
 
 public class MainActivity extends AppCompatActivity {
     private WebView webView;
@@ -53,6 +54,9 @@ public class MainActivity extends AppCompatActivity {
     private void startPythonServer() {
         new Thread(() -> {
             try {
+                if (!Python.isStarted()) {
+                    Python.start(new AndroidPlatform(this));
+                }
                 Python python = Python.getInstance();
                 PyObject module = python.getModule("main");
                 PyObject result = module.callAttr("start_server");
