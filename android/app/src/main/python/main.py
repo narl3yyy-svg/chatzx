@@ -1,4 +1,4 @@
-import threading, time, traceback, os, socket, glob, json, subprocess, asyncio
+import threading, time, traceback, os, socket, asyncio
 
 _diag = []
 def _log(msg):
@@ -92,90 +92,22 @@ def start_server():
         raise web.HTTPNotFound()
 
     async def temperature(request):
-        temps = {}
-        def rd(p):
-            try:
-                with open(p) as f: return int(f.read().strip()) / 1000.0
-            except: return None
-        for tz in glob.glob("/sys/class/thermal/thermal_zone*/temp"):
-            c = rd(tz)
-            if c:
-                n = os.path.basename(os.path.dirname(tz)).replace("thermal_zone", "cpu")
-                temps[n] = round(c, 1)
-        if not temps:
-            for hw in glob.glob("/sys/class/hwmon/hwmon*/temp*_input"):
-                c = rd(hw)
-                if c:
-                    base = os.path.dirname(hw)
-                    lbl = None
-                    for sfx in ["label", "name"]:
-                        lp = os.path.join(base, sfx)
-                        if os.path.isfile(lp):
-                            try:
-                                with open(lp) as f: lbl = f.read().strip(); break
-                            except: pass
-                    temps[lbl or os.path.basename(base)] = round(c, 1)
-        if not temps:
-            try:
-                r = subprocess.run(["sensors", "-j"], capture_output=True, text=True, timeout=3)
-                if r.returncode == 0:
-                    for chip, vals in json.loads(r.stdout).items():
-                        for k, v in vals.items():
-                            if isinstance(v, dict):
-                                for sk, sv in v.items():
-                                    if sk.endswith("_input") and isinstance(sv, (int, float)):
-                                        temps[k.replace("_input", "")] = round(sv, 1)
-            except: pass
-        if not temps:
-            try:
-                r = subprocess.run(["acpi", "-t"], capture_output=True, text=True, timeout=3)
-                for line in r.stdout.split("\n"):
-                    if "thermal" in line.lower() and "," in line:
-                        for p in line.split(","):
-                            if "degrees" in p:
-                                try: temps["acpi"] = round(float(p.replace("degrees", "").strip()), 1)
-                                except: pass
-            except: pass
-        return web.json_response({"temperatures": temps})
+        try:
+            from chatxz.utils.system import get_avg_cpu_temperature
+            avg = await asyncio.to_thread(get_avg_cpu_temperature)
+            return web.json_response({"avg_celsius": avg})
+        except Exception:
+            return web.json_response({"avg_celsius": None})
 
     async def cpu(request):
         try:
-            nproc = 0
-            try:
-                with open("/proc/cpuinfo") as f:
-                    nproc = sum(1 for l in f if l.startswith("processor"))
-            except:
-                pass
-            if nproc == 0:
-                try:
-                    nproc = len(os.listdir("/sys/devices/system/cpu/"))
-                except:
-                    pass
-            try:
-                with open("/proc/stat") as f:
-                    p = [int(x) for x in f.readline().split()[1:]]
-                t1, i1 = sum(p), p[3]
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, lambda: time.sleep(0.3))
-                with open("/proc/stat") as f:
-                    p = [int(x) for x in f.readline().split()[1:]]
-                t2, i2 = sum(p), p[3]
-                td, id_ = t2 - t1, i2 - i1
-                pct = round(100.0 * (1.0 - id_ / td), 1) if td > 0 else 0.0
+            from chatxz.utils.system import get_cpu_percent
+            pct = await asyncio.to_thread(get_cpu_percent)
+            if pct is not None:
                 return web.json_response({"cpu_percent": pct})
-            except (PermissionError, FileNotFoundError, IndexError, ValueError) as e:
-                try:
-                    with open("/proc/loadavg") as f:
-                        la = float(f.read().split()[0])
-                    if nproc > 0:
-                        pct = min(round(la / nproc * 100, 1), 100.0)
-                        return web.json_response({"cpu_percent": pct, "approx": True})
-                except:
-                    pass
-                raise
+            return web.json_response({"cpu_percent": None})
         except Exception as e:
-            tb = traceback.format_exc()
-            return web.json_response({"cpu_percent": None, "error": str(e), "traceback": tb})
+            return web.json_response({"cpu_percent": None, "error": str(e)})
 
     async def health(request):
         return web.Response(text="ok")

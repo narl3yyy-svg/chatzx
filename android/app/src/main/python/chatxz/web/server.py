@@ -1,16 +1,15 @@
-import os, json, time, base64, mimetypes, asyncio, socket, zipfile, shutil
+import os, json, time, base64, mimetypes, asyncio, socket, zipfile, shutil, subprocess, tempfile
 from pathlib import Path
 
-import aiohttp
 from aiohttp import web
 import RNS
 
 from chatxz.core.identity import IdentityManager
-from chatxz.core.messaging import MessagingBackend, ChatMessage
-from chatxz.core.filetransfer import FileTransfer
+from chatxz.core.messaging import MessagingBackend
 from chatxz.core.voice import VoiceRecorder, VoicePlayer
 from chatxz.core.discovery import PeerDiscovery
-from chatxz.utils.helpers import get_config_dir, get_data_dir, format_size, truncate_hash
+from chatxz.utils.helpers import get_config_dir, get_data_dir, format_size, format_speed, truncate_hash
+from chatxz.utils.system import get_avg_cpu_temperature, get_cpu_percent
 
 CONFIG_DIR = get_config_dir()
 DATA_DIR = get_data_dir()
@@ -78,7 +77,6 @@ class ChatWebServer:
         self.identity_mgr = IdentityManager(self.config_dir)
         self.identity = None
         self.messaging = None
-        self.file_transfer = None
         self.voice_recorder = None
 
         self.websockets = set()
@@ -103,8 +101,6 @@ class ChatWebServer:
     def save_settings(self, settings):
         with open(SETTINGS_FILE, "w") as f:
             json.dump(settings, f, indent=2)
-
-    HISTORY_FILE = None
 
     def _history_file(self):
         return os.path.join(self.config_dir, "history.json")
@@ -210,13 +206,13 @@ class ChatWebServer:
         self.messaging = MessagingBackend(
             self.identity, self.config_dir,
             on_message=self._on_message,
+            on_progress=self._on_transfer_progress,
             display_name=settings.get("name", ""),
             auto_announce=False,
             my_ip=my_ip,
             my_port=self.port,
             receive_dir=received_dir,
         )
-        self.file_transfer = FileTransfer(self.config_dir)
         self.voice_recorder = VoiceRecorder(self.config_dir)
         dest = self.messaging.start()
 
@@ -252,6 +248,13 @@ class ChatWebServer:
                 await ws.send_str(msg)
             except:
                 self.websockets.discard(ws)
+
+    def _on_transfer_progress(self, data):
+        if self.websockets and self._loop:
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast({"type": "progress", "data": data}),
+                self._loop
+            )
 
     async def _send_peers_to(self, ws):
         if self.discovery:
@@ -367,6 +370,69 @@ class ChatWebServer:
     async def handle_settings_get(self, request):
         return web.json_response(self.load_settings())
 
+    def _normalize_received_dir(self, raw):
+        path = os.path.normpath(os.path.expanduser((raw or "").strip()))
+        if not path:
+            return None, "Path is empty"
+        if not os.path.isabs(path):
+            return None, "Path must be absolute (e.g. /home/user/Downloads)"
+        try:
+            os.makedirs(path, exist_ok=True)
+        except OSError as e:
+            return None, f"Cannot create directory: {e}"
+        if not os.path.isdir(path):
+            return None, "Path is not a directory"
+        return path, None
+
+    def _apply_received_dir(self, settings):
+        received_dir = settings.get("received_dir")
+        if not received_dir:
+            return
+        path, err = self._normalize_received_dir(received_dir)
+        if err:
+            return
+        settings["received_dir"] = path
+        if self.messaging:
+            self.messaging.receive_dir = path
+
+    def _pick_directory_native(self):
+        settings = self.load_settings()
+        start = settings.get("received_dir", os.path.join(self.config_dir, "received"))
+        start = os.path.expanduser(start)
+        if not os.path.isdir(start):
+            start = os.path.expanduser("~")
+
+        commands = []
+        if shutil.which("zenity"):
+            commands.append(["zenity", "--file-selection", "--directory", f"--filename={start}/"])
+        if shutil.which("kdialog"):
+            commands.append(["kdialog", "--getexistingdirectory", start])
+        if shutil.which("yad"):
+            commands.append(["yad", "--file", "--directory", f"--filename={start}"])
+
+        for cmd in commands:
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                if result.returncode == 0:
+                    picked = result.stdout.strip()
+                    if picked:
+                        return os.path.normpath(picked)
+            except Exception:
+                continue
+        return None
+
+    async def handle_browse_dir(self, request):
+        try:
+            picked = await asyncio.to_thread(self._pick_directory_native)
+            if not picked:
+                return web.json_response({"error": "cancelled"}, status=400)
+            path, err = self._normalize_received_dir(picked)
+            if err:
+                return web.json_response({"error": err}, status=400)
+            return web.json_response({"path": path})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
     async def handle_settings_post(self, request):
         try:
             data = await request.json()
@@ -378,13 +444,14 @@ class ChatWebServer:
                 if data["history_retention"] in valid:
                     settings["history_retention"] = data["history_retention"]
             if "received_dir" in data:
-                raw = data["received_dir"].strip()
-                if os.path.isdir(raw) or os.path.exists(os.path.dirname(raw)):
-                    settings["received_dir"] = raw
-                    os.makedirs(raw, exist_ok=True)
+                path, err = self._normalize_received_dir(data["received_dir"])
+                if err:
+                    return web.json_response({"error": err}, status=400)
+                settings["received_dir"] = path
             self.save_settings(settings)
             if self.messaging:
                 self.messaging.display_name = settings.get("name", "")
+            self._apply_received_dir(settings)
             self._apply_retention()
             self._save_history()
             return web.json_response({"status": "ok", "settings": settings})
@@ -414,110 +481,14 @@ class ChatWebServer:
         return web.json_response({"status": "restarting"})
 
     async def handle_temperature(self, request):
-        import subprocess as _sp
-        try:
-            temps = {}
+        avg = await asyncio.to_thread(get_avg_cpu_temperature)
+        return web.json_response({"avg_celsius": avg})
 
-            def read_sysfs_temp(path):
-                try:
-                    with open(path) as f:
-                        raw = f.read().strip()
-                    return int(raw) / 1000.0 if raw else None
-                except:
-                    return None
-
-            for base in ["/sys/class/thermal", "/sys/devices/virtual/thermal"]:
-                if os.path.exists(base):
-                    for name in os.listdir(base):
-                        if name.startswith("thermal_zone"):
-                            tpath = os.path.join(base, name, "temp")
-                            ttype_path = os.path.join(base, name, "type")
-                            celsius = read_sysfs_temp(tpath)
-                            if celsius is not None:
-                                ttype = "unknown"
-                                if os.path.exists(ttype_path):
-                                    with open(ttype_path) as f:
-                                        ttype = f.read().strip()
-                                if ttype not in temps:
-                                    temps[ttype] = round(celsius, 1)
-
-            hwmon = "/sys/class/hwmon"
-            if os.path.exists(hwmon):
-                for name in sorted(os.listdir(hwmon)):
-                    hpath = os.path.join(hwmon, name)
-                    if not os.path.isdir(hpath):
-                        continue
-                    for entry in sorted(os.listdir(hpath)):
-                        if entry.endswith("_input") and "temp" in entry:
-                            celsius = read_sysfs_temp(os.path.join(hpath, entry))
-                            if celsius is None:
-                                continue
-                            label = name
-                            lpath = os.path.join(hpath, entry.replace("_input", "_label"))
-                            if os.path.exists(lpath):
-                                with open(lpath) as f:
-                                    label = f.read().strip()
-                            name_path = os.path.join(hpath, "name")
-                            if os.path.exists(name_path) and label == name:
-                                with open(name_path) as f:
-                                    label = f.read().strip()
-                            if label not in temps:
-                                temps[label] = round(celsius, 1)
-
-            if not temps:
-                try:
-                    r = _sp.run(["sensors", "-j"], capture_output=True, text=True, timeout=3)
-                    if r.returncode == 0 and r.stdout.strip():
-                        import json as _json
-                        data = _json.loads(r.stdout)
-                        for chip, vals in data.items():
-                            for key, val in vals.items():
-                                if isinstance(val, dict):
-                                    for sk, sv in val.items():
-                                        if sk.endswith("_input") and isinstance(sv, (int, float)):
-                                            label = f"{chip} {key}".replace("-", " ").title()
-                                            if label not in temps:
-                                                temps[label] = round(sv, 1)
-                except:
-                    pass
-            if not temps:
-                try:
-                    r = _sp.run(["sensors", "-u"], capture_output=True, text=True, timeout=3)
-                    if r.returncode == 0:
-                        for line in r.stdout.split("\n"):
-                            if "temp" in line and "_input" in line:
-                                parts = line.split(":")
-                                if len(parts) == 2:
-                                    try:
-                                        val = float(parts[1].strip())
-                                        label = parts[0].strip().replace("_input", "").replace("_", " ").title()
-                                        if label not in temps:
-                                            temps[label] = round(val, 1)
-                                    except:
-                                        pass
-                except:
-                    pass
-            if not temps:
-                try:
-                    r = _sp.run(["acpi", "-t"], capture_output=True, text=True, timeout=3)
-                    if r.returncode == 0:
-                        for line in r.stdout.strip().split("\n"):
-                            line = line.strip()
-                            if "thermal" in line.lower() and "degrees" in line.lower():
-                                parts = line.split(",")
-                                for p in parts:
-                                    p = p.strip()
-                                    if "degrees C" in p:
-                                        val = p.replace("degrees C", "").strip()
-                                        try:
-                                            temps["acpi"] = round(float(val), 1)
-                                        except:
-                                            pass
-                except:
-                    pass
-            return web.json_response({"temperatures": temps})
-        except:
-            return web.json_response({"temperatures": {}})
+    async def handle_cpu(self, request):
+        pct = await asyncio.to_thread(get_cpu_percent)
+        if pct is not None:
+            return web.json_response({"cpu_percent": pct})
+        return web.json_response({"cpu_percent": None})
 
     async def handle_debug(self, request):
         peers = self.discovery.get_peers() if self.discovery else []
@@ -582,8 +553,7 @@ class ChatWebServer:
             self._save_history()
             await self._broadcast({"type": "message", "data": entry})
 
-            self.messaging.direct_send_file(save_path, msg_type)
-            result = self.messaging.send_file(save_path, msg_type,
+            result = self.messaging.send_file_smart(save_path, msg_type,
                                                progress_callback=self._make_progress_callback(fname, size))
             if result:
                 return web.json_response({"status": "ok", "name": fname, "size": size, "method": "resource"})
@@ -650,8 +620,7 @@ class ChatWebServer:
             self.message_history.append(entry)
             self._save_history()
             await self._broadcast({"type": "message", "data": entry})
-            self.messaging.direct_send_file(zip_path, "file")
-            result = self.messaging.send_file(zip_path, "file",
+            result = self.messaging.send_file_smart(zip_path, "file",
                                                progress_callback=self._make_progress_callback(zip_name, zsize))
             if result:
                 return web.json_response({"status": "ok", "name": zip_name, "size": zsize})
@@ -668,20 +637,34 @@ class ChatWebServer:
                 elapsed = time.time() - start
                 bytes_xfer = progress * total_size
                 speed = bytes_xfer / elapsed if elapsed > 0 else 0
-                speed_str = format_size(speed) + "/s"
-                if self.websockets and self._loop:
-                    asyncio.run_coroutine_threadsafe(
-                        self._broadcast({"type": "progress", "data": {
-                            "file_name": fname,
-                            "progress": pct,
-                            "size": total_size,
-                            "speed": speed_str,
-                        }}),
-                        self._loop
-                    )
+                speed_str = format_speed(speed)
+                self._on_transfer_progress({
+                    "file_name": fname,
+                    "progress": pct,
+                    "size": total_size,
+                    "speed": speed_str,
+                    "direction": "send",
+                    "status": "active",
+                })
             except:
                 pass
         return callback
+
+    async def handle_transfer_cancel(self, request):
+        if not self.messaging:
+            return web.json_response({"error": "not ready"}, status=400)
+        try:
+            data = await request.json() if request.can_read_body else {}
+        except Exception:
+            data = {}
+        transfer_id = data.get("transfer_id")
+        cancelled = self.messaging.cancel_transfer(transfer_id)
+        await self._broadcast({"type": "progress", "data": {
+            "status": "cancelled",
+            "progress": 0,
+            "file_name": data.get("file_name", ""),
+        }})
+        return web.json_response({"status": "ok" if cancelled else "noop"})
 
     async def handle_voice_upload(self, request):
         if not self.messaging:
@@ -719,8 +702,7 @@ class ChatWebServer:
             self._save_history()
             await self._broadcast({"type": "message", "data": entry})
 
-            self.messaging.direct_send_file(voice_path, "voice")
-            result = self.messaging.send_file(voice_path, "voice",
+            result = self.messaging.send_file_smart(voice_path, "voice",
                                                progress_callback=self._make_progress_callback(os.path.basename(voice_path), len(audio_bytes)))
             if result:
                 return web.json_response({"status": "ok"})
@@ -751,6 +733,9 @@ class ChatWebServer:
         if not os.path.exists(full_path) or not os.path.isfile(full_path):
             return web.Response(text="Not found: " + full_path, status=404)
         ct, _ = mimetypes.guess_type(full_path)
+        if not ct:
+            ext = os.path.splitext(full_path)[1].lower()
+            ct = {"webm": "audio/webm"}.get(ext.lstrip("."))
         resp = web.FileResponse(full_path)
         if ct:
             resp.headers['Content-Type'] = ct
@@ -760,17 +745,73 @@ class ChatWebServer:
         token = request.match_info.get("token", "")
         if not self.messaging:
             return web.Response(text="Not ready", status=503)
-        info = self.messaging.direct_transfer_tokens.pop(token, None)
+        info = self.messaging.direct_transfer_tokens.get(token)
         if not info:
             return web.Response(text="Invalid or expired token", status=404)
         file_path = info["path"]
         if not os.path.exists(file_path):
+            self.messaging.direct_transfer_tokens.pop(token, None)
             return web.Response(text="File not found", status=404)
+
+        fname = info.get("name") or os.path.basename(file_path)
+        total = info.get("size") or os.path.getsize(file_path)
+        transfer_id = info.get("transfer_id", token)
         ct, _ = mimetypes.guess_type(file_path)
-        resp = web.FileResponse(file_path)
-        if ct:
-            resp.headers['Content-Type'] = ct
-        resp.headers['X-Direct-Transfer'] = '1'
+        if not ct:
+            ct = "application/octet-stream"
+
+        resp = web.StreamResponse()
+        resp.headers["Content-Type"] = ct
+        resp.headers["Content-Length"] = str(total)
+        resp.headers["X-Direct-Transfer"] = "1"
+        await resp.prepare(request)
+
+        sent = 0
+        start = time.time()
+        try:
+            with open(file_path, "rb") as f:
+                while True:
+                    if self.messaging._cancel_events.get(transfer_id) and self.messaging._cancel_events[transfer_id].is_set():
+                        break
+                    chunk = f.read(262144)
+                    if not chunk:
+                        break
+                    await resp.write(chunk)
+                    sent += len(chunk)
+                    elapsed = time.time() - start
+                    pct = int(sent * 100 / total) if total else 0
+                    speed = format_speed(sent / elapsed) if elapsed > 0 else ""
+                    self._on_transfer_progress({
+                        "file_name": fname,
+                        "progress": pct,
+                        "size": total,
+                        "speed": speed,
+                        "direction": "send",
+                        "transfer_id": transfer_id,
+                        "status": "active",
+                    })
+            if sent >= total:
+                self._on_transfer_progress({
+                    "file_name": fname,
+                    "progress": 100,
+                    "size": total,
+                    "direction": "send",
+                    "transfer_id": transfer_id,
+                    "status": "complete",
+                })
+        except Exception as e:
+            print(f"[direct] stream error: {e}")
+            self._on_transfer_progress({
+                "file_name": fname,
+                "progress": 0,
+                "size": total,
+                "direction": "send",
+                "transfer_id": transfer_id,
+                "status": "failed",
+            })
+        finally:
+            self.messaging.direct_transfer_tokens.pop(token, None)
+            await resp.write_eof()
         return resp
 
     async def handle_queue(self, request):
@@ -792,6 +833,18 @@ class ChatWebServer:
         self._save_history()
         return web.json_response({"status": "ok"})
 
+    async def handle_delete_message(self, request):
+        msg_id = request.match_info.get("msg_id", "")
+        if not msg_id:
+            return web.json_response({"error": "msg_id required"}, status=400)
+        before = len(self.message_history)
+        self.message_history = [m for m in self.message_history if m.get("msg_id") != msg_id]
+        if len(self.message_history) == before:
+            return web.json_response({"error": "not found"}, status=404)
+        self._save_history()
+        await self._broadcast({"type": "message_deleted", "data": {"msg_id": msg_id}})
+        return web.json_response({"status": "ok"})
+
     async def handle_history(self, request):
         self._apply_retention()
         limit = int(request.query.get("limit", 500))
@@ -807,13 +860,13 @@ class ChatWebServer:
 
         try:
             async for msg in ws:
-                if msg.type == aiohttp.WSMsgType.TEXT:
+                if msg.type == web.WSMsgType.TEXT:
                     try:
                         data = json.loads(msg.data)
                         await self._handle_ws_message(ws, data)
                     except json.JSONDecodeError:
                         pass
-                elif msg.type == aiohttp.WSMsgType.ERROR:
+                elif msg.type == web.WSMsgType.ERROR:
                     break
         except:
             pass
@@ -921,10 +974,13 @@ class ChatWebServer:
         app.router.add_post("/api/play", self.handle_play_voice)
         app.router.add_get("/api/history", self.handle_history)
         app.router.add_post("/api/history/clear", self.handle_history_clear)
+        app.router.add_delete("/api/history/{msg_id}", self.handle_delete_message)
         app.router.add_get("/api/discover", self.handle_discover)
         app.router.add_get("/api/debug", self.handle_debug)
         app.router.add_get("/api/settings", self.handle_settings_get)
         app.router.add_post("/api/settings", self.handle_settings_post)
+        app.router.add_get("/api/browse-dir", self.handle_browse_dir)
+        app.router.add_post("/api/transfer/cancel", self.handle_transfer_cancel)
         app.router.add_get("/api/file/{filepath:.*}", self.handle_serve_file)
         app.router.add_get("/api/direct-transfer/{token}", self.handle_direct_transfer)
         app.router.add_get("/api/queue", self.handle_queue)
@@ -932,6 +988,7 @@ class ChatWebServer:
         app.router.add_post("/api/identity/regenerate", self.handle_regenerate_identity)
         app.router.add_post("/api/restart", self.handle_restart)
         app.router.add_get("/api/temperature", self.handle_temperature)
+        app.router.add_get("/api/cpu", self.handle_cpu)
         app.router.add_get("/ws", self.handle_websocket)
 
         my_hash = self.start_rns()

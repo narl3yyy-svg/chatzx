@@ -1,10 +1,8 @@
-import threading, RNS, json, time, base64, os, tempfile
-import urllib.request, urllib.error
-from datetime import datetime
-import uuid
+import threading, RNS, json, time, os, tempfile, uuid
+import urllib.request
+from chatxz.utils.helpers import format_speed
 
 APP_NAME = "chatxz"
-ANNOUNCE_INTERVAL = 30
 DIRECT_TRANSFER_THRESHOLD = 256 * 1024
 
 MESSAGE_TYPE_TEXT = "text"
@@ -491,9 +489,7 @@ class MessagingBackend:
                             downloaded += len(chunk)
                             elapsed = time.time() - start
                             pct = int(downloaded * 100 / total) if total else 0
-                            speed = ""
-                            if elapsed > 0:
-                                speed = f"{downloaded / elapsed / 1024 / 1024:.1f} MB/s"
+                            speed = format_speed(downloaded / elapsed) if elapsed > 0 else ""
                             self._emit_progress(fname, pct, total, speed, direction="receive", transfer_id=transfer_id)
 
                 actual = os.path.getsize(save_path)

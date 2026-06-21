@@ -1,43 +1,57 @@
 # chatxz
 
-Decentralized instant messaging powered by the [Reticulum Network Stack](https://reticulum.network/).
+Decentralized peer-to-peer messaging over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no central servers — your identity is a local cryptographic keypair.
 
-Send text, emoji, files and folders of any size, images/screenshots (viewable inline), and voice notes — all encrypted by default, no servers needed.
+Send text, emoji, files and folders of any size, inline images, and voice notes. Everything is encrypted end-to-end by Reticulum.
+
+## What It Does
+
+chatxz is a self-hosted chat application with a modern web UI and a CLI. You run a local server that speaks Reticulum on your network (WiFi, LAN, packet radio, LoRa, or the internet). Peers connect directly using identity hashes — no signup, no cloud relay.
+
+The web interface handles day-to-day use: connect to friends, send messages, transfer large files with live progress, manage contacts, and configure storage. The CLI is for scripting, headless use, and quick one-off sends.
 
 ## Features
 
-- **End-to-end encrypted** messaging via Reticulum
-- **Unlimited file sizes** — send any file over RNS Resources with progress bar + MB/s
-- **Folder upload** — send entire directories as compressed zip
-- **Screenshot preview** — images display inline, click to enlarge, save button
-- **Voice notes** — record from browser mic (MediaRecorder API) and send
-- **Emoji picker** — full Unicode emoji support
-- **Drag & drop** — drag files onto the page to upload
-- **Clipboard paste** — paste screenshots from clipboard
-- **Long text support** — messages exceeding the link MTU are automatically sent as file resources and reconstructed on the receiving end
-- **Copy button** — hover any text/emoji message to copy its content
-- **Delivery receipts** — sent/delivered/read indicators on messages
-- **Chat history** — persisted locally, configurable retention (1d / 1w / 1m / 6m / 12m / never / on restart / on close), clear anytime
-- **Contacts** — save peers with names, right-click sidebar panel
+### Messaging
+- **End-to-end encrypted** text, emoji, and system messages via Reticulum Links
+- **Delivery receipts** — sending, sent, delivered, read indicators
+- **Copy button** — hover any text/emoji message to copy
+- **Delete individual messages** — hover and click 🗑 to remove a message from history
+- **Chat history** — persisted locally with configurable retention (1d / 1w / 1m / 6m / 12m / never / on restart / on close)
+- **Clear all history** — one-click wipe from Settings
+- **Offline queue** — messages queued when peer is disconnected, sent on reconnect
+- **Long text** — messages exceeding link MTU are sent as file resources and reconstructed on receive
+
+### Files & Media
+- **Unlimited file sizes** — large files use direct HTTP transfer (fast, resumable progress); RNS Resources as fallback
+- **Real-time transfer speed** — live MB/s shown in the bottom dock during send and receive
+- **Cancel transfers** — stop an in-progress send or receive from the bottom dock
+- **Folder upload** — entire directories compressed to zip and sent
+- **Drag & drop** and **clipboard paste** for files and screenshots
+- **Inline image preview** — click to enlarge, save button
+- **Voice notes** — record from browser mic (MediaRecorder) and send
+- **Configurable received-files directory** — choose save location with native folder picker (Linux)
+
+### Network & Peers
 - **LAN discovery** — auto-discovers peers broadcasting on the same network
-- **Manual announce only** — you decide when to broadcast your presence
-- **CPU temperature** — live system temp shown in sidebar (Arch, Ubuntu, Debian)
-- **Connection status** — colored indicators for WebSocket and link state
-- **Change identity** — regenerate your keypair (old key is deleted)
+- **Manual announce** — you choose when to broadcast presence
+- **Contacts** — save peers with display names; right-click sidebar for actions
+- **Connection status** — WebSocket and Reticulum link indicators in the bottom dock
+
+### System & Settings
+- **Modern dark UI** — glass panels, bottom status dock, card-based settings
+- **Average CPU temperature** — single reading averaged across all cores (hwmon → thermal zones → sensors)
+- **CPU usage** — live percentage in the bottom dock
+- **Regenerate identity** — create a new keypair from Settings
 - **Restart server** — restart from the GUI
-- **Configurable received files directory** — choose where incoming files are saved
 - **Off-grid capable** — works over LoRa, packet radio, WiFi, or the internet
-- **Android APK** — standalone app with embedded Python, download from Releases
-- **No accounts, no servers** — your identity is your key
 
-## Platform Support
-
+### Platforms
 | Platform | Status |
 |----------|--------|
 | Arch Linux | Supported |
-| Ubuntu | Supported |
-| Debian | Supported |
-| Android (APK) | Supported |
+| Ubuntu / Debian | Supported |
+| Android (APK) | Supported (WebView + embedded Python) |
 | macOS | Planned |
 | Windows | Planned |
 
@@ -63,165 +77,144 @@ pip install .
 ### Run
 
 ```bash
-# Web UI (development mode, verbose logging)
+# Web UI (development, verbose RNS logging)
 ./run.sh web --share --verbose
 
-# Web UI (production)
+# Web UI (production, LAN accessible)
 chatzx-web --share
 
-# CLI mode
+# CLI
 ./run.sh cli
 # or
 chatzx
 ```
 
-The web interface runs at **http://localhost:8742** (or your LAN IP when using `--share`).
+Open **http://localhost:8742** (or your LAN IP with `--share`).
 
 ## Web Interface Guide
 
 ### Connecting to a Peer
 
-1. **Share your identity hash** — shown at the top of the sidebar and on server startup (e.g. `ab12cd34...`). Give this to your friend.
-2. **Get their hash** — they share theirs with you.
-3. **Connect panel** — click the sidebar peer icon, enter their hash, optionally save as a contact.
-4. **Click the contact** to connect. A green "Link: active" indicator appears.
-5. **Announce** — click "Announce" to broadcast your presence on the LAN. Others will appear under "Discovered on LAN".
-6. **Right-click** any contact or discovered peer to open the action panel (Connect, Save Contact, Delete).
+1. Share your **identity hash** from the sidebar (click to copy).
+2. Enter your friend's hash in the Connect panel.
+3. Click a contact or discovered peer to connect — green **Link: active** when ready.
+4. Click **Announce** to broadcast on LAN; discovered peers appear in the sidebar.
+5. Right-click any contact for Connect, Save Contact, or Delete.
 
 ### Sending Files
 
-- **Single file** — click the 📎 button or drag & drop a file onto the page
-- **Multiple files** — same, select multiple in the file picker
-- **Folder** — click the 📁 button and select a folder (all files inside are compressed and sent as zip)
-- **Progress** — a progress bar shows transfer percentage, file size, and MB/s
+- **Single / multiple files** — 📎 button, or drag & drop onto the page
+- **Folder** — 📁 button (compressed to zip)
+- **Progress** — bottom dock shows filename, percentage, size, and **live transfer speed**
+- **Cancel** — Cancel button appears during active transfers
 
-### Delivery Receipts
+### Message Actions
 
-Messages show status indicators:
-- 🕐 Sending
-- ✓ Sent
-- ✓✓ Delivered (peer received it)
-- 👁 Read (peer viewed it)
+- **Copy** — hover a text/emoji message, click 📋
+- **Delete** — hover any message, click 🗑 (removes from local history)
+- **Receipts** — 🕐 sending · ✓ sent · ✓✓ delivered · 👁 read
 
-### Settings
-
-Click ⚙ in the sidebar header (toggles between Contacts and Settings view):
+### Settings (⚙ in sidebar header)
 
 | Setting | Description |
 |---------|-------------|
 | Display Name | Shown in LAN announces |
-| History Retention | Auto-delete by time (1d/1w/1m/6m/12m/never/on restart/on close) |
-| Clear History Now | Immediately delete all chat history |
-| Save Received Files To | Directory where incoming files are saved (editable with browse button) |
-| Regenerate Identity | Create a new keypair (old key is deleted, no backup) |
-| Restart Server | Restart the web server from the GUI |
+| History Retention | Auto-delete by time or on restart/close |
+| Clear History Now | Delete all messages immediately |
+| Save Received Files To | Incoming file directory (with browse button on Linux) |
+| Regenerate Identity | New keypair (old key deleted, no backup) |
+| Restart Server | Restart from the GUI |
 
-### Sidebar Indicators
+### Bottom Dock
 
-- **WS dot** — WebSocket connection to the server (green = connected, orange = connecting, red = disconnected)
-- **Link dot** — Reticulum link to peer (green = active, gray = inactive)
-- **Peers** — Discovered LAN peers + connected peer count (e.g. "2 peers (1 connected)")
-- **🌡** — Live CPU temperature (updates every 5s, cross-distro: thermal_zone → hwmon → sensors → acpi)
-
-## Android APK
-
-Download the latest `chatxz.apk` from [Releases](https://github.com/narl3yyy-svg/chatzx/releases).
-
-The APK bundles Python 3.13, RNS, aiohttp, and the chatxz web server. On launch it starts the server and opens a WebView — works offline, no Termux needed. CPU architecture: arm64-v8a (most modern Android phones).
-
-The APK is automatically built by GitHub Actions when a tag starting with `v` is pushed. Builds can be monitored at [Actions → Build Android APK](https://github.com/narl3yyy-svg/chatzx/actions/workflows/build-apk.yml).
-
-### Build from Source (requires SDK 34, JDK 17, Gradle 8.x)
-
-```bash
-cd android
-./gradlew assembleDebug
-# Output: android/app/build/outputs/apk/debug/app-debug.apk
-
-# Release build (signed)
-./gradlew assembleRelease
-```
-
-Requires: Android SDK 34, JDK 17, Gradle 8.x.
+| Indicator | Meaning |
+|-----------|---------|
+| 🌡 | Average CPU temperature across cores |
+| ⚡ | CPU usage % |
+| WS dot | WebSocket to local server (green = connected) |
+| Link dot | Reticulum link to peer (green = active) |
+| Center bar | File transfer progress + live speed |
+| Cancel | Stop active transfer |
 
 ## CLI Usage
 
 ```bash
-# Interactive mode
-chatzx
-
-# Send a one-off message
-chatzx --connect <peer_hash> --send "Hello!"
-
-# Send a file
-chatzx --connect <peer_hash> --file screenshot.png
-
-# Record and send voice
-chatzx --connect <peer_hash> --voice
-
-# Listen daemon
-chatzx --daemon
+chatzx                              # Interactive mode
+chatzx --connect <hash> --send "Hi" # One-off message
+chatzx --connect <hash> --file x.png
+chatzx --connect <hash> --voice     # Record and send
+chatzx --daemon                     # Listen only
 ```
 
-### Interactive Commands
-
-```
-/connect <hash>   - Connect to a peer
-/send <text>      - Send a message
-/file <path>      - Send a file
-/voice            - Record and send voice
-/play <path>      - Play a voice note
-/contacts         - List contacts
-/add <hash:name>  - Add a contact
-/myid             - Show your identity
-/help             - Show help
-/quit             - Exit
-```
+Interactive commands: `/connect`, `/send`, `/file`, `/voice`, `/play`, `/contacts`, `/add`, `/myid`, `/help`, `/quit`
 
 ## Architecture
 
-chatxz uses [Reticulum](https://reticulum.network/) (RNS) for all networking:
+```
+Web UI (browser)  ←WebSocket/HTTP→  Local Server (aiohttp)
+                                         ↓
+                                   MessagingBackend
+                                         ↓
+                              Reticulum (RNS) — encrypted links
+                                         ↓
+                                    Remote Peer
+```
 
-- **Identities** — Ed25519/X25519 key pairs, stored locally in `~/.config/chatxz/identities/identity`
-- **Destinations** — announced on the network as `chatxz.messages`
-- **Links** — encrypted bi-directional channels between peers
-- **Resources** — reliable transfer of arbitrary-size data (files, images, voice)
+### File Transfer Strategy
 
-All data is encrypted end-to-end by Reticulum. No plaintext is ever sent.
+1. **Direct HTTP** (primary for files/images) — sender offers a token over RNS; receiver downloads via `http://peer:port/api/direct-transfer/{token}`. Handles large files without RNS segment timeouts.
+2. **RNS Resources** (fallback) — reliable transfer for smaller payloads and when direct HTTP is unavailable.
+3. Progress and speed are broadcast over WebSocket to all connected browser tabs.
 
-### Data Flow
-
-1. **Web UI** connects to the local server via WebSocket at `/ws`
-2. **Server** manages Reticulum identity, links, and message routing
-3. **Peer discovery** is manual — click "Announce" to broadcast on LAN
-4. **File transfer** uses RNS Resources (reliable, with progress) + direct HTTP (bonus)
-5. **Delivery receipts** are sent automatically when messages are received and read
-6. **History** is persisted to `~/.config/chatxz/history.json`
-7. **Settings** stored in `~/.config/chatxz/settings.json`
-8. **Queue** stores offline messages in `~/.config/chatxz/queue.json`
-
-## Directory Structure
+### Data Storage
 
 ```
 ~/.config/chatxz/
-  config              # RNS configuration
-  settings.json       # User settings (name, history_retention, received_dir)
-  history.json        # Chat message history
-  queue.json          # Queued offline messages
-  identities/
-    identity          # Your Reticulum keypair
-  contacts/           # Saved contacts (filename = hash, content = name)
-  received/           # Default received files directory
-  sent/               # All sent files (permanently saved)
+  config              # RNS configuration (auto-generated)
+  settings.json       # Display name, retention, received_dir
+  history.json        # Chat messages (with msg_id for delete)
+  queue.json          # Offline message queue
+  identities/identity # Ed25519/X25519 keypair
+  contacts/           # Saved contacts (hash → name)
+  received/           # Default incoming files
+  sent/               # Copies of sent files
 ```
+
+## Android APK
+
+Download `chatxz.apk` from [Releases](https://github.com/narl3yyy-svg/chatzx/releases).
+
+The APK bundles Python 3.13, RNS, aiohttp, and the chatxz web UI in a WebView. Built automatically on version tags via GitHub Actions.
+
+```bash
+cd android && ./gradlew assembleDebug
+# Output: android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Requires Android SDK 34, JDK 17, Gradle 8.x. CPU: arm64-v8a.
 
 ## Development
 
 ```bash
-# Run with verbose RNS logging
-./run.sh web --share --verbose
+./run.sh web --share --verbose   # Verbose RNS logging
+```
 
-# Run.sh is in the repo root — it auto-installs deps and starts the server
+### Project Layout
+
+```
+chatxz/
+  app.py              # CLI entry point
+  core/
+    messaging.py      # RNS links, file transfer, queue
+    identity.py       # Keypair management
+    discovery.py      # LAN peer discovery
+    voice.py          # Voice record/playback
+  web/
+    server.py         # aiohttp server + API + WebSocket
+    static/index.html # Single-file web UI
+  utils/
+    helpers.py        # Paths, format_size, format_speed
+    system.py         # CPU temp & usage metrics
 ```
 
 ## License

@@ -1,16 +1,15 @@
-import os, json, time, base64, mimetypes, asyncio, socket, zipfile, shutil, subprocess
+import os, json, time, base64, mimetypes, asyncio, socket, zipfile, shutil, subprocess, tempfile
 from pathlib import Path
 
-import aiohttp
 from aiohttp import web
 import RNS
 
 from chatxz.core.identity import IdentityManager
-from chatxz.core.messaging import MessagingBackend, ChatMessage
-from chatxz.core.filetransfer import FileTransfer
+from chatxz.core.messaging import MessagingBackend
 from chatxz.core.voice import VoiceRecorder, VoicePlayer
 from chatxz.core.discovery import PeerDiscovery
-from chatxz.utils.helpers import get_config_dir, get_data_dir, format_size, truncate_hash
+from chatxz.utils.helpers import get_config_dir, get_data_dir, format_speed
+from chatxz.utils.system import get_avg_cpu_temperature, get_cpu_percent
 
 CONFIG_DIR = get_config_dir()
 DATA_DIR = get_data_dir()
@@ -78,12 +77,11 @@ class ChatWebServer:
         self.identity_mgr = IdentityManager(self.config_dir)
         self.identity = None
         self.messaging = None
-        self.file_transfer = None
         self.voice_recorder = None
 
         self.websockets = set()
         self.message_history = self._load_history()
-        self.contact_list = {}
+
         self.active_peer = None
         self.discovery = None
         self._loop = None
@@ -103,8 +101,6 @@ class ChatWebServer:
     def save_settings(self, settings):
         with open(SETTINGS_FILE, "w") as f:
             json.dump(settings, f, indent=2)
-
-    HISTORY_FILE = None
 
     def _history_file(self):
         return os.path.join(self.config_dir, "history.json")
@@ -217,7 +213,6 @@ class ChatWebServer:
             my_port=self.port,
             receive_dir=received_dir,
         )
-        self.file_transfer = FileTransfer(self.config_dir)
         self.voice_recorder = VoiceRecorder(self.config_dir)
         dest = self.messaging.start()
 
@@ -353,7 +348,7 @@ class ChatWebServer:
             peer_hash = data.get("hash", "").strip()
             if not peer_hash:
                 return web.json_response({"error": "hash required"}, status=400)
-            ok = self.messaging.connect_to(peer_hash)
+            ok = await asyncio.to_thread(self.messaging.connect_to, peer_hash)
             if ok:
                 clean = peer_hash.replace("<", "").replace(">", "").replace(":", "").strip()
                 self.active_peer = clean
@@ -486,149 +481,14 @@ class ChatWebServer:
         return web.json_response({"status": "restarting"})
 
     async def handle_temperature(self, request):
-        import subprocess as _sp
-        try:
-            temps = {}
-
-            def read_sysfs_temp(path):
-                try:
-                    with open(path) as f:
-                        raw = f.read().strip()
-                    return int(raw) / 1000.0 if raw else None
-                except:
-                    return None
-
-            for base in ["/sys/class/thermal", "/sys/devices/virtual/thermal"]:
-                if os.path.exists(base):
-                    for name in os.listdir(base):
-                        if name.startswith("thermal_zone"):
-                            tpath = os.path.join(base, name, "temp")
-                            ttype_path = os.path.join(base, name, "type")
-                            celsius = read_sysfs_temp(tpath)
-                            if celsius is not None:
-                                ttype = "unknown"
-                                if os.path.exists(ttype_path):
-                                    with open(ttype_path) as f:
-                                        ttype = f.read().strip()
-                                if ttype not in temps:
-                                    temps[ttype] = round(celsius, 1)
-
-            hwmon = "/sys/class/hwmon"
-            if os.path.exists(hwmon):
-                for name in sorted(os.listdir(hwmon)):
-                    hpath = os.path.join(hwmon, name)
-                    if not os.path.isdir(hpath):
-                        continue
-                    for entry in sorted(os.listdir(hpath)):
-                        if entry.endswith("_input") and "temp" in entry:
-                            celsius = read_sysfs_temp(os.path.join(hpath, entry))
-                            if celsius is None:
-                                continue
-                            label = name
-                            lpath = os.path.join(hpath, entry.replace("_input", "_label"))
-                            if os.path.exists(lpath):
-                                with open(lpath) as f:
-                                    label = f.read().strip()
-                            name_path = os.path.join(hpath, "name")
-                            if os.path.exists(name_path) and label == name:
-                                with open(name_path) as f:
-                                    label = f.read().strip()
-                            if label not in temps:
-                                temps[label] = round(celsius, 1)
-
-            if not temps:
-                try:
-                    r = _sp.run(["sensors", "-j"], capture_output=True, text=True, timeout=3)
-                    if r.returncode == 0 and r.stdout.strip():
-                        import json as _json
-                        data = _json.loads(r.stdout)
-                        for chip, vals in data.items():
-                            for key, val in vals.items():
-                                if isinstance(val, dict):
-                                    for sk, sv in val.items():
-                                        if sk.endswith("_input") and isinstance(sv, (int, float)):
-                                            label = f"{chip} {key}".replace("-", " ").title()
-                                            if label not in temps:
-                                                temps[label] = round(sv, 1)
-                except:
-                    pass
-            if not temps:
-                try:
-                    r = _sp.run(["sensors", "-u"], capture_output=True, text=True, timeout=3)
-                    if r.returncode == 0:
-                        for line in r.stdout.split("\n"):
-                            if "temp" in line and "_input" in line:
-                                parts = line.split(":")
-                                if len(parts) == 2:
-                                    try:
-                                        val = float(parts[1].strip())
-                                        label = parts[0].strip().replace("_input", "").replace("_", " ").title()
-                                        if label not in temps:
-                                            temps[label] = round(val, 1)
-                                    except:
-                                        pass
-                except:
-                    pass
-            if not temps:
-                try:
-                    r = _sp.run(["acpi", "-t"], capture_output=True, text=True, timeout=3)
-                    if r.returncode == 0:
-                        for line in r.stdout.strip().split("\n"):
-                            line = line.strip()
-                            if "thermal" in line.lower() and "degrees" in line.lower():
-                                parts = line.split(",")
-                                for p in parts:
-                                    p = p.strip()
-                                    if "degrees C" in p:
-                                        val = p.replace("degrees C", "").strip()
-                                        try:
-                                            temps["acpi"] = round(float(val), 1)
-                                        except:
-                                            pass
-                except:
-                    pass
-            return web.json_response({"temperatures": temps})
-        except:
-            return web.json_response({"temperatures": {}})
+        avg = await asyncio.to_thread(get_avg_cpu_temperature)
+        return web.json_response({"avg_celsius": avg})
 
     async def handle_cpu(self, request):
-        try:
-            nproc = 0
-            try:
-                with open("/proc/cpuinfo") as f:
-                    nproc = sum(1 for l in f if l.startswith("processor"))
-            except:
-                pass
-            if nproc == 0:
-                try:
-                    nproc = len(os.listdir("/sys/devices/system/cpu/"))
-                except:
-                    pass
-            try:
-                with open("/proc/stat") as f:
-                    p = [int(x) for x in f.readline().split()[1:]]
-                t1, i1 = sum(p), p[3]
-                await asyncio.sleep(0.3)
-                with open("/proc/stat") as f:
-                    p = [int(x) for x in f.readline().split()[1:]]
-                t2, i2 = sum(p), p[3]
-                td, id_ = t2 - t1, i2 - i1
-                pct = round(100.0 * (1.0 - id_ / td), 1) if td > 0 else 0.0
-                return web.json_response({"cpu_percent": pct})
-            except (PermissionError, FileNotFoundError, IndexError, ValueError) as e:
-                try:
-                    with open("/proc/loadavg") as f:
-                        la = float(f.read().split()[0])
-                    if nproc > 0:
-                        pct = min(round(la / nproc * 100, 1), 100.0)
-                        return web.json_response({"cpu_percent": pct, "approx": True})
-                except:
-                    pass
-                raise
-        except Exception as e:
-            import traceback
-            tb = traceback.format_exc()
-            return web.json_response({"cpu_percent": None, "error": str(e), "traceback": tb})
+        pct = await asyncio.to_thread(get_cpu_percent)
+        if pct is not None:
+            return web.json_response({"cpu_percent": pct})
+        return web.json_response({"cpu_percent": None})
 
     async def handle_debug(self, request):
         peers = self.discovery.get_peers() if self.discovery else []
@@ -777,7 +637,7 @@ class ChatWebServer:
                 elapsed = time.time() - start
                 bytes_xfer = progress * total_size
                 speed = bytes_xfer / elapsed if elapsed > 0 else 0
-                speed_str = format_size(speed) + "/s"
+                speed_str = format_speed(speed)
                 self._on_transfer_progress({
                     "file_name": fname,
                     "progress": pct,
@@ -920,7 +780,7 @@ class ChatWebServer:
                     sent += len(chunk)
                     elapsed = time.time() - start
                     pct = int(sent * 100 / total) if total else 0
-                    speed = format_size(sent / elapsed) + "/s" if elapsed > 0 else ""
+                    speed = format_speed(sent / elapsed) if elapsed > 0 else ""
                     self._on_transfer_progress({
                         "file_name": fname,
                         "progress": pct,
@@ -973,6 +833,18 @@ class ChatWebServer:
         self._save_history()
         return web.json_response({"status": "ok"})
 
+    async def handle_delete_message(self, request):
+        msg_id = request.match_info.get("msg_id", "")
+        if not msg_id:
+            return web.json_response({"error": "msg_id required"}, status=400)
+        before = len(self.message_history)
+        self.message_history = [m for m in self.message_history if m.get("msg_id") != msg_id]
+        if len(self.message_history) == before:
+            return web.json_response({"error": "not found"}, status=404)
+        self._save_history()
+        await self._broadcast({"type": "message_deleted", "data": {"msg_id": msg_id}})
+        return web.json_response({"status": "ok"})
+
     async def handle_history(self, request):
         self._apply_retention()
         limit = int(request.query.get("limit", 500))
@@ -988,13 +860,13 @@ class ChatWebServer:
 
         try:
             async for msg in ws:
-                if msg.type == aiohttp.WSMsgType.TEXT:
+                if msg.type == web.WSMsgType.TEXT:
                     try:
                         data = json.loads(msg.data)
                         await self._handle_ws_message(ws, data)
                     except json.JSONDecodeError:
                         pass
-                elif msg.type == aiohttp.WSMsgType.ERROR:
+                elif msg.type == web.WSMsgType.ERROR:
                     break
         except:
             pass
@@ -1008,14 +880,15 @@ class ChatWebServer:
         last_count = -1
         while True:
             await asyncio.sleep(3)
-            if self.discovery:
-                peers = self.discovery.get_peers()
-                count = len(peers)
-                if count != last_count:
-                    print(f"[broadcaster] {count} peer(s), {len(self.websockets)} ws client(s)")
-                    last_count = count
-                if peers:
-                    await self._broadcast({"type": "peers", "data": peers})
+            if not self.websockets or not self.discovery:
+                continue
+            peers = self.discovery.get_peers()
+            count = len(peers)
+            if count != last_count:
+                print(f"[broadcaster] {count} peer(s), {len(self.websockets)} ws client(s)")
+                last_count = count
+            if peers:
+                await self._broadcast({"type": "peers", "data": peers})
 
     async def handle_discover(self, request):
         peers = self.discovery.get_peers() if self.discovery else []
@@ -1061,7 +934,7 @@ class ChatWebServer:
         elif msg_type == "connect":
             peer_hash = data.get("hash", "")
             if peer_hash and self.messaging:
-                ok = self.messaging.connect_to(peer_hash)
+                ok = await asyncio.to_thread(self.messaging.connect_to, peer_hash)
                 if ok:
                     clean = peer_hash.replace("<", "").replace(">", "").replace(":", "").strip()
                     self.active_peer = clean
@@ -1102,6 +975,7 @@ class ChatWebServer:
         app.router.add_post("/api/play", self.handle_play_voice)
         app.router.add_get("/api/history", self.handle_history)
         app.router.add_post("/api/history/clear", self.handle_history_clear)
+        app.router.add_delete("/api/history/{msg_id}", self.handle_delete_message)
         app.router.add_get("/api/discover", self.handle_discover)
         app.router.add_get("/api/debug", self.handle_debug)
         app.router.add_get("/api/settings", self.handle_settings_get)

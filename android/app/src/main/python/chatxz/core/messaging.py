@@ -1,10 +1,10 @@
-import threading, RNS, json, time, base64, os, tempfile
-import urllib.request, urllib.error
-from datetime import datetime
-import uuid
+import threading, RNS, json, time, os, tempfile, uuid
+import urllib.request
+from chatxz.utils.helpers import format_speed
 
 APP_NAME = "chatxz"
 ANNOUNCE_INTERVAL = 30
+DIRECT_TRANSFER_THRESHOLD = 256 * 1024
 
 MESSAGE_TYPE_TEXT = "text"
 MESSAGE_TYPE_FILE = "file"
@@ -59,13 +59,14 @@ class ChatMessage:
 
 class MessagingBackend:
     def __init__(self, identity, config_dir, on_message=None, on_file=None,
-                 display_name="", auto_announce=False,
+                 on_progress=None, display_name="", auto_announce=False,
                  my_ip=None, my_port=8742, receive_dir=None):
         self.identity = identity
         self.config_dir = config_dir
         self.receive_dir = receive_dir or os.path.join(config_dir, "received")
         self.on_message = on_message
         self.on_file = on_file
+        self.on_progress = on_progress
         self.display_name = display_name
         self.auto_announce = auto_announce
         self.announce_interval = 30
@@ -84,6 +85,9 @@ class MessagingBackend:
         self._file_send_lock = threading.Lock()
         self._sent_messages = {}
         self._receipt_callbacks = {}
+        self._active_resources = {}
+        self._cancel_events = {}
+        self._current_transfer_id = None
 
     def _load_queue(self):
         try:
@@ -126,13 +130,9 @@ class MessagingBackend:
                     elif entry["type"] in ("file", "image", "voice"):
                         fp = entry.get("file_path") or entry.get("content")
                         if fp and os.path.exists(fp):
-                            result = self.direct_send_file(fp, entry["type"])
+                            result = self.send_file_smart(fp, entry["type"])
                             if result:
                                 sent += 1
-                            else:
-                                result2 = self.send_file(fp, entry["type"])
-                                if result2:
-                                    sent += 1
                         else:
                             print(f"[queue] File no longer exists: {fp}")
                             remaining.append(entry)
@@ -397,6 +397,51 @@ class MessagingBackend:
                 print(f"[messaging] Resource concluded error: {e}")
         return callback
 
+    def _emit_progress(self, file_name, progress, total_size=0, speed="", direction="receive", transfer_id=None, status="active"):
+        if self.on_progress:
+            try:
+                self.on_progress({
+                    "file_name": file_name,
+                    "progress": progress,
+                    "size": total_size,
+                    "speed": speed,
+                    "direction": direction,
+                    "transfer_id": transfer_id,
+                    "status": status,
+                })
+            except Exception as e:
+                print(f"[progress] callback error: {e}")
+
+    def _has_peer_ip(self):
+        if not self.active_link:
+            return False
+        lid = self.active_link.link_id
+        if lid in self.peer_ips:
+            return True
+        remote = self._get_remote_hash(self.active_link)
+        return remote in self.peer_ips
+
+    def cancel_transfer(self, transfer_id=None):
+        cancelled = False
+        tid = transfer_id or self._current_transfer_id
+        if tid and tid in self._cancel_events:
+            self._cancel_events[tid].set()
+            cancelled = True
+        for rid, resource in list(self._active_resources.items()):
+            try:
+                if hasattr(resource, "cancel"):
+                    resource.cancel()
+                elif hasattr(resource, "close"):
+                    resource.close()
+                cancelled = True
+            except Exception as e:
+                print(f"[transfer] cancel resource {rid}: {e}")
+            self._active_resources.pop(rid, None)
+        if cancelled:
+            self._emit_progress("", 0, status="cancelled", direction="send", transfer_id=tid)
+        self._current_transfer_id = None
+        return cancelled
+
     def _handle_direct_offer(self, offer, link, remote_hash):
         def download():
             peer = self.peer_ips.get(link.link_id)
@@ -410,28 +455,57 @@ class MessagingBackend:
             fname = offer.get("file_name", "file")
             fsize = offer.get("file_size", 0)
             msg_type = offer.get("msg_type", "file")
+            transfer_id = token or fname
             url = f"http://{peer['ip']}:{peer['port']}/api/direct-transfer/{token}"
+            cancel_ev = threading.Event()
+            self._cancel_events[transfer_id] = cancel_ev
+            self._current_transfer_id = transfer_id
 
             try:
                 print(f"[direct] Downloading {fname} ({fsize} bytes) from {url}")
                 os.makedirs(self.receive_dir, exist_ok=True)
                 save_path = os.path.join(self.receive_dir, fname)
+                timeout = max(600, int(fsize / 50000) + 120)
+                start = time.time()
+                downloaded = 0
+                self._emit_progress(fname, 0, fsize, direction="receive", transfer_id=transfer_id)
 
-                with urllib.request.urlopen(url, timeout=120) as resp:
+                req = urllib.request.Request(url)
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    total = int(resp.headers.get("Content-Length", fsize) or fsize) or fsize
                     with open(save_path, "wb") as f:
                         while True:
-                            chunk = resp.read(65536)
+                            if cancel_ev.is_set():
+                                print(f"[direct] Download cancelled: {fname}")
+                                try:
+                                    os.unlink(save_path)
+                                except OSError:
+                                    pass
+                                self._emit_progress(fname, 0, total, status="cancelled", direction="receive", transfer_id=transfer_id)
+                                return
+                            chunk = resp.read(262144)
                             if not chunk:
                                 break
                             f.write(chunk)
+                            downloaded += len(chunk)
+                            elapsed = time.time() - start
+                            pct = int(downloaded * 100 / total) if total else 0
+                            speed = format_speed(downloaded / elapsed) if elapsed > 0 else ""
+                            self._emit_progress(fname, pct, total, speed, direction="receive", transfer_id=transfer_id)
 
                 actual = os.path.getsize(save_path)
                 print(f"[direct] Saved to {save_path} ({actual} bytes)")
+                self._emit_progress(fname, 100, actual, status="complete", direction="receive", transfer_id=transfer_id)
                 if self.on_message:
                     msg = ChatMessage(msg_type, save_path, file_name=fname, file_size=actual, sender=remote_hash)
                     self.on_message(msg, remote_hash)
             except Exception as e:
                 print(f"[direct] HTTP transfer failed for {fname}: {e}")
+                self._emit_progress(fname, 0, fsize, status="failed", direction="receive", transfer_id=transfer_id)
+            finally:
+                self._cancel_events.pop(transfer_id, None)
+                if self._current_transfer_id == transfer_id:
+                    self._current_transfer_id = None
 
         threading.Thread(target=download, daemon=True).start()
 
@@ -577,20 +651,39 @@ class MessagingBackend:
             fname = os.path.basename(file_path)
             fsize = os.path.getsize(file_path)
             chat_msg = ChatMessage(msg_type, str(time.time()), file_name=fname, file_size=fsize)
+            transfer_id = chat_msg.msg_id
+            self._current_transfer_id = transfer_id
+            cancel_ev = threading.Event()
+            self._cancel_events[transfer_id] = cancel_ev
             try:
                 packet = RNS.Packet(self.active_link, chat_msg.to_json().encode("utf-8"))
                 packet.send()
 
+                def wrapped_progress(resource):
+                    if cancel_ev.is_set():
+                        return
+                    if progress_callback:
+                        progress_callback(resource)
+                    try:
+                        pct = int(resource.get_progress() * 100)
+                        self._emit_progress(fname, pct, fsize, direction="send", transfer_id=transfer_id)
+                    except Exception:
+                        pass
+
                 f = open(file_path, "rb")
-                RNS.Resource(f, self.active_link,
-                             callback=self._resource_send_callback(fname),
-                             progress_callback=progress_callback,
+                resource = RNS.Resource(f, self.active_link,
+                             callback=self._resource_send_callback(fname, transfer_id, fsize),
+                             progress_callback=wrapped_progress,
                              auto_compress=False)
+                self._active_resources[transfer_id] = resource
                 print(f"[messaging] Sent file: {fname} ({fsize} bytes)")
                 self._sent_messages[chat_msg.msg_id] = chat_msg
                 return chat_msg
             except Exception as e:
                 print(f"[messaging] File send failed: {e}")
+                self._emit_progress(fname, 0, fsize, status="failed", direction="send", transfer_id=transfer_id)
+                self._cancel_events.pop(transfer_id, None)
+                self._active_resources.pop(transfer_id, None)
                 return False
 
     def direct_send_file(self, file_path, msg_type=MESSAGE_TYPE_FILE):
@@ -599,8 +692,16 @@ class MessagingBackend:
         fname = os.path.basename(file_path)
         fsize = os.path.getsize(file_path)
         token = os.urandom(16).hex()
-        self.direct_transfer_tokens[token] = {"path": file_path, "time": time.time()}
-        threading.Timer(600, lambda: self.direct_transfer_tokens.pop(token, None)).start()
+        transfer_id = token
+        self._current_transfer_id = transfer_id
+        self.direct_transfer_tokens[token] = {
+            "path": file_path,
+            "time": time.time(),
+            "size": fsize,
+            "name": fname,
+            "transfer_id": transfer_id,
+        }
+        threading.Timer(3600, lambda: self.direct_transfer_tokens.pop(token, None)).start()
         offer = json.dumps({
             "type": "__direct_offer",
             "token": token,
@@ -612,12 +713,43 @@ class MessagingBackend:
             packet = RNS.Packet(self.active_link, ChatMessage("__direct_offer", offer).to_json().encode("utf-8"))
             packet.send()
             print(f"[direct] Sent file offer: {fname} ({fsize} bytes)")
-            return ChatMessage(msg_type, file_path, file_name=fname, file_size=fsize)
+            self._emit_progress(fname, 0, fsize, direction="send", transfer_id=transfer_id, status="direct")
+            return ChatMessage(msg_type, file_path, file_name=fname, file_size=fsize, msg_id=transfer_id)
         except Exception as e:
             print(f"[direct] File offer send failed: {e}")
+            self._emit_progress(fname, 0, fsize, status="failed", direction="send", transfer_id=transfer_id)
             return False
 
-    def _resource_send_callback(self, fname):
+    def send_file_smart(self, file_path, msg_type=MESSAGE_TYPE_FILE, progress_callback=None):
+        if not self.active_link or not os.path.exists(file_path):
+            return False
+        fsize = os.path.getsize(file_path)
+        use_direct = fsize >= DIRECT_TRANSFER_THRESHOLD or msg_type in (MESSAGE_TYPE_FILE, MESSAGE_TYPE_IMAGE)
+        if use_direct:
+            for _ in range(15):
+                if self._has_peer_ip():
+                    break
+                time.sleep(0.2)
+            if self._has_peer_ip():
+                result = self.direct_send_file(file_path, msg_type)
+                if result:
+                    return result
+                print(f"[transfer] Direct send failed for {os.path.basename(file_path)}, falling back to RNS resource")
+        return self.send_file(file_path, msg_type, progress_callback=progress_callback)
+
+    def _resource_send_callback(self, fname, transfer_id=None, fsize=0):
         def callback(resource):
             print(f"[messaging] File transfer complete: {fname}")
+            self._active_resources.pop(transfer_id, None)
+            self._cancel_events.pop(transfer_id, None)
+            status = "complete"
+            try:
+                if resource.status != RNS.Resource.COMPLETE:
+                    status = "failed"
+            except Exception:
+                pass
+            pct = 100 if status == "complete" else 0
+            self._emit_progress(fname, pct, fsize, status=status, direction="send", transfer_id=transfer_id)
+            if self._current_transfer_id == transfer_id:
+                self._current_transfer_id = None
         return callback

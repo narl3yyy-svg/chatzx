@@ -443,14 +443,18 @@ body::before {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
-.msg:hover .copy-btn { opacity: 1; }
-.msg .copy-btn {
+.msg:hover .msg-actions { opacity: 1; }
+.msg .msg-actions {
   position: absolute; top: 6px; right: 6px; opacity: 0;
+  display: flex; gap: 4px; transition: opacity var(--transition);
+}
+.msg .msg-action-btn {
   background: rgba(0,0,0,0.35); border: none; color: var(--text2);
   font-size: 11px; padding: 4px 8px; border-radius: 6px;
-  cursor: pointer; transition: opacity var(--transition);
+  cursor: pointer;
 }
-.msg .copy-btn:hover { color: var(--text); background: rgba(0,0,0,0.55); }
+.msg .msg-action-btn:hover { color: var(--text); background: rgba(0,0,0,0.55); }
+.msg .delete-btn:hover { color: var(--danger); }
 .msg.self {
   align-self: flex-end; background: var(--msg-self);
   border-bottom-right-radius: 6px; color: #fff;
@@ -632,6 +636,12 @@ body.modal-open #save-contact-dialog * { pointer-events: auto; user-select: auto
   font-size: 10px; color: var(--text2); min-width: 0; flex: 1;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+#transfer-speed {
+  display: none; flex-shrink: 0; min-width: 76px; text-align: right;
+  font-size: 12px; font-weight: 600; color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+#transfer-speed.active { display: block; }
 #transfer-cancel-btn {
   display: none; flex-shrink: 0;
   background: var(--danger-soft); border: 1px solid rgba(255,107,122,0.3);
@@ -862,6 +872,7 @@ body.modal-open #save-contact-dialog * { pointer-events: auto; user-select: auto
         <div class="progress-track"><div class="progress-fill"></div></div>
         <span id="progress-label">Transferring...</span>
       </div>
+      <span id="transfer-speed"></span>
       <button id="transfer-cancel-btn" onclick="cancelTransfer()">Cancel</button>
     </div>
   </footer>
@@ -1039,6 +1050,9 @@ function handleWSMessage(msg) {
     toast('Connected!');
   } else if (msg.type === 'connect_fail') {
     toast('Connection failed: ' + (msg.error || 'unknown'));
+  } else if (msg.type === 'message_deleted') {
+    const id = msg.data?.msg_id;
+    if (id) document.querySelector(`.msg[data-msgid="${id}"]`)?.remove();
   } else if (msg.type === 'info') {
     toast(msg.data || '');
   }
@@ -1053,6 +1067,7 @@ function sendReadReceipt(msgId) {
 function showProgress(data) {
   var bar = document.getElementById('progress-bar');
   var label = document.getElementById('progress-label');
+  var speedEl = document.getElementById('transfer-speed');
   var cancelBtn = document.getElementById('transfer-cancel-btn');
   if (!bar) return;
 
@@ -1063,6 +1078,10 @@ function showProgress(data) {
   if (data.status === 'complete' || (data.progress >= 100 && data.status !== 'direct')) {
     bar.querySelector('.progress-fill').style.width = '100%';
     label.textContent = (data.file_name || 'File') + ' — complete';
+    if (speedEl && data.speed) {
+      speedEl.textContent = data.speed;
+      speedEl.classList.add('active');
+    }
     setTimeout(hideProgress, 2500);
     return;
   }
@@ -1073,20 +1092,31 @@ function showProgress(data) {
   var pct = data.progress || 0;
   if (data.status === 'direct' && pct === 0) pct = 1;
   bar.querySelector('.progress-fill').style.width = Math.max(pct, 1) + '%';
-  var dir = data.direction === 'receive' ? 'Receiving' : 'Sending';
-  var text = dir + ': ' + (data.file_name || 'file') + ' — ' + pct + '%';
+  var dir = data.direction === 'receive' ? '↓' : '↑';
+  var text = dir + ' ' + (data.file_name || 'file') + ' — ' + pct + '%';
   if (data.size) text += ' (' + formatSize(data.size) + ')';
-  if (data.speed) text += ' @ ' + data.speed;
   label.textContent = text;
+  if (speedEl) {
+    if (data.speed) {
+      speedEl.textContent = data.speed;
+      speedEl.classList.add('active');
+    } else {
+      speedEl.textContent = '';
+      speedEl.classList.remove('active');
+    }
+  }
 }
 
 function hideProgress(msg) {
   var bar = document.getElementById('progress-bar');
+  var speedEl = document.getElementById('transfer-speed');
   var cancelBtn = document.getElementById('transfer-cancel-btn');
   if (bar) {
     bar.classList.remove('active');
     bar.querySelector('.progress-fill').style.width = '0%';
   }
+  speedEl?.classList.remove('active');
+  if (speedEl) speedEl.textContent = '';
   cancelBtn?.classList.remove('visible');
   activeTransfer = null;
   if (msg) toast(msg);
@@ -1123,21 +1153,8 @@ function pollTemperature() {
   fetch('/api/temperature')
     .then(r => r.json())
     .then(d => {
-      const temps = d.temperatures || {};
       const el = document.getElementById('temp-display');
-      if (Object.keys(temps).length === 0) {
-        el.textContent = '🌡 --°C';
-        return;
-      }
-      let labels = [];
-      for (const [k, v] of Object.entries(temps)) {
-        if (typeof v === 'number') labels.push(k + ': ' + v + '°C');
-      }
-      if (labels.length === 0) {
-        el.textContent = '🌡 --°C';
-      } else {
-        el.textContent = '🌡 ' + labels.join(' | ');
-      }
+      el.textContent = d.avg_celsius != null ? '🌡 ' + d.avg_celsius + '°C' : '🌡 --°C';
     })
     .catch(() => {
       document.getElementById('temp-display').textContent = '🌡 --°C';
@@ -1515,8 +1532,13 @@ function addMessage(data) {
   const time = new Date(data.timestamp * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
   const copyable = data.type === 'text' || data.type === 'emoji';
   let html = '';
+  if (data.msg_id && !isSystem) {
+    html += '<div class="msg-actions">';
+    if (copyable) html += '<button class="msg-action-btn copy-btn" onclick="event.stopPropagation();copyMsgText(this)" title="Copy text">📋</button>';
+    html += `<button class="msg-action-btn delete-btn" onclick="event.stopPropagation();deleteMessage('${data.msg_id}')" title="Delete message">🗑</button></div>`;
+  }
   if (data.type === 'text' || data.type === 'emoji') {
-    html = `<button class="copy-btn" onclick="event.stopPropagation();copyMsgText(this)" title="Copy text">📋</button><span class="msg-text">${linkify(escapeHtml(data.content))}</span>`;
+    html += `<span class="msg-text">${linkify(escapeHtml(data.content))}</span>`;
   } else if (data.type === 'image') {
     html = `<div>📷 ${escapeHtml(data.file_name || 'Image')}</div>`;
     if (data.content) {
@@ -1743,11 +1765,21 @@ function showImage(src) {
 }
 
 function copyMsgText(btn) {
-  const textEl = btn.parentElement?.querySelector('.msg-text');
+  const textEl = btn.closest('.msg')?.querySelector('.msg-text');
   const text = textEl ? textEl.textContent : '';
   if (text) {
     navigator.clipboard.writeText(text).then(() => toast('Copied!'));
   }
+}
+
+function deleteMessage(msgId) {
+  if (!msgId || !confirm('Delete this message?')) return;
+  fetch('/api/history/' + encodeURIComponent(msgId), { method: 'DELETE' })
+    .then(r => {
+      if (!r.ok) throw new Error();
+      document.querySelector(`.msg[data-msgid="${msgId}"]`)?.remove();
+    })
+    .catch(() => toast('Delete failed'));
 }
 
 function copyIdentity() {

@@ -2,13 +2,11 @@ import os
 import sys
 import time
 import subprocess
-import threading
 from datetime import datetime
 import RNS
 
 from chatxz.core.identity import IdentityManager
-from chatxz.core.messaging import MessagingBackend, ChatMessage
-from chatxz.core.filetransfer import FileTransfer
+from chatxz.core.messaging import MessagingBackend
 from chatxz.core.voice import VoiceRecorder, VoicePlayer
 from chatxz.utils.helpers import get_config_dir, get_data_dir, format_size, truncate_hash
 
@@ -25,10 +23,8 @@ class ChatxzApp:
         self.identity_mgr = IdentityManager(self.config_dir)
         self.identity = self.identity_mgr.load_or_create()
         self.messaging = None
-        self.file_transfer = None
         self.voice_recorder = None
         self.messages = []
-        self.contacts = {}
         self.connected_hash = None
         self.running = False
         self._rns_initialized = False
@@ -43,7 +39,6 @@ class ChatxzApp:
             self.config_dir,
             on_message=self._on_message
         )
-        self.file_transfer = FileTransfer(self.config_dir)
         self.voice_recorder = VoiceRecorder(self.config_dir)
 
         dest = self.messaging.start()
@@ -65,9 +60,7 @@ class ChatxzApp:
 
         if chat_msg.msg_type == "system":
             print(f"\n[{timestamp}] {chat_msg.content}")
-        elif chat_msg.msg_type == "text":
-            print(f"\n[{timestamp}] {sender}: {chat_msg.content}")
-        elif chat_msg.msg_type == "emoji":
+        elif chat_msg.msg_type in ("text", "emoji"):
             print(f"\n[{timestamp}] {sender}: {chat_msg.content}")
         elif chat_msg.msg_type == "image":
             fname = chat_msg.file_name or "image"
@@ -134,7 +127,7 @@ class ChatxzApp:
             return False
         is_image = file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'))
         msg_type = "image" if is_image else "file"
-        return self.messaging.send_file(file_path, msg_type)
+        return self.messaging.send_file_smart(file_path, msg_type)
 
     def send_voice(self, duration=None):
         if not self.messaging or not self.messaging.active_link:
