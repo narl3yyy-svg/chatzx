@@ -109,3 +109,36 @@ def lan_broadcast():
         if len(parts) == 4:
             return f"{parts[0]}.{parts[1]}.{parts[2]}.255"
     return "255.255.255.255"
+
+
+def android_storage_dirs():
+    """Writable folder choices for the Android received-files setting."""
+    root = storage_root()
+    dirs = [
+        {"label": "Received (default)", "path": os.path.join(root, "received")},
+        {"label": "Downloads (app)", "path": os.path.join(root, "downloads")},
+    ]
+    try:
+        from java import jclass
+        environment = jclass("android.os.Environment")
+        downloads = environment.getExternalStoragePublicDirectory(environment.DIRECTORY_DOWNLOADS)
+        if downloads is not None:
+            path = str(downloads.getAbsolutePath())
+            if path:
+                dirs.append({"label": "Phone Downloads", "path": path})
+        documents = environment.getExternalStoragePublicDirectory(environment.DIRECTORY_DOCUMENTS)
+        if documents is not None:
+            path = str(documents.getAbsolutePath())
+            if path:
+                dirs.append({"label": "Documents", "path": path})
+    except Exception:
+        pass
+    seen = set()
+    unique = []
+    for entry in dirs:
+        path = os.path.normpath(entry["path"])
+        if path in seen:
+            continue
+        seen.add(path)
+        unique.append({"label": entry["label"], "path": path})
+    return unique

@@ -9,7 +9,12 @@ from chatxz.core.messaging import MessagingBackend
 from chatxz.core.voice import VoiceRecorder, VoicePlayer
 from chatxz.core.discovery import PeerDiscovery
 from chatxz.utils.helpers import get_config_dir, get_data_dir, format_speed
-from chatxz.utils.platform import is_android, lan_ip as platform_lan_ip, lan_broadcast
+from chatxz.utils.platform import (
+    is_android,
+    lan_ip as platform_lan_ip,
+    lan_broadcast,
+    android_storage_dirs,
+)
 from chatxz.utils.system import get_avg_cpu_temperature, get_cpu_percent
 
 CONFIG_DIR = get_config_dir()
@@ -235,6 +240,18 @@ class ChatWebServer:
     @staticmethod
     def _clean_hash(h):
         return (h or "").replace("<", "").replace(">", "").replace(":", "").strip()
+
+    async def _wait_for_rns(self, timeout=90.0):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.rns_init_error:
+                return False, "Network error: " + self.rns_init_error.splitlines()[-1]
+            if self.messaging and self.messaging.destination:
+                return True, None
+            await asyncio.sleep(0.5)
+        if self.embedded and not self.rns_init_error:
+            return False, "Network stack still starting — wait a few seconds and try again"
+        return False, "not ready"
 
     def _reset_connection_state(self):
         """Clear peer session on server start — UI reconnects explicitly."""
@@ -517,6 +534,9 @@ class ChatWebServer:
             "connected": connected,
             "contacts": contacts,
             "discovered": discovered,
+            "platform": "android" if is_android() else "desktop",
+            "rns_ready": bool(self.messaging and self.messaging.destination),
+            "rns_error": self.rns_init_error,
         })
 
     async def handle_add_contact(self, request):
@@ -563,8 +583,9 @@ class ChatWebServer:
             return web.json_response({"error": str(e)}, status=400)
 
     async def handle_announce(self, request):
-        if not self.messaging or not self.messaging.destination:
-            return web.json_response({"error": "not ready"}, status=400)
+        ok, err = await self._wait_for_rns()
+        if not ok:
+            return web.json_response({"error": err or "not ready"}, status=400)
         try:
             for i in range(3):
                 await asyncio.to_thread(self.messaging.announce)
@@ -598,6 +619,14 @@ class ChatWebServer:
             return None, "Path is empty"
         if not os.path.isabs(path):
             return None, "Path must be absolute (e.g. /home/user/Downloads)"
+        if is_android() and path.startswith("/storage/"):
+            try:
+                os.makedirs(path, exist_ok=True)
+            except OSError as e:
+                return None, f"Cannot use folder: {e}"
+            if os.path.isdir(path):
+                return path, None
+            return None, "Path is not a directory"
         try:
             os.makedirs(path, exist_ok=True)
         except OSError as e:
@@ -647,6 +676,24 @@ class ChatWebServer:
 
     async def handle_browse_dir(self, request):
         try:
+            if request.method == "POST":
+                data = await request.json()
+                picked = (data.get("path") or "").strip()
+                if not picked:
+                    return web.json_response({"error": "path required"}, status=400)
+                path, err = self._normalize_received_dir(picked)
+                if err:
+                    return web.json_response({"error": err}, status=400)
+                return web.json_response({"path": path})
+
+            if is_android():
+                settings = self.load_settings()
+                return web.json_response({
+                    "platform": "android",
+                    "options": android_storage_dirs(),
+                    "current": settings.get("received_dir", os.path.join(self.config_dir, "received")),
+                })
+
             picked = await asyncio.to_thread(self._pick_directory_native)
             if not picked:
                 return web.json_response({"error": "cancelled"}, status=400)
@@ -1175,11 +1222,14 @@ class ChatWebServer:
                 else:
                     await ws.send_str(json.dumps({"type": "connect_fail", "error": "connection failed"}))
         elif msg_type == "announce":
-            if self.messaging and self.messaging.destination:
+            ok, err = await self._wait_for_rns(timeout=30.0)
+            if ok:
                 for i in range(3):
                     await asyncio.to_thread(self.messaging.announce)
                     if i < 2:
                         await asyncio.sleep(0.4)
+            elif err:
+                await ws.send_str(json.dumps({"type": "info", "data": "Announce failed: " + err}))
         elif msg_type == "read_receipt":
             msg_id = data.get("msg_id", "")
             if msg_id and self.messaging and self.messaging.active_link:
@@ -1217,6 +1267,7 @@ class ChatWebServer:
         app.router.add_get("/api/settings", self.handle_settings_get)
         app.router.add_post("/api/settings", self.handle_settings_post)
         app.router.add_get("/api/browse-dir", self.handle_browse_dir)
+        app.router.add_post("/api/browse-dir", self.handle_browse_dir)
         app.router.add_post("/api/transfer/cancel", self.handle_transfer_cancel)
         app.router.add_get("/api/file/{filepath:.*}", self.handle_serve_file)
         app.router.add_get("/api/direct-transfer/{token}", self.handle_direct_transfer)

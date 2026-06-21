@@ -194,7 +194,9 @@ The APK bundles Python 3.13, RNS, cryptography, aiohttp, and the full chatxz web
 
 On phone-sized screens the chat area fills the display by default. Tap **☰** in the header to open the sidebar (contacts, connect, settings). The sidebar stays open while you use it and only closes when you connect to a peer, tap outside, or press the Android back button.
 
-**LAN discovery from Android:** the app uses directed UDP broadcast (e.g. `192.168.1.255`) instead of `255.255.255.255`, which Android often blocks. Tap **Announce** on the phone; your desktop instance should show the device under **Discovered** within a few seconds when both are on the same Wi‑Fi.
+**LAN discovery from Android:** the app uses directed UDP broadcast (e.g. `192.168.1.255`) instead of `255.255.255.255`, which Android often blocks. Wait until the bottom dock shows **Link** / network is ready (RNS starts a few seconds after launch), then tap **Announce** on the phone; your desktop instance should show the device under **Discovered** within a few seconds when both are on the same Wi‑Fi.
+
+**Received files folder on Android:** Settings → Received Files Folder → **Browse** opens the native Android folder picker. Pick a folder, then **Save**.
 
 ### Build locally
 

@@ -567,6 +567,19 @@ body.modal-open #save-contact-dialog * { pointer-events: auto; user-select: auto
   animation: fadeIn 0.2s ease;
 }
 #save-contact-dialog.open { display: flex; }
+#folder-picker-dialog {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.65); z-index: 5000;
+  align-items: center; justify-content: center;
+}
+#folder-picker-dialog.open { display: flex; }
+.folder-option-btn {
+  text-align: left; padding: 12px 14px; border-radius: var(--radius-md);
+  border: 1px solid var(--border); background: rgba(255,255,255,0.03);
+  color: var(--text); font-size: 13px; cursor: pointer; font-family: inherit;
+}
+.folder-option-btn:hover { background: var(--surface-hover); border-color: var(--border-strong); }
+.folder-option-btn .path { display: block; font-size: 10px; color: var(--text3); margin-top: 4px; word-break: break-all; }
 #save-contact-dialog .dialog { pointer-events: auto; }
 #save-contact-dialog input, #save-contact-dialog button { pointer-events: auto; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -812,7 +825,7 @@ body.sidebar-open #sidebar-backdrop { display: block; }
               <input id="settings-received-dir" placeholder="/home/user/Downloads">
               <button class="input-btn" onclick="pickReceivedDir()" style="width:40px;height:40px;border:1px solid var(--border);border-radius:var(--radius-md)" title="Browse...">📁</button>
             </div>
-            <p class="field-hint">Browse picks a native folder path. Click Save to apply.</p>
+            <p class="field-hint" id="settings-received-hint">Browse picks a native folder path. Click Save to apply.</p>
             <input type="file" id="dir-picker-fallback" style="display:none" webkitdirectory onchange="pickReceivedDirFallback(this)">
           </div>
         </div>
@@ -925,6 +938,15 @@ body.sidebar-open #sidebar-backdrop { display: block; }
   </footer>
 </div>
 
+<div id="folder-picker-dialog" onclick="if(event.target===this)closeFolderPicker()">
+  <div class="dialog" style="max-height:80vh;overflow:hidden;display:flex;flex-direction:column">
+    <button class="panel-close" onclick="closeFolderPicker()" style="position:absolute;top:16px;right:16px" title="Close">&times;</button>
+    <h2>Save received files to</h2>
+    <div id="folder-picker-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:8px;margin-bottom:12px"></div>
+    <button class="dlg-btn secondary" onclick="closeFolderPicker()">Cancel</button>
+  </div>
+</div>
+
 <div id="save-contact-dialog" onclick="if(event.target===this)closeSaveContact()">
   <div class="dialog">
     <button class="panel-close" onclick="closeSaveContact()" style="position:absolute;top:16px;right:16px" title="Close">&times;</button>
@@ -1025,6 +1047,7 @@ function closeAllPanels() {
   document.getElementById('settings-btn')?.classList.remove('active');
   document.getElementById('emoji-picker')?.classList.remove('open');
   if (document.getElementById('save-contact-dialog')?.classList.contains('open')) closeSaveContact();
+  if (document.getElementById('folder-picker-dialog')?.classList.contains('open')) closeFolderPicker();
   document.getElementById('image-modal')?.classList.remove('open');
 }
 
@@ -1087,6 +1110,10 @@ function fetchIdentity() {
       if (sh) sh.value = myHash;
       renderContacts(d.contacts);
       renderDiscovered(d.discovered);
+      if (d.platform === 'android') {
+        const hint = document.getElementById('settings-received-hint');
+        if (hint) hint.textContent = 'Tap Browse to open the Android folder picker, then Save to apply.';
+      }
       if (d.connected) {
         const h = d.connected.replace(/:/g, '');
         if (connected !== h) {
@@ -1427,25 +1454,34 @@ function connectTo(hash) {
 }
 
 function announceSelf() {
+  toast('Starting announce...');
   fetch('/api/announce', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'})
-    .then(r => r.json())
-    .then(d => {
-      if (d.status === 'ok') {
+    .then(async r => {
+      const d = await r.json();
+      if (r.ok && d.status === 'ok') {
         const hint = d.broadcast ? ` (${d.broadcast})` : '';
         toast('Announcing on LAN' + hint);
-      } else {
-        toast('Announce failed: ' + (d.error || 'unknown'));
+        return;
       }
-    })
-    .catch(() => {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({type: 'announce'}));
         toast('Announcing on LAN...');
-      } else {
-        toast('Announce failed — server not ready');
+        return;
       }
-    });
+      toast('Announce failed: ' + (d.error || 'unknown'));
+    })
+    .catch(() => toast('Announce failed — server not reachable'));
 }
+
+window.onChatxzFolderPicked = function(path) {
+  if (!path) return;
+  document.getElementById('settings-received-dir').value = path;
+  toast('Folder selected — click Save to apply');
+};
+
+window.onChatxzFolderPickError = function(message) {
+  if (message) toast(message);
+};
 
 let settingsShown = false;
 let connectShown = false;
@@ -1782,10 +1818,58 @@ function linkify(text) {
   return text.replace(urlRe, '<a href="$1" target="_blank" rel="noopener noreferrer" class="msg-link">$1</a>');
 }
 
+function closeFolderPicker() {
+  document.getElementById('folder-picker-dialog')?.classList.remove('open');
+}
+
+function showFolderOptionsDialog(options) {
+  const list = document.getElementById('folder-picker-list');
+  if (!list) return;
+  list.innerHTML = '';
+  options.forEach(opt => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'folder-option-btn';
+    btn.innerHTML = `<strong>${escapeHtml(opt.label)}</strong><span class="path">${escapeHtml(opt.path)}</span>`;
+    btn.onclick = () => selectReceivedDir(opt.path);
+    list.appendChild(btn);
+  });
+  document.getElementById('folder-picker-dialog')?.classList.add('open');
+}
+
+async function selectReceivedDir(path) {
+  try {
+    const r = await fetch('/api/browse-dir', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({path})
+    });
+    const d = await r.json();
+    if (r.ok && d.path) {
+      document.getElementById('settings-received-dir').value = d.path;
+      closeFolderPicker();
+      toast('Folder selected — click Save to apply');
+      return;
+    }
+    toast('Browse failed: ' + (d.error || 'unknown'));
+  } catch (_) {
+    toast('Browse failed');
+  }
+}
+
 async function pickReceivedDir() {
+  if (window.chatzxAndroid?.pickFolder) {
+    window.chatzxAndroid.pickFolder();
+    return;
+  }
+
   try {
     const r = await fetch('/api/browse-dir');
     const d = await r.json();
+    if (d.platform === 'android' && Array.isArray(d.options) && d.options.length) {
+      showFolderOptionsDialog(d.options);
+      return;
+    }
     if (r.ok && d.path) {
       document.getElementById('settings-received-dir').value = d.path;
       toast('Folder selected — click Save to apply');
