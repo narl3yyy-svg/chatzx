@@ -53,9 +53,13 @@ public class MainActivity extends AppCompatActivity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
 
         webView.setWebViewClient(new WebViewClient() {
+            private int retryCount = 0;
             @Override
             public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
-                view.loadUrl(serverUrl);
+                if (retryCount < 10) {
+                    retryCount++;
+                    view.postDelayed(() -> view.loadUrl(serverUrl), 1500);
+                }
             }
         });
 
