@@ -2,7 +2,7 @@ import json
 import time
 import RNS
 
-DISCOVERY_TIMEOUT = 45
+DISCOVERY_TIMEOUT = 60
 APP_NAME = "chatxz"
 
 class AnnounceHandler:
@@ -25,7 +25,7 @@ class PeerDiscovery:
         self.running = True
         self._handler = AnnounceHandler(self)
         RNS.Transport.register_announce_handler(self._handler)
-        print("[discovery] Registered RNS announce handler via AnnounceHandler object")
+        print("[discovery] Announce handler registered")
 
     def stop(self):
         self.running = False
@@ -33,39 +33,29 @@ class PeerDiscovery:
     def _on_announce(self, destination_hash, app_data):
         if not self.running:
             return
-        try:
-            hash_hex = RNS.hexrep(destination_hash)
-            app_repr = repr(app_data) if app_data else "None"
-            print(f"[discovery] Got announce dst={hash_hex[:12]}... app_data={app_repr[:80]}")
-        except Exception as e:
-            print(f"[discovery] Error in announce header: {e}")
+
+        hash_hex = RNS.hexrep(destination_hash)
+        name = ""
+        app_name = ""
+
+        if app_data:
+            try:
+                data = json.loads(app_data.decode("utf-8"))
+                app_name = data.get("app", "")
+                name = data.get("name", "")
+            except:
+                pass
+
+        if app_name != APP_NAME:
             return
 
-        try:
-            name = ""
-            app_name = ""
-
-            if app_data:
-                try:
-                    data = json.loads(app_data.decode("utf-8"))
-                    app_name = data.get("app", "")
-                    name = data.get("name", "")
-                except Exception as e:
-                    print(f"[discovery] Failed to decode app_data: {e}")
-
-            if app_name != APP_NAME:
-                print(f"[discovery] Skipping {hash_hex[:12]}... app_name={app_name!r} != {APP_NAME!r}")
-                return
-
-            self.peers[hash_hex] = {
-                "hash": hash_hex,
-                "name": name or hash_hex[:8],
-                "app": app_name,
-                "last_seen": time.time(),
-            }
-            print(f"[discovery] Peer: {hash_hex[:12]}... ({name or 'unnamed'})")
-        except Exception as e:
-            print(f"[discovery] Error processing announce: {e}")
+        self.peers[hash_hex] = {
+            "hash": hash_hex,
+            "name": name or hash_hex[:8],
+            "app": app_name,
+            "last_seen": time.time(),
+        }
+        print(f"[discovery] Peer discovered: {name or hash_hex[:12]}...")
 
     def get_peers(self):
         now = time.time()

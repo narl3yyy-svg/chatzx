@@ -20,6 +20,7 @@ from chatxz.utils.helpers import get_config_dir, get_data_dir, format_size, trun
 
 CONFIG_DIR = get_config_dir()
 DATA_DIR = get_data_dir()
+SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
 
 DEFAULT_RNS_CONFIG = """[reticulum]
 enable_transport = Yes
@@ -61,6 +62,17 @@ class ChatWebServer:
         self.active_peer = None
         self.discovery = None
 
+    def load_settings(self):
+        try:
+            with open(SETTINGS_FILE) as f:
+                return json.load(f)
+        except:
+            return {"name": "", "announce_interval": 30}
+
+    def save_settings(self, settings):
+        with open(SETTINGS_FILE, "w") as f:
+            json.dump(settings, f, indent=2)
+
     def start_rns(self):
         rns_config_path = os.path.join(self.config_dir, "config")
         os.makedirs(self.config_dir, exist_ok=True)
@@ -91,7 +103,7 @@ class ChatWebServer:
             if modified:
                 with open(rns_config_path, "w") as f:
                     f.write(existing)
-                print(f"[config] Updated {rns_config_path} (transport=Yes, UDPInterface enabled)")
+                print(f"[config] Updated {rns_config_path}")
         else:
             with open(rns_config_path, "w") as f:
                 f.write(DEFAULT_RNS_CONFIG)
@@ -100,8 +112,12 @@ class ChatWebServer:
         loglevel = RNS.LOG_DEBUG if self.verbose else RNS.LOG_NOTICE
         RNS.Reticulum(self.config_dir, loglevel=loglevel)
         self.identity = self.identity_mgr.load_or_create()
+        settings = self.load_settings()
         self.messaging = MessagingBackend(
-            self.identity, self.config_dir, on_message=self._on_message
+            self.identity, self.config_dir,
+            on_message=self._on_message,
+            display_name=settings.get("name", ""),
+            announce_interval=settings.get("announce_interval", 30),
         )
         self.file_transfer = FileTransfer(self.config_dir)
         self.voice_recorder = VoiceRecorder(self.config_dir)
@@ -110,11 +126,6 @@ class ChatWebServer:
         my_hash = RNS.hexrep(dest.hash)
         self.discovery = PeerDiscovery()
         self.discovery.start()
-
-        asyncio.run_coroutine_threadsafe(
-            self._discovery_broadcaster(),
-            self._loop
-        )
 
         return my_hash
 
@@ -128,10 +139,11 @@ class ChatWebServer:
             "file_size": chat_msg.file_size,
         }
         self.message_history.append(entry)
-        asyncio.run_coroutine_threadsafe(
-            self._broadcast({"type": "message", "data": entry}),
-            self._loop
-        )
+        if self.websockets:
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast({"type": "message", "data": entry}),
+                asyncio.get_event_loop()
+            )
 
     async def _broadcast(self, data):
         msg = json.dumps(data)
@@ -141,7 +153,13 @@ class ChatWebServer:
             except:
                 self.websockets.discard(ws)
 
-    # HTTP handlers
+    async def _send_peers_to(self, ws):
+        if self.discovery:
+            peers = self.discovery.get_peers()
+            try:
+                await ws.send_str(json.dumps({"type": "peers", "data": peers}))
+            except:
+                pass
 
     def _static_dir(self):
         candidates = [
@@ -158,7 +176,7 @@ class ChatWebServer:
         static_dir = self._static_dir()
         index_path = static_dir / "index.html"
         if not index_path.exists():
-            return web.Response(text="Frontend not found - tried " + str(static_dir), status=500)
+            return web.Response(text="Frontend not found", status=500)
         return web.FileResponse(index_path)
 
     async def handle_static(self, request):
@@ -193,7 +211,7 @@ class ChatWebServer:
     async def handle_add_contact(self, request):
         try:
             data = await request.json()
-            peer_hash = data.get("hash", "").strip()
+            peer_hash = data.get("hash", "").strip().replace(":", "")
             name = data.get("name", peer_hash).strip()
             if not peer_hash:
                 return web.json_response({"error": "hash required"}, status=400)
@@ -206,6 +224,18 @@ class ChatWebServer:
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
 
+    async def handle_delete_contact(self, request):
+        try:
+            peer_hash = request.match_info["hash"].replace(":", "")
+            contacts_dir = os.path.join(self.config_dir, "contacts")
+            path = os.path.join(contacts_dir, peer_hash)
+            if os.path.exists(path):
+                os.unlink(path)
+                return web.json_response({"status": "ok"})
+            return web.json_response({"error": "not found"}, status=404)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
     async def handle_connect(self, request):
         try:
             data = await request.json()
@@ -214,7 +244,8 @@ class ChatWebServer:
                 return web.json_response({"error": "hash required"}, status=400)
             ok = self.messaging.connect_to(peer_hash)
             if ok:
-                self.active_peer = peer_hash
+                clean = peer_hash.replace("<", "").replace(">", "").replace(":", "").strip()
+                self.active_peer = clean
                 return web.json_response({"status": "ok"})
             return web.json_response({"error": "connection failed"}, status=400)
         except Exception as e:
@@ -229,6 +260,26 @@ class ChatWebServer:
             self.messaging.active_link = None
         self.active_peer = None
         return web.json_response({"status": "ok"})
+
+    async def handle_settings_get(self, request):
+        return web.json_response(self.load_settings())
+
+    async def handle_settings_post(self, request):
+        try:
+            data = await request.json()
+            settings = self.load_settings()
+            if "name" in data:
+                settings["name"] = data["name"].strip()[:50]
+            if "announce_interval" in data:
+                val = int(data["announce_interval"])
+                settings["announce_interval"] = max(5, min(3600, val))
+            self.save_settings(settings)
+            if self.messaging:
+                self.messaging.display_name = settings.get("name", "")
+                self.messaging.announce_interval = settings.get("announce_interval", 30)
+            return web.json_response({"status": "ok", "settings": settings})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
 
     async def handle_file_upload(self, request):
         if not self.messaging or not self.messaging.active_link:
@@ -307,12 +358,12 @@ class ChatWebServer:
         limit = int(request.query.get("limit", 100))
         return web.json_response(self.message_history[-limit:])
 
-    # WebSocket handler
-
     async def handle_websocket(self, request):
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         self.websockets.add(ws)
+
+        await self._send_peers_to(ws)
 
         try:
             async for msg in ws:
@@ -331,13 +382,11 @@ class ChatWebServer:
         return ws
 
     async def _discovery_broadcaster(self):
+        print("[broadcaster] Started")
         while True:
             await asyncio.sleep(3)
             if self.discovery:
                 peers = self.discovery.get_peers()
-                print(f"[broadcaster] peers={len(peers)}")
-                for p in peers:
-                    print(f"[broadcaster]   {p['hash'][:12]}...")
                 if peers:
                     await self._broadcast({"type": "peers", "data": peers})
 
@@ -358,26 +407,26 @@ class ChatWebServer:
             if peer_hash and self.messaging:
                 ok = self.messaging.connect_to(peer_hash)
                 if ok:
-                    self.active_peer = peer_hash
+                    clean = peer_hash.replace("<", "").replace(">", "").replace(":", "").strip()
+                    self.active_peer = clean
+                    await ws.send_str(json.dumps({"type": "connect_ok", "hash": clean}))
+                else:
+                    await ws.send_str(json.dumps({"type": "connect_fail", "error": "connection failed"}))
         elif msg_type == "announce":
             if self.messaging and self.messaging.destination:
-                import json as _json
-                ad = _json.dumps({"app": "chatxz", "name": ""}).encode("utf-8")
-                self.messaging.destination.announce(app_data=ad)
+                self.messaging.announce()
 
-    # Start server
+    async def _on_startup(self, app):
+        asyncio.create_task(self._discovery_broadcaster())
 
     def run(self):
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
-
         app = web.Application()
 
-        static_dir = Path(__file__).parent / "static"
         app.router.add_get("/", self.handle_index)
         app.router.add_get("/static/{filename:.*}", self.handle_static)
         app.router.add_get("/api/identity", self.handle_identity)
         app.router.add_post("/api/contacts", self.handle_add_contact)
+        app.router.add_delete("/api/contacts/{hash}", self.handle_delete_contact)
         app.router.add_post("/api/connect", self.handle_connect)
         app.router.add_post("/api/disconnect", self.handle_disconnect)
         app.router.add_post("/api/file", self.handle_file_upload)
@@ -385,10 +434,14 @@ class ChatWebServer:
         app.router.add_post("/api/play", self.handle_play_voice)
         app.router.add_get("/api/history", self.handle_history)
         app.router.add_get("/api/discover", self.handle_discover)
+        app.router.add_get("/api/settings", self.handle_settings_get)
+        app.router.add_post("/api/settings", self.handle_settings_post)
         app.router.add_get("/api/file/{filepath:.*}", self.handle_serve_file)
         app.router.add_get("/ws", self.handle_websocket)
 
         my_hash = self.start_rns()
+
+        app.on_startup.append(self._on_startup)
 
         print(f"chatxz web server v0.1.0")
         print(f"Your identity: {my_hash}")

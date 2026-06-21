@@ -58,11 +58,14 @@ class ChatMessage:
         return cls.from_dict(json.loads(data))
 
 class MessagingBackend:
-    def __init__(self, identity, config_dir, on_message=None, on_file=None):
+    def __init__(self, identity, config_dir, on_message=None, on_file=None,
+                 display_name="", announce_interval=30):
         self.identity = identity
         self.config_dir = config_dir
         self.on_message = on_message
         self.on_file = on_file
+        self.display_name = display_name
+        self.announce_interval = announce_interval
         self.destination = None
         self.links = {}
         self.active_link = None
@@ -84,14 +87,20 @@ class MessagingBackend:
         self.running = True
         return self.destination
 
+    def announce(self):
+        self._announce()
+
     def _announce(self):
         if self.destination:
-            announce_data = json.dumps({"app": APP_NAME, "name": ""}).encode("utf-8")
+            announce_data = json.dumps({
+                "app": APP_NAME,
+                "name": self.display_name or ""
+            }).encode("utf-8")
             self.destination.announce(app_data=announce_data)
 
     def _announce_loop(self):
-        while True:
-            for _ in range(ANNOUNCE_INTERVAL):
+        while self.running:
+            for _ in range(self.announce_interval):
                 if not self.running:
                     return
                 time.sleep(1)
@@ -176,40 +185,54 @@ class MessagingBackend:
         try:
             clean = destination_hash_hex.replace("<", "").replace(">", "").strip()
             dest_hash = bytes.fromhex(clean.replace(":", ""))
-        except:
+        except Exception as e:
+            print(f"[connect] Invalid hash: {e}")
             return False
+
+        print(f"[connect] Connecting to {RNS.hexrep(dest_hash)[:20]}...")
 
         try:
             known_identity = RNS.Identity.recall(dest_hash)
             if known_identity is None:
-                RNS.log(f"[connect] No known identity for {destination_hash_hex}, requesting...")
-                RNS.Identity.request(dest_hash)
-                time.sleep(1.0)
+                print(f"[connect] No known identity, requesting path...")
+                if not RNS.Transport.has_path(dest_hash):
+                    RNS.Transport.request_path(dest_hash)
+                    for _ in range(10):
+                        time.sleep(0.5)
+                        if RNS.Transport.has_path(dest_hash):
+                            break
+                    if not RNS.Transport.has_path(dest_hash):
+                        print(f"[connect] No path to destination")
+                        return False
                 known_identity = RNS.Identity.recall(dest_hash)
                 if known_identity is None:
-                    RNS.log(f"[connect] Could not recall identity for {destination_hash_hex}")
+                    print(f"[connect] Could not recall identity after path request")
                     return False
+            print(f"[connect] Identity recalled successfully")
         except Exception as e:
-            RNS.log(f"[connect] Identity recall failed: {e}")
+            print(f"[connect] Identity recall failed: {e}")
             return False
 
-        destination = RNS.Destination(
-            known_identity,
-            RNS.Destination.OUT,
-            RNS.Destination.SINGLE,
-            APP_NAME,
-            "messages"
-        )
+        try:
+            destination = RNS.Destination(
+                known_identity,
+                RNS.Destination.OUT,
+                RNS.Destination.SINGLE,
+                APP_NAME,
+                "messages"
+            )
+            print(f"[connect] Destination created: {RNS.hexrep(destination.hash)[:20]}...")
+        except Exception as e:
+            print(f"[connect] Destination creation failed: {e}")
+            return False
 
         try:
-            dest_hash_check = RNS.hexrep(destination.hash)
-            RNS.log(f"[connect] Created destination {dest_hash_check[:12]}...")
             link = RNS.Link(destination)
             link.set_link_established_callback(self._outgoing_link_callback(link))
-            RNS.log(f"[connect] Link initiated, waiting for establishment...")
+            print(f"[connect] Link initiated successfully")
             return True
         except Exception as e:
-            RNS.log(f"[connect] Link failed: {e}")
+            print(f"[connect] Link creation failed: {e}")
             return False
 
     def _outgoing_link_callback(self, link):

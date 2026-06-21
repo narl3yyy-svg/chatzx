@@ -16,6 +16,8 @@
   --msg-self: #0f3460;
   --msg-other: #16213e;
   --msg-system: #533483;
+  --danger: #e94560;
+  --success: #2d6a4f;
 }
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -24,10 +26,7 @@ body {
   height: 100vh;
   overflow: hidden;
 }
-#app {
-  display: flex;
-  height: 100vh;
-}
+#app { display: flex; height: 100vh; }
 
 /* Sidebar */
 #sidebar {
@@ -37,54 +36,56 @@ body {
   flex-direction: column;
   border-right: 1px solid rgba(255,255,255,.05);
 }
-#sidebar-header {
-  padding: 16px;
-  border-bottom: 1px solid rgba(255,255,255,.05);
-}
+#sidebar-header { padding: 16px; border-bottom: 1px solid rgba(255,255,255,.05); display: flex; align-items: center; justify-content: space-between; }
 #sidebar-header h1 { font-size: 18px; color: var(--primary); }
-#identity-box {
-  margin-top: 8px;
-  font-size: 11px;
-  color: var(--text2);
-  word-break: break-all;
-  cursor: pointer;
-}
+#identity-box { margin-top: 8px; font-size: 11px; color: var(--text2); word-break: break-all; cursor: pointer; }
 #identity-box:hover { color: var(--text); }
+#settings-btn {
+  background: none; border: 1px solid rgba(255,255,255,.1);
+  color: var(--text2); width: 32px; height: 32px;
+  border-radius: 6px; cursor: pointer; font-size: 16px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+#settings-btn:hover { border-color: var(--primary); color: var(--primary); }
 
 #contacts-section { flex: 1; overflow-y: auto; padding: 8px; }
 #contacts-section h3 { font-size: 12px; text-transform: uppercase; color: var(--text2); margin: 8px 0; }
 .contact-item {
-  display: flex;
-  align-items: center;
-  padding: 10px 12px;
-  border-radius: 8px;
-  cursor: pointer;
-  margin-bottom: 2px;
-  transition: background .15s;
+  display: flex; align-items: center; padding: 10px 12px;
+  border-radius: 8px; cursor: pointer; margin-bottom: 2px;
+  transition: background .15s; position: relative;
 }
 .contact-item:hover { background: rgba(255,255,255,.05); }
 .contact-item.active { background: var(--surface2); }
 .contact-avatar {
-  width: 36px; height: 36px;
-  border-radius: 50%;
-  background: var(--primary);
-  display: flex; align-items: center; justify-content: center;
-  font-weight: bold; font-size: 14px; margin-right: 12px;
-  flex-shrink: 0;
+  width: 36px; height: 36px; border-radius: 50%;
+  background: var(--primary); display: flex; align-items: center; justify-content: center;
+  font-weight: bold; font-size: 14px; margin-right: 12px; flex-shrink: 0;
 }
 .contact-info { flex: 1; min-width: 0; }
 .contact-name { font-size: 14px; font-weight: 500; }
 .contact-hash { font-size: 11px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Main */
-#main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
+/* Context menu */
+#context-menu {
+  display: none; position: fixed; z-index: 500;
+  background: var(--surface); border: 1px solid rgba(255,255,255,.15);
+  border-radius: 8px; padding: 4px; min-width: 160px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.4);
 }
+#context-menu.open { display: block; }
+.ctx-item {
+  padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 13px;
+  display: flex; align-items: center; gap: 8px;
+}
+.ctx-item:hover { background: rgba(255,255,255,.08); }
+.ctx-item.danger:hover { background: var(--danger); color: #fff; }
+
+/* Main */
+#main { flex: 1; display: flex; flex-direction: column; }
 #chat-header {
-  padding: 12px 20px;
-  border-bottom: 1px solid rgba(255,255,255,.05);
+  padding: 12px 20px; border-bottom: 1px solid rgba(255,255,255,.05);
   display: flex; align-items: center; justify-content: space-between;
 }
 #chat-header .peer-info { font-size: 14px; }
@@ -97,31 +98,18 @@ body {
 #disconnect-btn:hover { border-color: var(--primary); color: var(--primary); }
 
 #placeholder {
-  flex: 1;
-  display: flex; align-items: center; justify-content: center;
-  color: var(--text2); font-size: 16px;
-  flex-direction: column; gap: 8px;
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  color: var(--text2); font-size: 16px; flex-direction: column; gap: 8px;
 }
-#placeholder .keyhint {
-  font-size: 12px; opacity: .5;
-}
+#placeholder .keyhint { font-size: 12px; opacity: .5; }
 
 #messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  flex: 1; overflow-y: auto; padding: 16px 20px;
+  display: flex; flex-direction: column; gap: 6px;
 }
 .msg {
-  max-width: 75%;
-  padding: 10px 14px;
-  border-radius: 12px;
-  font-size: 14px;
-  line-height: 1.4;
-  position: relative;
-  word-wrap: break-word;
+  max-width: 75%; padding: 10px 14px; border-radius: 12px;
+  font-size: 14px; line-height: 1.4; position: relative; word-wrap: break-word;
 }
 .msg.self { align-self: flex-end; background: var(--msg-self); border-bottom-right-radius: 4px; }
 .msg.other { align-self: flex-start; background: var(--msg-other); border-bottom-left-radius: 4px; }
@@ -133,43 +121,19 @@ body {
 .msg .voice-player { margin-top: 6px; }
 
 /* Input */
-#input-area {
-  padding: 12px 20px;
-  border-top: 1px solid rgba(255,255,255,.05);
-  background: var(--surface);
-}
-#input-row {
-  display: flex;
-  gap: 8px;
-  align-items: flex-end;
-}
+#input-area { padding: 12px 20px; border-top: 1px solid rgba(255,255,255,.05); background: var(--surface); }
+#input-row { display: flex; gap: 8px; align-items: flex-end; }
 #input-row textarea {
-  flex: 1;
-  background: var(--bg);
-  border: 1px solid rgba(255,255,255,.1);
-  border-radius: 8px;
-  color: var(--text);
-  padding: 10px 14px;
-  font-size: 14px;
-  font-family: inherit;
-  resize: none;
-  outline: none;
-  min-height: 42px;
-  max-height: 120px;
-  line-height: 1.4;
+  flex: 1; background: var(--bg); border: 1px solid rgba(255,255,255,.1);
+  border-radius: 8px; color: var(--text); padding: 10px 14px; font-size: 14px;
+  font-family: inherit; resize: none; outline: none; min-height: 42px; max-height: 120px; line-height: 1.4;
 }
 #input-row textarea:focus { border-color: var(--primary); }
 .input-btn {
-  background: none;
-  border: 1px solid rgba(255,255,255,.1);
-  color: var(--text2);
-  width: 42px; height: 42px;
-  border-radius: 8px;
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 18px;
-  transition: all .15s;
-  flex-shrink: 0;
+  background: none; border: 1px solid rgba(255,255,255,.1); color: var(--text2);
+  width: 42px; height: 42px; border-radius: 8px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; font-size: 18px;
+  transition: all .15s; flex-shrink: 0;
 }
 .input-btn:hover { border-color: var(--primary); color: var(--primary); }
 .input-btn.recording { border-color: #f00; color: #f00; animation: pulse 1s infinite; }
@@ -177,97 +141,58 @@ body {
 #send-btn { background: var(--primary); border-color: var(--primary); color: #fff; }
 #send-btn:hover { opacity: .8; }
 
-/* Connect dialog */
-#connect-dialog {
-  display: none;
-  position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,.6);
-  z-index: 100;
-  align-items: center; justify-content: center;
+/* Dialog */
+#connect-dialog, #settings-dialog {
+  display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,.6); z-index: 100; align-items: center; justify-content: center;
 }
-#connect-dialog.open { display: flex; }
+#connect-dialog.open, #settings-dialog.open { display: flex; }
 .dialog {
-  background: var(--surface);
-  border-radius: 12px;
-  padding: 24px;
-  width: 400px;
-  max-width: 90vw;
+  background: var(--surface); border-radius: 12px; padding: 24px;
+  width: 400px; max-width: 90vw;
 }
 .dialog h2 { margin-bottom: 16px; font-size: 16px; }
 .dialog input, .dialog select {
-  width: 100%;
-  background: var(--bg);
-  border: 1px solid rgba(255,255,255,.1);
-  border-radius: 6px;
-  color: var(--text);
-  padding: 10px 12px;
-  font-size: 14px;
-  margin-bottom: 12px;
-  outline: none;
+  width: 100%; background: var(--bg); border: 1px solid rgba(255,255,255,.1);
+  border-radius: 6px; color: var(--text); padding: 10px 12px; font-size: 14px;
+  margin-bottom: 12px; outline: none;
 }
 .dialog input:focus { border-color: var(--primary); }
+.dialog label { font-size: 12px; color: var(--text2); display: block; margin-bottom: 4px; }
 .dlg-btn-row { display: flex; gap: 8px; justify-content: flex-end; }
-.dlg-btn {
-  padding: 8px 20px;
-  border-radius: 6px;
-  border: none;
-  font-size: 14px;
-  cursor: pointer;
-}
+.dlg-btn { padding: 8px 20px; border-radius: 6px; border: none; font-size: 14px; cursor: pointer; }
 .dlg-btn.primary { background: var(--primary); color: #fff; }
 .dlg-btn.secondary { background: rgba(255,255,255,.1); color: var(--text); }
+.settings-section { margin-bottom: 16px; }
+.settings-section p { font-size: 12px; color: var(--text2); margin-bottom: 8px; }
 
 /* Emoji picker */
 #emoji-picker {
-  display: none;
-  position: absolute;
-  bottom: 60px;
-  left: 20px;
-  background: var(--surface);
-  border: 1px solid rgba(255,255,255,.1);
-  border-radius: 8px;
-  padding: 8px;
-  width: 320px;
-  max-height: 200px;
-  overflow-y: auto;
-  z-index: 10;
+  display: none; position: absolute; bottom: 60px; left: 20px;
+  background: var(--surface); border: 1px solid rgba(255,255,255,.1);
+  border-radius: 8px; padding: 8px; width: 320px; max-height: 200px;
+  overflow-y: auto; z-index: 10;
 }
 #emoji-picker.open { display: flex; flex-wrap: wrap; gap: 4px; }
 .emoji-item {
-  width: 36px; height: 36px;
-  display: flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
   cursor: pointer; border-radius: 4px; font-size: 20px;
 }
 .emoji-item:hover { background: rgba(255,255,255,.1); }
 
 /* Toast */
 #toast {
-  position: fixed;
-  bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--surface2);
-  color: var(--text);
-  padding: 10px 20px;
-  border-radius: 8px;
-  font-size: 13px;
-  opacity: 0;
-  transition: opacity .3s;
-  z-index: 200;
-  pointer-events: none;
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  background: var(--surface2); color: var(--text); padding: 10px 20px;
+  border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .3s;
+  z-index: 200; pointer-events: none;
 }
 #toast.show { opacity: 1; }
 
-/* Modal for image view */
+/* Image modal */
 #image-modal {
-  display: none;
-  position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,.9);
-  z-index: 300;
-  align-items: center; justify-content: center;
-  cursor: pointer;
+  display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,.9); z-index: 300; align-items: center; justify-content: center; cursor: pointer;
 }
 #image-modal.open { display: flex; }
 #image-modal img { max-width: 90vw; max-height: 90vh; border-radius: 8px; }
@@ -281,11 +206,13 @@ body {
 </head>
 <body>
 <div id="app">
-  <!-- Sidebar -->
   <div id="sidebar">
     <div id="sidebar-header">
-      <h1>chatxz</h1>
-      <div id="identity-box" onclick="copyIdentity()" title="Click to copy">Loading...</div>
+      <div>
+        <h1>chatxz</h1>
+        <div id="identity-box" onclick="copyIdentity()" title="Click to copy">Loading...</div>
+      </div>
+      <button id="settings-btn" onclick="showSettings()" title="Settings">⚙</button>
     </div>
     <div id="contacts-section">
       <h3>Contacts</h3>
@@ -294,8 +221,8 @@ body {
         <button class="input-btn" style="flex:1;border-radius:6px;font-size:12px;gap:4px;display:flex;align-items:center;justify-content:center" onclick="showConnectDialog()">
           <span>+</span> Add
         </button>
-        <button class="input-btn" style="flex:1;border-radius:6px;font-size:12px;gap:4px;display:flex;align-items:center;justify-content:center" onclick="announceSelf()" title="Broadcast your identity on LAN">
-          📡 Announce
+        <button class="input-btn" style="flex:1;border-radius:6px;font-size:12px;gap:4px;display:flex;align-items:center;justify-content:center" onclick="announceSelf()" title="Broadcast on LAN">
+          Announce
         </button>
       </div>
       <h3 style="margin-top:12px">Discovered on LAN</h3>
@@ -303,7 +230,6 @@ body {
     </div>
   </div>
 
-  <!-- Main -->
   <div id="main">
     <div id="chat-header">
       <div class="peer-info">
@@ -313,7 +239,7 @@ body {
       <button id="disconnect-btn" style="display:none" onclick="disconnect()">Disconnect</button>
     </div>
     <div id="placeholder">
-      <div style="font-size:48px;opacity:.3">💬</div>
+      <div style="font-size:48px;opacity:.3"></div>
       <div>Connect to someone to start chatting</div>
       <div class="keyhint">Use the sidebar to find and connect to peers</div>
     </div>
@@ -334,6 +260,12 @@ body {
   </div>
 </div>
 
+<!-- Context menu -->
+<div id="context-menu">
+  <div class="ctx-item" onclick="ctxConnect()">Connect</div>
+  <div class="ctx-item danger" onclick="ctxDelete()">Delete</div>
+</div>
+
 <!-- Connect dialog -->
 <div id="connect-dialog">
   <div class="dialog">
@@ -347,6 +279,29 @@ body {
   </div>
 </div>
 
+<!-- Settings dialog -->
+<div id="settings-dialog">
+  <div class="dialog">
+    <h2>Settings</h2>
+    <div class="settings-section">
+      <label>Display Name (shown in announces)</label>
+      <input id="settings-name" placeholder="Your name...">
+    </div>
+    <div class="settings-section">
+      <label>Announce Interval (seconds)</label>
+      <input id="settings-interval" type="number" value="30" min="5" max="3600">
+    </div>
+    <div class="settings-section">
+      <p>Your identity hash:</p>
+      <input id="settings-hash" readonly style="font-size:11px;color:var(--text2)">
+    </div>
+    <div class="dlg-btn-row">
+      <button class="dlg-btn secondary" onclick="closeSettings()">Cancel</button>
+      <button class="dlg-btn primary" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Image modal -->
 <div id="image-modal" onclick="this.classList.remove('open')">
   <img id="modal-img" src="">
@@ -356,20 +311,22 @@ body {
 <div id="toast"></div>
 
 <script>
-// State
 let ws = null;
 let myHash = '';
-let connected = false;
+let connected = null;
 let recording = false;
 let mediaRecorder = null;
 let audioChunks = [];
+let ctxHash = null;
+let peersPollTimer = null;
 
-const EMOJIS = ['😀','😃','😄','😁','😅','😂','🤣','😊','😇','🙂','😉','😌','😍','🥰','😘','😗','😋','😛','😜','🤪','😝','🤑','🤗','🤭','🤫','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','🤥','😌','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🥴','😵','🤯','🤠','🥳','🥺','😢','😭','😤','😠','😡','🤬','💀','☠️','💩','🤡','👹','👺','👻','💀','👽','🤖','🎃','😺','😸','😹','😻','😼','😽','🙀','😿','😾','🙌','👏','👍','👎','👊','✊','🤛','🤜','🤞','✌️','🤟','🤘','👌','👈','👉','👆','👇','☝️','✋','🤚','🖐','🖖','👋','🤙','💪','🦾','🖕','✍️','🙏','💅','🤳','💯','🔥','⭐','🌟','✨','💥','💫','💦','💨','🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🙈','🙉','🙊','🐒','🐔','🐧','🐦','🐤','🐣','🐥','🦆','🦅','🦉','🦇','🐺','🐗','🐴','🦄','🐝','🐛','🦋','🐌','🐞','🐜','🦟','🦗','🕷','🦂','🐢','🐍','🦎','🦖','🦕','🐙','🦑','🦐','🦀','🐡','🐠','🐟','🐬','🐳','🐋','🦈','🐊','🐅','🐆','🦓','🦍','🦧','🐘','🦛','🦏','🐪','🐫','🦒','🦘','🐃','🐂','🐄','🐎','🐖','🐏','🐑','🦙','🐐','🦌','🐕','🐩','🦮','🐈','🐓','🦃','🦚','🦜','🦢','🦩','🕊','🐇','🦝','🦡','🦨','🦦','🦥','🐁','🐀','🐿','🦔','🌵','🎄','🌲','🌳','🌴','🌱','🌿','☘️','🍀','🎍','🍃','🍂','🍁','🍄','🌾','💐','🌷','🌹','🥀','🌺','🌸','🌼','🌻','🌞','🌝','🌛','🌜','🌚','🌕','🌖','🌗','🌘','🌑','🌒','🌓','🌔','🌙','🌎','🌍','🌏','🪐','💫','⭐','🌟','✨','⚡','☄️','💥','🔥','🌪','🌈','☀️','🌤','⛅','🌥','☁️','🌦','🌧','⛈','🌩','🌨','❄️','☃️','⛄','🌬','💨','💧','💦','☔','☂️','🌊','🍏','🍎','🍐','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍈','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🥬','🥒','🌶','🫑','🌽','🥕','🧄','🧅','🥔','🍠','🥐','🍞','🥖','🥨','🧀','🥚','🍳','🥞','🧇','🥓','🥩','🍗','🍖','🦴','🌭','🍔','🍟','🍕','🫓','🥪','🥙','🧆','🌮','🌯','🥗','🥘','🫕','🥫','🍝','🍜','🍲','🍛','🍣','🍱','🥟','🦪','🍤','🍙','🍚','🍘','🍥','🥠','🥮','🍢','🍡','🍧','🍨','🍦','🥧','🧁','🍰','🎂','🍮','🍭','🍬','🍫','🍿','🍩','🍪','🌰','🥜','🍯','🥛','🍼','☕','🫖','🍵','🧃','🥤','🧋','🍶','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🧉','🍾','🧊','🥄','🍴','🥣','🍽','🥡','🥢','🧂','⚽','🏀','🏈','⚾','🥎','🎾','🏐','🏉','🥏','🎱','🪀','🏓','🏸','🏒','🏑','🥍','🏏','🪃','🥅','⛳','🪁','🏹','🎣','🤿','🥊','🛹','🛼','🛷','⛸','🥌','🎿','⛷','🏂','🪂','🏋','🤼','🤸','🤺','⛹','🤾','🏌','🏇','🧘','🏄','🏊','🤽','🚣','🧗','🚵','🚴','🏆','🥇','🥈','🥉','🏅','🎖','🏵','🎗','🎫','🎟','🎪','🤹','🎭','🎨','🎬','🎤','🎧','🎼','🎹','🥁','🪘','🎷','🎺','🪗','🎸','🪕','🎻','🎲','♟','🎯','🎳','🎮','🕹','🚗','🚙','🚕','🚌','🚎','🏎','🚓','🚑','🚒','🚐','🛻','🚚','🚛','🚜','🏍','🛵','🦽','🦼','🛺','🚲','🛴','🚨','🚔','🚍','🚘','🚖','🚡','🚠','🚟','🚃','🚋','🚞','🚝','🚄','🚅','🚈','🚂','🚆','🚇','🚊','🚉','✈️','🛫','🛬','🛩','💺','🛰','🚀','🛸','🚁','🛶','⛵','🚤','🛥','🛳','⛴','🚢','🛟','⚓','🛑','🚧','⛽','🚏','🚦','🗺','🗿','🏠','🏡','🏘','🏚','🏗','🏢','🏬','🏣','🏤','🏥','🏦','🏨','🏩','🏪','🏫','🏛','⛪','🕌','🕍','🛕','🕋','⛩','🛤','🛣','🗾','🎑','🏞','🌅','🌄','🌇','🌆','🏙','🌃','🌌','🌉','🌁','🎆','🎇','🌈','🏳️','🏴','🏁','🚩','🎌','🇺🇳','🇺🇸','🇬🇧','🇨🇦','🇦🇺','🇯🇵','🇰🇷','🇨🇳','🇮🇳','🇩🇪','🇫🇷','🇪🇸','🇮🇹','🇧🇷','🇲🇽','🇷🇺','🇿🇦','🇸🇪','🇳🇴','🇩🇰','🇫🇮','🇳🇱','🇧🇪','🇨🇭','🇦🇹','🇵🇹','🇬🇷','🇵🇱','🇨🇿','🇭🇺','🇹🇷','🇮🇱','🇸🇦','🇦🇪','🇸🇬','🇭🇰','🏴󠁧󠁢󠁥󠁮󠁧󠀿','🏴󠁧󠁢󠁳󠁣󠁴󠀿','🏴󠁧󠁢󠁷󠁬󠁳󠀿','❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','☮️','✝️','☪️','🕉','☸️','✡️','🔯','🕎','☯️','☦️','🛐','⛎','♈','♉','♊','♋','♌','♍','♎','♏','♐','♑','♒','♓','🆔','⚕️','♻️','⚜️','🔱','📵','🔞','☢️','☣️','⬆️','⬇️','⬅️','➡️','↗️','↘️','↙️','↖️','↕️','↔️','🔄','◀️','▶️','⏪','⏩','⏫','⏬','⏸','⏹','⏺','⏯','⏭','⏮','🎦','📶','🈳','🈹','🈴','🈺','🈁','🈵','🈶','🈚','🈷','🈸','🉐','🉑','㊗','㊙','🈲','🈳','🈴','🈵','🈶','🈷','🈸','🈹','🈺','🈁','🆚','🅰','🅱','🆎','🆑','🅾','🆘','❌','⭕','🛑','⛔','📛','🚫','💢','♨️','🚷','🚯','🚳','🚱','🔞','📵','🚭','❗','❕','❓','❔','‼️','⁉️','🔅','🔆','〽️','⚠️','🚸','🔱','⚜️','🔰','♻️','✅','🈯','💹','❇️','✳️','❎','🌐','💠','Ⓜ️','🌀','💤','🏧','🚾','♿','🅿️','🛗','🈳','🈹','🈴','🈺','🈁','🈵','🈶','🈚','🈷','🈸','🉐','🉑','㊗','㊙','🔟','🔢','🔤','🔡','🔠','🔣','🗯','💬','💭','🗨','🕐','🕑','🕒','🕓','🕔','🕕','🕖','🕗','🕘','🕙','🕚','🕛','🕜','🕝','🕞','🕟','🕠','🕡','🕢','🕣','🕤','🕥','🕦','🕧'];
+const EMOJIS = ['😀','😃','😄','😁','😅','😂','🤣','😊','😇','🙂','😉','😌','😍','🥰','😘','😋','😛','😜','🤪','😝','🤗','🤭','🤫','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','🤥','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🥴','😵','🤯','🤠','🥳','🥺','😢','😭','😤','😠','😡','🤬','💀','💩','🤡','👻','👽','🤖','😺','😸','😹','😻','😼','😽','🙀','😿','😾','🙌','👏','👍','👎','👊','✊','🤛','🤜','🤞','✌️','🤟','🤘','👌','👈','👉','👆','👇','☝️','✋','🤚','🖐','🖖','👋','🤙','💪','🦾','🖕','✍️','🙏','💯','🔥','⭐','🌟','✨','💥','💫','💦','💨','❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🙈','🙉','🙊','🐔','🐧','🐦','🐤','🐣','🐥','🦆','🦅','🦉','🦇','🐺','🐗','🐴','🦄','🐝','🐛','🦋','🐌','🐞','🐜','🦟','🦗','🕷','🦂','🐢','🐍','🦎','🦖','🦕','🐙','🦑','🦐','🦀','🐡','🐠','🐟','🐬','🐳','🐋','🦈','🐊','🐅','🐆','🦓','🦍','🐘','🦛','🦏','🐪','🐫','🦒','🦘','🐃','🐂','🐄','🐎','🐖','🐏','🐑','🦙','🐐','🦌','🐕','🐩','🐈','🐓','🦃','🦚','🦜','🦢','🦩','🕊','🐇','🦝','🦡','🦨','🦦','🦥','🐁','🐀','🐿','🦔','🌵','🎄','🌲','🌳','🌴','🌱','🌿','☘️','🍀','🍃','🍂','🍁','🍄','🌾','💐','🌷','🌹','🥀','🌺','🌸','🌼','🌻','🌞','🌝','🌛','🌜','🌚','🌕','🌖','🌗','🌘','🌑','🌒','🌓','🌔','🌙','🌎','🌍','🌏','🪐','💫','⚡','☄️','🔥','🌪','🌈','☀️','🌤','⛅','🌥','☁️','🌦','🌧','⛈','🌩','🌨','❄️','☃️','⛄','🌬','💧','💦','☔','🌊','🍏','🍎','🍐','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍈','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🥬','🥒','🌶','🌽','🥕','🧄','🧅','🥔','🍠','🥐','🍞','🥖','🥨','🧀','🥚','🍳','🥞','🧇','🥓','🥩','🍗','🍖','🌭','🍔','🍟','🍕','🥪','🥙','🌮','🌯','🥗','🥘','🍝','🍜','🍲',' curry','🍣','🍱','🥟','🍤','🍙','🍚','🍘','🍥','🥠','🥮','🍢','🍡','🍧','🍨','🍦','🥧','🧁','🍰','🎂','🍮','🍭','🍬','🍫','🍿','🍩','🍪','🌰','🥜','🍯','🥛','🍼','☕','🫖','🍵','🧃','🥤','🧋','🍶','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🧉','🍾','🧊','🥄','🍴','🥢','🥡','🥣','🧂','⚽','🏀','🏈','⚾','🥎','🎾','🏐','🏉','🥏','🎱','🪀','🏓','🏸','🏒','🏑','🥍','🏏','🥅','⛳','🪁','🏹','🎣','🤿','🥊','🥋','🎽','⛸','🥌','sled','🎿','⛷','🏂','🪐','🏋️','🤼','🤸','⛹️','🤺','🏌️','🏇','🧘','🏄','🏊','🤽','🚣','🧗','🚵','🚴','🏆','🥇','🥈','🥉','🏅','🎖','🏵','🎗','🎫','🎟','🎪','🤹','🎭','🩰','🎨','🎬','🎤','🎧','🎼','🎹','🥁','🪘','🎷','🎺','🎸','🪕','🎻','🎲','♟','🎯','🎳','🎮','🎰','🧩','⌚','📱','📲','💻','⌨️','🖥','🖨','🖱','🖲','🕹','🗜','💽','💾','💿','📀','📼','📷','📸','📹','🎥','📽','🎞','📞','☎️','📟','📠','📺','📻','🎙','🎚','🎛','🧭','⏱','⏲','⏰','🕰','⌛','⏳','📡','🔋','🔌','💡','🔦','🕯','🪔','🧯','🛢','💸','💵','💴','💶','💷','🪙','💰','💳','💎','⚖️','🪜','🧰','🪛','🔧','🔨','⚒','🛠','⛏','🪚','🔩','⚙️','🪤','🧱','⛓','🧲','🔫','💣','🧨','🪓','🔪','🗡','⚔️','盾','🚬','⚰️','🪦','⚱️','🏺','🔮','📿','🧿','💈','⚗️','🔭','🔬','🕳','🩹','🩺','💊','💉','🩸','🧬','🦠','🧫','🧬','🔬','🔭','📡','💡','🔦','🕯','🪔','🧯','🛢','🔋','🔌','💻','⌨️','🖥','🖨','🖱','🖲','🕹','🗜','💽','💾','💿','📀','📼','📷','📸','📹','🎥','📽','🎞','📞','☎️','📟','📠','📺','📻','🎙','🎚','🎛','🧭','⌚','📱','📲','⏱','⏲','⏰','🕰','⌛','⏳','📊','📈','📉','📌','📍','📎','🖇','📏','📐','✂️','🗃','🗄','🗑','🔒','🔓','🔏','🔐','🔑','🗝','🔨','🪓','⛏','⚒','🛠','🗡','⚔️','🔫','弓','🛡','🔧','🔩','⚙️','🧰','🧲','🧪','🧫','🧬','🔬','🔭','📡','💉','💊','🩹','🩺','🩻','🚪','🛏','🛋','🪑','🚽','🚿','🛁','🪒','🧴','🧷','🧹','🧺','🧻','🪣','🧼','🪥','🧽','🧯','🛒','🚬','⚰️','🪦','⚱️','🗿','🪧','🪪','🏧','🚮','🚰','🚹','🚺','🚻','🚼','🚾','🛂','🛃','🛄','🛅','⚠️','🚸','⛔','🚫','🚳','🚭','🚯','🚱','🚷','📵','🔞','☢️','☣️','⬆️','↗️','➡️','↘️','⬇️','↙️','⬅️','↖️','↕️','↔️','↩️','↪️','⤴️','⤵️','🔃','🔄','🔙','🔚','🔛','🔜','🔝','🛐','⚛️','🕉','✡️','☸️','☯️','✝️','☦️','☪️','☮️','🕎','🔯','♈','♉','♊','♋','♌','♍','♎','♏','♐','♑','♒','♓','⛎','🔀','🔁','🔂','▶️','⏩','⏭','⏯','◀️','⏪','⏮','🔼','⏫','🔽','⏬','⏸','⏹','⏺','⏏','🎦','🔅','🔆','📶','📳','📴','♀️','♂️','⚧','✖️','➕','➖','➗','♾','‼️','⁉️','❓','❔','❕','❗','〰️','💱','💲','⚕️','♻️','⚜️','🔱','📛','🔰','⭕','✅','☑️','✔️','❌','❎','➰','➿','〽️','✳️','✴️','❇️','©️','®️','™️','#️⃣','*️⃣','0️⃣','1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟','🔞','🔠','🔡','🔢','🔣','🔤','🅰️','🆎','🅱️','🆑','🆒','🆓','ℹ️','🆔','Ⓜ️','🆕','🆖','🅾️','🆗','🅿️','🆘','🆙','🆚','🈁','🈂️','🈷️','🈶','🈯','🉐','🈹','🈚','🈲','🉑','🈸','🈴','🈳','㊗️','㊙️','🈺','🈵','🔴','🟠','🟡','🟢','🔵','🟣','🟤','⚫','⚪','🟥','🟧','🟨','🟩','🟦','🟪','🟫','⬛','⬜','◼️','◻️','◾','◽','▪️','▫️','🔶','🔷','🔸','🔹','🔺','🔻','💠','🔘','🔲','🔳','🏁','🚩','🎌','🏴','🏳️','🏴‍☠️'];
 
 function init() {
   fetchIdentity();
   connectWS();
   buildEmojiPicker();
+  startPeerPolling();
 }
 
 function fetchIdentity() {
@@ -403,7 +360,22 @@ function handleWSMessage(msg) {
     addMessage(msg.data);
   } else if (msg.type === 'peers') {
     renderDiscovered(msg.data);
+  } else if (msg.type === 'connect_ok') {
+    setConnected(msg.hash);
+    toast('Connected!');
+  } else if (msg.type === 'connect_fail') {
+    toast('Connection failed: ' + (msg.error || 'unknown'));
   }
+}
+
+function startPeerPolling() {
+  if (peersPollTimer) clearInterval(peersPollTimer);
+  peersPollTimer = setInterval(() => {
+    fetch('/api/discover')
+      .then(r => r.json())
+      .then(d => renderDiscovered(d.peers))
+      .catch(() => {});
+  }, 5000);
 }
 
 function renderContacts(contacts) {
@@ -415,10 +387,11 @@ function renderContacts(contacts) {
     div.className = 'contact-item' + (c.hash === connected ? ' active' : '');
     div.innerHTML = `<div class="contact-avatar">${name.charAt(0).toUpperCase()}</div>
       <div class="contact-info">
-        <div class="contact-name">${name}</div>
+        <div class="contact-name">${escapeHtml(name)}</div>
         <div class="contact-hash">${truncateHash(c.hash)}</div>
       </div>`;
     div.onclick = () => connectTo(c.hash);
+    div.oncontextmenu = (e) => { e.preventDefault(); showContextMenu(e, c.hash); };
     el.appendChild(div);
   });
 }
@@ -434,15 +407,47 @@ function renderDiscovered(peers) {
     const div = document.createElement('div');
     div.className = 'contact-item';
     const name = p.name || truncateHash(p.hash);
-    div.innerHTML = `<div class="contact-avatar" style="background:#2d6a4f">${name.charAt(0).toUpperCase()}</div>
+    div.innerHTML = `<div class="contact-avatar" style="background:var(--success)">${escapeHtml(name).charAt(0).toUpperCase()}</div>
       <div class="contact-info">
-        <div class="contact-name">${name}</div>
+        <div class="contact-name">${escapeHtml(name)}</div>
         <div class="contact-hash">${truncateHash(p.hash)}</div>
       </div>
       <div style="font-size:11px;color:var(--text2)">LAN</div>`;
     div.onclick = () => connectTo(p.hash);
+    div.oncontextmenu = (e) => {
+      e.preventDefault();
+      showContextMenu(e, p.hash);
+    };
     el.appendChild(div);
   });
+}
+
+function showContextMenu(e, hash) {
+  ctxHash = hash;
+  const menu = document.getElementById('context-menu');
+  menu.classList.add('open');
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+}
+
+document.addEventListener('click', () => {
+  document.getElementById('context-menu').classList.remove('open');
+});
+
+function ctxConnect() {
+  if (ctxHash) connectTo(ctxHash);
+  document.getElementById('context-menu').classList.remove('open');
+}
+
+function ctxDelete() {
+  if (ctxHash) {
+    fetch('/api/contacts/' + ctxHash.replace(/:/g, ''), { method: 'DELETE' })
+      .then(() => {
+        toast('Contact deleted');
+        fetchIdentity();
+      });
+  }
+  document.getElementById('context-menu').classList.remove('open');
 }
 
 function showConnectDialog() {
@@ -472,6 +477,7 @@ function doConnect() {
 }
 
 function connectTo(hash) {
+  toast('Connecting...');
   fetch('/api/connect', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -483,18 +489,52 @@ function connectTo(hash) {
     } else {
       toast('Connection failed: ' + (d.error || 'unknown'));
     }
-  });
+  }).catch(() => toast('Connection failed'));
 }
 
 function announceSelf() {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({type: 'announce'}));
+  } else {
+    fetch('/api/identity').then(() => {});
   }
   toast('Announcing on LAN...');
 }
 
+function showSettings() {
+  fetch('/api/settings')
+    .then(r => r.json())
+    .then(s => {
+      document.getElementById('settings-name').value = s.name || '';
+      document.getElementById('settings-interval').value = s.announce_interval || 30;
+      document.getElementById('settings-hash').value = myHash;
+      document.getElementById('settings-dialog').classList.add('open');
+    });
+}
+
+function closeSettings() {
+  document.getElementById('settings-dialog').classList.remove('open');
+}
+
+function saveSettings() {
+  const name = document.getElementById('settings-name').value.trim();
+  const interval = parseInt(document.getElementById('settings-interval').value) || 30;
+  fetch('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name, announce_interval: interval})
+  }).then(r => r.json()).then(d => {
+    if (d.status === 'ok') {
+      toast('Settings saved');
+      closeSettings();
+    } else {
+      toast('Failed to save settings');
+    }
+  });
+}
+
 function setConnected(hash) {
-  connected = hash;
+  connected = hash.replace(/:/g, '');
   document.getElementById('peer-name').textContent = truncateHash(hash);
   document.getElementById('peer-status').textContent = 'Connected';
   document.getElementById('placeholder').style.display = 'none';
@@ -548,25 +588,25 @@ function addMessage(data) {
   const time = new Date(data.timestamp * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
   let html = '';
   if (data.type === 'text' || data.type === 'emoji') {
-    html = data.content;
+    html = escapeHtml(data.content);
   } else if (data.type === 'image') {
-    html = `<div>📷 ${data.file_name || 'Image'}</div>`;
+    html = `<div>📷 ${escapeHtml(data.file_name || 'Image')}</div>`;
     if (data.content && data.content.startsWith('/')) {
       html += `<img class="msg-img" src="/api/file/${encodeURIComponent(data.content)}" onclick="showImage(this.src)">`;
     }
   } else if (data.type === 'voice') {
-    html = `<div>🎤 ${data.file_name || 'Voice note'}</div>`;
+    html = `<div>🎤 ${escapeHtml(data.file_name || 'Voice note')}</div>`;
     if (data.content && data.content.startsWith('/')) {
       html += `<audio class="voice-player" controls src="/api/file/${encodeURIComponent(data.content)}"></audio>`;
     }
   } else if (data.type === 'file') {
     const sz = data.file_size ? formatSize(data.file_size) : '';
-    html = `<div class="file-info"><span class="file-icon">📄</span><span>${data.file_name || 'File'} ${sz}</span></div>`;
+    html = `<div class="file-info"><span class="file-icon">📄</span><span>${escapeHtml(data.file_name || 'File')} ${sz}</span></div>`;
     if (data.content && data.content.startsWith('/')) {
-      html += `<div style="margin-top:4px"><a href="/api/file/${encodeURIComponent(data.content)}" download="${data.file_name || 'file'}" style="color:var(--primary);font-size:12px">Download</a></div>`;
+      html += `<div style="margin-top:4px"><a href="/api/file/${encodeURIComponent(data.content)}" download="${escapeHtml(data.file_name || 'file')}" style="color:var(--primary);font-size:12px">Download</a></div>`;
     }
   } else if (data.type === 'system') {
-    html = data.content;
+    html = escapeHtml(data.content);
   }
   html += `<div class="time">${time}</div>`;
   div.innerHTML = html;
@@ -597,16 +637,12 @@ function buildEmojiPicker() {
 
 let voiceChunks = [];
 function toggleVoice() {
-  if (recording) {
-    stopVoice();
-  } else {
-    startVoice();
-  }
+  if (recording) { stopVoice(); } else { startVoice(); }
 }
 
 function startVoice() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    toast('Voice recording not supported in this browser');
+    toast('Voice recording not supported');
     return;
   }
   navigator.mediaDevices.getUserMedia({audio: true})
@@ -614,7 +650,6 @@ function startVoice() {
       recording = true;
       voiceChunks = [];
       document.getElementById('voice-btn').classList.add('recording');
-      document.getElementById('voice-btn').title = 'Stop recording';
       toast('Recording... click 🎤 to stop');
       mediaRecorder = new MediaRecorder(stream, {mimeType: 'audio/webm;codecs=opus'});
       mediaRecorder.ondataavailable = e => { if (e.data.size > 0) voiceChunks.push(e.data); };
@@ -643,7 +678,6 @@ function startVoice() {
 function stopVoice() {
   recording = false;
   document.getElementById('voice-btn').classList.remove('recording');
-  document.getElementById('voice-btn').title = 'Voice note';
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     mediaRecorder.stop();
   }
@@ -687,17 +721,21 @@ function copyIdentity() {
 }
 
 function truncateHash(h) {
-  if (!h || h.length <= 12) return h || '';
-  return h.substring(0, 12) + '...';
+  if (!h || h.length <= 16) return h || '';
+  return h.substring(0, 16) + '...';
 }
 
 function formatSize(bytes) {
   if (!bytes) return '';
   const units = ['B', 'KB', 'MB', 'GB'];
-  let i = 0;
-  let size = bytes;
+  let i = 0; let size = bytes;
   while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
   return size.toFixed(1) + units[i];
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 let toastTimer = null;
