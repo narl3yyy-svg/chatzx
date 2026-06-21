@@ -227,6 +227,10 @@ body {
       </div>
       <h3 style="margin-top:12px">Discovered on LAN</h3>
       <div id="discovered-list"></div>
+      <div id="debug-bar" style="margin-top:8px;padding:6px 8px;font-size:10px;color:var(--text2);border-top:1px solid rgba(255,255,255,.05)">
+        <div id="ws-status">WS: connecting...</div>
+        <div id="peer-count">Peers: 0</div>
+      </div>
     </div>
   </div>
 
@@ -346,19 +350,33 @@ function fetchIdentity() {
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(proto + '//' + location.host + '/ws');
+  ws.onopen = () => {
+    console.log('[ws] Connected');
+    document.getElementById('ws-status').textContent = 'WS: connected';
+  };
   ws.onmessage = e => {
+    console.log('[ws] Received:', e.data.substring(0, 200));
     try {
       const msg = JSON.parse(e.data);
       handleWSMessage(msg);
     } catch(_) {}
   };
-  ws.onclose = () => setTimeout(connectWS, 2000);
+  ws.onclose = () => {
+    console.log('[ws] Disconnected, reconnecting...');
+    document.getElementById('ws-status').textContent = 'WS: disconnected';
+    setTimeout(connectWS, 2000);
+  };
+  ws.onerror = (e) => {
+    console.error('[ws] Error:', e);
+  };
 }
 
 function handleWSMessage(msg) {
+  console.log('[ws] Message type:', msg.type);
   if (msg.type === 'message') {
     addMessage(msg.data);
   } else if (msg.type === 'peers') {
+    console.log('[ws] Peers received:', msg.data ? msg.data.length : 0, msg.data);
     renderDiscovered(msg.data);
   } else if (msg.type === 'connect_ok') {
     setConnected(msg.hash);
@@ -373,8 +391,11 @@ function startPeerPolling() {
   peersPollTimer = setInterval(() => {
     fetch('/api/discover')
       .then(r => r.json())
-      .then(d => renderDiscovered(d.peers))
-      .catch(() => {});
+      .then(d => {
+        console.log('[poll] /api/discover returned', d.peers ? d.peers.length : 0, 'peers');
+        renderDiscovered(d.peers);
+      })
+      .catch((e) => console.error('[poll] error:', e));
   }, 5000);
 }
 
@@ -397,8 +418,11 @@ function renderContacts(contacts) {
 }
 
 function renderDiscovered(peers) {
+  console.log('[render] Discovered peers:', peers);
   const el = document.getElementById('discovered-list');
   el.innerHTML = '';
+  const count = peers ? peers.length : 0;
+  document.getElementById('peer-count').textContent = 'Peers: ' + count;
   if (!peers || peers.length === 0) {
     el.innerHTML = '<div style="font-size:12px;color:var(--text2);padding:8px">No peers found on LAN</div>';
     return;

@@ -65,6 +65,7 @@ class ChatWebServer:
         self.contact_list = {}
         self.active_peer = None
         self.discovery = None
+        self._loop = None
 
     def load_settings(self):
         try:
@@ -87,9 +88,13 @@ class ChatWebServer:
             if "enable_transport = False" in existing:
                 existing = existing.replace("enable_transport = False", "enable_transport = Yes")
                 modified = True
+            if "AutoInterface" not in existing:
+                existing += "\n\n  [[Default Interface]]\n"
+                existing += "    type = AutoInterface\n"
+                existing += "    enabled = Yes\n"
+                modified = True
             if "UDPInterface" not in existing:
-                existing += "\n\n# Added by chatzx for IPv4 LAN discovery\n"
-                existing += "  [[UDP Interface]]\n"
+                existing += "\n  [[UDP Interface]]\n"
                 existing += "    type = UDPInterface\n"
                 existing += "    enabled = Yes\n"
                 existing += "    listen_ip = 0.0.0.0\n"
@@ -143,10 +148,10 @@ class ChatWebServer:
             "file_size": chat_msg.file_size,
         }
         self.message_history.append(entry)
-        if self.websockets:
+        if self.websockets and self._loop:
             asyncio.run_coroutine_threadsafe(
                 self._broadcast({"type": "message", "data": entry}),
-                asyncio.get_event_loop()
+                self._loop
             )
 
     async def _broadcast(self, data):
@@ -285,6 +290,19 @@ class ChatWebServer:
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
 
+    async def handle_debug(self, request):
+        peers = self.discovery.get_peers() if self.discovery else []
+        return web.json_response({
+            "identity_hash": self.identity_mgr.get_hex_hash() if self.identity_mgr else None,
+            "ws_clients": len(self.websockets),
+            "discovered_peers": peers,
+            "discovery_running": self.discovery.running if self.discovery else False,
+            "active_peer": self.active_peer,
+            "message_count": len(self.message_history),
+            "loop_running": self._loop is not None and self._loop.is_running(),
+            "rns_interfaces": len(RNS.Transport.interfaces) if hasattr(RNS.Transport, 'interfaces') else "unknown",
+        })
+
     async def handle_file_upload(self, request):
         if not self.messaging or not self.messaging.active_link:
             return web.json_response({"error": "not connected"}, status=400)
@@ -366,6 +384,7 @@ class ChatWebServer:
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         self.websockets.add(ws)
+        print(f"[ws] Client connected ({len(self.websockets)} total)")
 
         await self._send_peers_to(ws)
 
@@ -383,6 +402,7 @@ class ChatWebServer:
             pass
         finally:
             self.websockets.discard(ws)
+            print(f"[ws] Client disconnected ({len(self.websockets)} total)")
         return ws
 
     async def _discovery_broadcaster(self):
@@ -392,6 +412,7 @@ class ChatWebServer:
             if self.discovery:
                 peers = self.discovery.get_peers()
                 if peers:
+                    print(f"[broadcaster] Broadcasting {len(peers)} peers to {len(self.websockets)} ws clients")
                     await self._broadcast({"type": "peers", "data": peers})
 
     async def handle_discover(self, request):
@@ -421,6 +442,8 @@ class ChatWebServer:
                 self.messaging.announce()
 
     async def _on_startup(self, app):
+        self._loop = asyncio.get_running_loop()
+        print(f"[startup] Event loop captured: {self._loop}")
         asyncio.create_task(self._discovery_broadcaster())
 
     def run(self):
@@ -438,6 +461,7 @@ class ChatWebServer:
         app.router.add_post("/api/play", self.handle_play_voice)
         app.router.add_get("/api/history", self.handle_history)
         app.router.add_get("/api/discover", self.handle_discover)
+        app.router.add_get("/api/debug", self.handle_debug)
         app.router.add_get("/api/settings", self.handle_settings_get)
         app.router.add_post("/api/settings", self.handle_settings_post)
         app.router.add_get("/api/file/{filepath:.*}", self.handle_serve_file)
