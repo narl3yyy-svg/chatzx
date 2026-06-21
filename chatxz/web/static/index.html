@@ -294,8 +294,8 @@ body {
 </div>
 
 <!-- Save contact dialog -->
-<div id="save-contact-dialog" onclick="if(event.target===this)closeSaveContact()">
-  <div class="dialog" onclick="event.stopPropagation()">
+<div id="save-contact-dialog">
+  <div class="dialog">
     <h2>Save Contact</h2>
     <input id="save-contact-hash" readonly style="font-size:11px;color:var(--text2)">
     <input id="save-contact-name" placeholder="Contact name...">
@@ -307,8 +307,8 @@ body {
 </div>
 
 <!-- Connect dialog -->
-<div id="connect-dialog" onclick="if(event.target===this)closeConnectDialog()">
-  <div class="dialog" onclick="event.stopPropagation()">
+<div id="connect-dialog">
+  <div class="dialog">
     <h2>Connect to Peer</h2>
     <input id="connect-hash" placeholder="Paste peer identity hash..." spellcheck="false">
     <input id="contact-name" placeholder="Save as name (optional)">
@@ -320,8 +320,8 @@ body {
 </div>
 
 <!-- Settings dialog -->
-<div id="settings-dialog" onclick="if(event.target===this)closeSettings()">
-  <div class="dialog" onclick="event.stopPropagation()">
+<div id="settings-dialog">
+  <div class="dialog">
     <h2>Settings</h2>
     <div class="settings-section">
       <label>Display Name (shown in announces)</label>
@@ -420,7 +420,8 @@ function fetchIdentity() {
       } else {
         el.style.display = 'none';
       }
-    });
+    })
+    .catch(() => {});
 }
 
 function connectWS() {
