@@ -32,10 +32,8 @@ class IdentityManager:
         return None
 
     def regenerate(self):
-        import time
-        backup_path = self.identity_path + f".bak.{int(time.time())}"
         if os.path.exists(self.identity_path):
-            os.rename(self.identity_path, backup_path)
+            os.remove(self.identity_path)
         self.identity = RNS.Identity()
         self.identity.to_file(self.identity_path)
         return self.identity

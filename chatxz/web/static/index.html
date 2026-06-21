@@ -982,7 +982,7 @@ function pickReceivedDir(input) {
 }
 
 function regenerateIdentity() {
-  if (!confirm('Generate a new identity? Your old identity will be backed up. All peers will need to reconnect with the new hash.')) return;
+  if (!confirm('Generate a new identity? The old one will be deleted. All peers will need to reconnect with the new hash.')) return;
   fetch('/api/identity/regenerate', {method: 'POST'})
     .then(r => r.json())
     .then(d => {
