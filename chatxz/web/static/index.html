@@ -285,7 +285,7 @@ body {
       </div>
       <div class="settings-section">
         <label>Chat History Retention</label>
-        <select id="settings-retention">
+        <select id="settings-retention" onchange="saveRetentionOnly()">
           <option value="1d">1 day</option>
           <option value="1w">1 week</option>
           <option value="1m">1 month</option>
@@ -774,6 +774,17 @@ function doConnectFromPanel() {
   }
   connectTo(hash);
   toggleConnectPanel();
+}
+
+function saveRetentionOnly() {
+  const retention = document.getElementById('settings-retention').value;
+  fetch('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({history_retention: retention})
+  }).then(r => r.json()).then(d => {
+    if (d.status === 'ok') toast('Retention saved');
+  });
 }
 
 function saveSettings() {
