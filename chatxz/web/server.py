@@ -210,6 +210,7 @@ class ChatWebServer:
         self.messaging = MessagingBackend(
             self.identity, self.config_dir,
             on_message=self._on_message,
+            on_progress=self._on_transfer_progress,
             display_name=settings.get("name", ""),
             auto_announce=False,
             my_ip=my_ip,
@@ -252,6 +253,13 @@ class ChatWebServer:
                 await ws.send_str(msg)
             except:
                 self.websockets.discard(ws)
+
+    def _on_transfer_progress(self, data):
+        if self.websockets and self._loop:
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast({"type": "progress", "data": data}),
+                self._loop
+            )
 
     async def _send_peers_to(self, ws):
         if self.discovery:
@@ -685,7 +693,7 @@ class ChatWebServer:
             self._save_history()
             await self._broadcast({"type": "message", "data": entry})
 
-            result = self.messaging.send_file(save_path, msg_type,
+            result = self.messaging.send_file_smart(save_path, msg_type,
                                                progress_callback=self._make_progress_callback(fname, size))
             if result:
                 return web.json_response({"status": "ok", "name": fname, "size": size, "method": "resource"})
@@ -752,7 +760,7 @@ class ChatWebServer:
             self.message_history.append(entry)
             self._save_history()
             await self._broadcast({"type": "message", "data": entry})
-            result = self.messaging.send_file(zip_path, "file",
+            result = self.messaging.send_file_smart(zip_path, "file",
                                                progress_callback=self._make_progress_callback(zip_name, zsize))
             if result:
                 return web.json_response({"status": "ok", "name": zip_name, "size": zsize})
@@ -770,19 +778,33 @@ class ChatWebServer:
                 bytes_xfer = progress * total_size
                 speed = bytes_xfer / elapsed if elapsed > 0 else 0
                 speed_str = format_size(speed) + "/s"
-                if self.websockets and self._loop:
-                    asyncio.run_coroutine_threadsafe(
-                        self._broadcast({"type": "progress", "data": {
-                            "file_name": fname,
-                            "progress": pct,
-                            "size": total_size,
-                            "speed": speed_str,
-                        }}),
-                        self._loop
-                    )
+                self._on_transfer_progress({
+                    "file_name": fname,
+                    "progress": pct,
+                    "size": total_size,
+                    "speed": speed_str,
+                    "direction": "send",
+                    "status": "active",
+                })
             except:
                 pass
         return callback
+
+    async def handle_transfer_cancel(self, request):
+        if not self.messaging:
+            return web.json_response({"error": "not ready"}, status=400)
+        try:
+            data = await request.json() if request.can_read_body else {}
+        except Exception:
+            data = {}
+        transfer_id = data.get("transfer_id")
+        cancelled = self.messaging.cancel_transfer(transfer_id)
+        await self._broadcast({"type": "progress", "data": {
+            "status": "cancelled",
+            "progress": 0,
+            "file_name": data.get("file_name", ""),
+        }})
+        return web.json_response({"status": "ok" if cancelled else "noop"})
 
     async def handle_voice_upload(self, request):
         if not self.messaging:
@@ -820,7 +842,7 @@ class ChatWebServer:
             self._save_history()
             await self._broadcast({"type": "message", "data": entry})
 
-            result = self.messaging.send_file(voice_path, "voice",
+            result = self.messaging.send_file_smart(voice_path, "voice",
                                                progress_callback=self._make_progress_callback(os.path.basename(voice_path), len(audio_bytes)))
             if result:
                 return web.json_response({"status": "ok"})
@@ -863,17 +885,73 @@ class ChatWebServer:
         token = request.match_info.get("token", "")
         if not self.messaging:
             return web.Response(text="Not ready", status=503)
-        info = self.messaging.direct_transfer_tokens.pop(token, None)
+        info = self.messaging.direct_transfer_tokens.get(token)
         if not info:
             return web.Response(text="Invalid or expired token", status=404)
         file_path = info["path"]
         if not os.path.exists(file_path):
+            self.messaging.direct_transfer_tokens.pop(token, None)
             return web.Response(text="File not found", status=404)
+
+        fname = info.get("name") or os.path.basename(file_path)
+        total = info.get("size") or os.path.getsize(file_path)
+        transfer_id = info.get("transfer_id", token)
         ct, _ = mimetypes.guess_type(file_path)
-        resp = web.FileResponse(file_path)
-        if ct:
-            resp.headers['Content-Type'] = ct
-        resp.headers['X-Direct-Transfer'] = '1'
+        if not ct:
+            ct = "application/octet-stream"
+
+        resp = web.StreamResponse()
+        resp.headers["Content-Type"] = ct
+        resp.headers["Content-Length"] = str(total)
+        resp.headers["X-Direct-Transfer"] = "1"
+        await resp.prepare(request)
+
+        sent = 0
+        start = time.time()
+        try:
+            with open(file_path, "rb") as f:
+                while True:
+                    if self.messaging._cancel_events.get(transfer_id) and self.messaging._cancel_events[transfer_id].is_set():
+                        break
+                    chunk = f.read(262144)
+                    if not chunk:
+                        break
+                    await resp.write(chunk)
+                    sent += len(chunk)
+                    elapsed = time.time() - start
+                    pct = int(sent * 100 / total) if total else 0
+                    speed = format_size(sent / elapsed) + "/s" if elapsed > 0 else ""
+                    self._on_transfer_progress({
+                        "file_name": fname,
+                        "progress": pct,
+                        "size": total,
+                        "speed": speed,
+                        "direction": "send",
+                        "transfer_id": transfer_id,
+                        "status": "active",
+                    })
+            if sent >= total:
+                self._on_transfer_progress({
+                    "file_name": fname,
+                    "progress": 100,
+                    "size": total,
+                    "direction": "send",
+                    "transfer_id": transfer_id,
+                    "status": "complete",
+                })
+        except Exception as e:
+            print(f"[direct] stream error: {e}")
+            self._on_transfer_progress({
+                "file_name": fname,
+                "progress": 0,
+                "size": total,
+                "direction": "send",
+                "transfer_id": transfer_id,
+                "status": "failed",
+            })
+        finally:
+            self.messaging.direct_transfer_tokens.pop(token, None)
+            await resp.write_eof()
         return resp
 
     async def handle_queue(self, request):
@@ -1029,6 +1107,7 @@ class ChatWebServer:
         app.router.add_get("/api/settings", self.handle_settings_get)
         app.router.add_post("/api/settings", self.handle_settings_post)
         app.router.add_get("/api/browse-dir", self.handle_browse_dir)
+        app.router.add_post("/api/transfer/cancel", self.handle_transfer_cancel)
         app.router.add_get("/api/file/{filepath:.*}", self.handle_serve_file)
         app.router.add_get("/api/direct-transfer/{token}", self.handle_direct_transfer)
         app.router.add_get("/api/queue", self.handle_queue)

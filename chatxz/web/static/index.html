@@ -64,7 +64,8 @@ body::before {
   pointer-events: none;
   z-index: 0;
 }
-#app { display: flex; height: 100vh; position: relative; z-index: 1; }
+#app { display: flex; flex-direction: column; height: 100vh; position: relative; z-index: 1; }
+#workspace { display: flex; flex: 1; min-height: 0; overflow: hidden; }
 
 /* Sidebar */
 #sidebar {
@@ -80,7 +81,6 @@ body::before {
   overflow: hidden;
   isolation: isolate;
 }
-#sidebar > #debug-bar { flex-shrink: 0; }
 #sidebar-header {
   flex-shrink: 0;
   padding: 16px 16px 14px;
@@ -303,14 +303,51 @@ body::before {
 #settings-panel select option, .dialog select option { background: var(--surface); color: var(--text); }
 .field-hint { font-size: 11px; color: var(--text3); margin-top: 6px; line-height: 1.4; }
 
-/* Debug bar */
-#debug-bar {
-  padding: 8px 14px; font-size: 10px; color: var(--text3);
-  border-top: 1px solid var(--border);
-  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px;
-  background: rgba(0,0,0,0.2); line-height: 1.3;
+
+/* Settings cards */
+.settings-scroll { flex: 1; overflow-y: auto; padding-bottom: 8px; }
+.settings-card {
+  background: rgba(0,0,0,0.18); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 14px; margin-bottom: 12px;
 }
-#debug-bar > span:not(#queue-count) { white-space: nowrap; }
+.settings-card h4 {
+  font-size: 12px; font-weight: 600; color: var(--text);
+  margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+}
+.settings-card.danger { border-color: rgba(255,107,122,0.2); background: rgba(255,107,122,0.04); }
+.settings-card.danger h4 { color: var(--danger); }
+.settings-footer {
+  flex-shrink: 0; padding-top: 12px; border-top: 1px solid var(--border);
+}
+
+/* Bottom dock */
+#bottom-dock {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  min-height: 46px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.dock-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text3);
+}
+.dock-status > span:not(#queue-count) { white-space: nowrap; }
+#transfer-dock {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+#debug-bar { display: contents; }
 .status-pill {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 3px 8px; border-radius: 99px;
@@ -439,7 +476,9 @@ body::before {
 .msg img.msg-img:hover { transform: scale(1.02); }
 .msg .file-info { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
 .msg .file-info .file-icon { font-size: 22px; }
-.msg .voice-player { margin-top: 8px; width: 100%; border-radius: var(--radius-sm); }
+.msg.voice-msg { max-width: 88%; min-width: 260px; overflow: visible; }
+.voice-wrap { width: min(100%, 300px); margin-top: 8px; pointer-events: auto; }
+.msg .voice-player { width: 100%; min-width: 240px; height: 42px; border-radius: var(--radius-sm); pointer-events: auto; cursor: pointer; }
 .msg-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 .msg.self .msg-link { color: #d4f0ff; }
 
@@ -447,7 +486,7 @@ body::before {
 #input-area {
   padding: 16px 24px 20px; position: relative; z-index: 2;
   background: linear-gradient(to top, var(--bg) 60%, transparent);
-  display: flex; flex-direction: column; flex-shrink: 0;
+  flex-shrink: 0;
 }
 .composer {
   background: var(--surface-glass); border: 1px solid var(--border);
@@ -576,26 +615,31 @@ body.modal-open #save-contact-dialog * { pointer-events: auto; user-select: auto
 
 /* Progress bar */
 #progress-bar {
-  display: none; padding: 10px 14px;
-  margin-bottom: 10px;
-  background: rgba(124,106,239,0.08);
-  border: 1px solid rgba(124,106,239,0.2);
-  border-radius: var(--radius-md);
-  flex-shrink: 0;
+  display: none; flex: 1; min-width: 0;
+  align-items: center; gap: 10px;
 }
+#progress-bar.active { display: flex; }
 #progress-bar .progress-track {
-  width: 100%; height: 5px; background: rgba(255,255,255,0.06);
+  flex: 1; min-width: 80px; height: 6px; background: rgba(255,255,255,0.08);
   border-radius: 99px; overflow: hidden;
 }
 #progress-bar .progress-fill {
   height: 100%;
   background: linear-gradient(90deg, #7c6aef, #58c4dc);
-  border-radius: 99px; transition: width 0.3s ease; width: 0%;
+  border-radius: 99px; transition: width 0.25s ease; width: 0%;
 }
 #progress-bar #progress-label {
-  font-size: 11px; color: var(--text2); margin-top: 6px; text-align: left;
+  font-size: 10px; color: var(--text2); min-width: 0; flex: 1;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+#transfer-cancel-btn {
+  display: none; flex-shrink: 0;
+  background: var(--danger-soft); border: 1px solid rgba(255,107,122,0.3);
+  color: var(--danger); padding: 6px 12px; border-radius: var(--radius-sm);
+  font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;
+}
+#transfer-cancel-btn.visible { display: inline-flex; }
+#transfer-cancel-btn:hover { background: rgba(255,107,122,0.2); }
 
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -618,6 +662,7 @@ body.modal-open #save-contact-dialog * { pointer-events: auto; user-select: auto
 </head>
 <body>
 <div id="app">
+  <div id="workspace">
   <aside id="sidebar">
     <div id="sidebar-header">
       <div class="brand-mark">cx</div>
@@ -677,46 +722,53 @@ body.modal-open #save-contact-dialog * { pointer-events: auto; user-select: auto
         <h3>Settings</h3>
         <button class="panel-close" onclick="toggleSettings()" title="Close">&times;</button>
       </div>
-      <div class="settings-section">
-        <label>Display Name</label>
-        <input id="settings-name" placeholder="Your name...">
-      </div>
-      <div class="settings-section">
-        <label>Your Identity</label>
-        <input id="settings-hash" readonly style="font-family:ui-monospace,monospace;font-size:11px;color:var(--text2)">
-        <p>Share this hash so others can connect to you.</p>
-      </div>
-      <div class="settings-section">
-        <label>Chat History Retention</label>
-        <select id="settings-retention" onchange="saveRetentionOnly()">
-          <option value="1d">1 day</option>
-          <option value="1w">1 week</option>
-          <option value="1m">1 month</option>
-          <option value="1y">1 year</option>
-          <option value="forever">Forever</option>
-          <option value="on_restart">Until restart</option>
-          <option value="on_close">Until close</option>
-        </select>
-      </div>
-      <div class="settings-section">
-        <label>Received Files Directory</label>
-        <div class="field-row">
-          <input id="settings-received-dir" placeholder="e.g. /home/user/Downloads">
-          <button class="input-btn" onclick="pickReceivedDir()" style="width:40px;height:40px;border:1px solid var(--border);border-radius:var(--radius-md)" title="Browse...">📁</button>
+      <div class="settings-scroll">
+        <div class="settings-card">
+          <h4>👤 Profile</h4>
+          <div class="settings-section">
+            <label>Display Name</label>
+            <input id="settings-name" placeholder="Your name on the network...">
+          </div>
+          <div class="settings-section">
+            <label>Identity Hash</label>
+            <input id="settings-hash" readonly style="font-family:ui-monospace,monospace;font-size:11px;color:var(--text2)">
+            <p class="field-hint">Share this hash so peers can connect to you.</p>
+          </div>
         </div>
-        <div class="field-hint">Use Browse to pick a folder (zenity/kdialog). Path must be absolute. Click Save to apply.</div>
-        <input type="file" id="dir-picker-fallback" style="display:none" webkitdirectory onchange="pickReceivedDirFallback(this)">
-      </div>
-      <div class="settings-divider"></div>
-      <div class="settings-section settings-danger-zone">
-        <label>Danger Zone</label>
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <button class="btn-block" onclick="clearHistory()">Clear chat history</button>
-          <button class="btn-block danger" onclick="regenerateIdentity()">Regenerate identity</button>
-          <button class="btn-block danger" onclick="restartServer()">Restart server</button>
+        <div class="settings-card">
+          <h4>💾 Storage</h4>
+          <div class="settings-section">
+            <label>Chat History Retention</label>
+            <select id="settings-retention" onchange="saveRetentionOnly()">
+              <option value="1d">1 day</option>
+              <option value="1w">1 week</option>
+              <option value="1m">1 month</option>
+              <option value="1y">1 year</option>
+              <option value="forever">Forever</option>
+              <option value="on_restart">Until restart</option>
+              <option value="on_close">Until close</option>
+            </select>
+          </div>
+          <div class="settings-section">
+            <label>Received Files Folder</label>
+            <div class="field-row">
+              <input id="settings-received-dir" placeholder="/home/user/Downloads">
+              <button class="input-btn" onclick="pickReceivedDir()" style="width:40px;height:40px;border:1px solid var(--border);border-radius:var(--radius-md)" title="Browse...">📁</button>
+            </div>
+            <p class="field-hint">Browse picks a native folder path. Click Save to apply.</p>
+            <input type="file" id="dir-picker-fallback" style="display:none" webkitdirectory onchange="pickReceivedDirFallback(this)">
+          </div>
+        </div>
+        <div class="settings-card danger">
+          <h4>⚠ Advanced</h4>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <button class="btn-block" onclick="clearHistory()">Clear chat history</button>
+            <button class="btn-block danger" onclick="regenerateIdentity()">Regenerate identity</button>
+            <button class="btn-block danger" onclick="restartServer()">Restart server</button>
+          </div>
         </div>
       </div>
-      <div style="margin-top:auto;padding-top:16px">
+      <div class="settings-footer">
         <button class="btn-block primary" onclick="saveSettings()">Save settings</button>
       </div>
     </div>
@@ -739,19 +791,6 @@ body.modal-open #save-contact-dialog * { pointer-events: auto; user-select: auto
         <button class="dlg-btn primary" style="flex:1" onclick="doConnectFromPanel()">Connect</button>
       </div>
     </div>
-    </div>
-
-    <div id="debug-bar">
-      <span id="temp-display">🌡 --°C</span>
-      <span id="cpu-display">⚡ --%</span>
-      <span style="margin-left:auto" id="ws-status">
-        <span class="status-pill"><span id="ws-dot"></span><span id="ws-label">WS</span></span>
-      </span>
-      <span id="link-status">
-        <span class="status-pill"><span id="link-dot"></span><span id="link-label">Link</span></span>
-      </span>
-      <span id="peer-count">0 peers</span>
-      <span id="queue-count" style="display:none"></span>
     </div>
   </aside>
 
@@ -786,10 +825,6 @@ body.modal-open #save-contact-dialog * { pointer-events: auto; user-select: auto
     <div id="messages" style="display:none"></div>
 
     <div id="input-area" style="display:none">
-      <div id="progress-bar">
-        <div class="progress-track"><div class="progress-fill"></div></div>
-        <div id="progress-label">Sending...</div>
-      </div>
       <div class="composer">
         <div id="emoji-picker"></div>
         <div id="input-row">
@@ -807,6 +842,29 @@ body.modal-open #save-contact-dialog * { pointer-events: auto; user-select: auto
       </div>
     </div>
   </main>
+  </div>
+
+  <footer id="bottom-dock">
+    <div class="dock-status" id="debug-bar">
+      <span id="temp-display">🌡 --°C</span>
+      <span id="cpu-display">⚡ --%</span>
+      <span id="ws-status">
+        <span class="status-pill"><span id="ws-dot"></span><span id="ws-label">WS</span></span>
+      </span>
+      <span id="link-status">
+        <span class="status-pill"><span id="link-dot"></span><span id="link-label">Link</span></span>
+      </span>
+      <span id="peer-count">0 peers</span>
+      <span id="queue-count" style="display:none"></span>
+    </div>
+    <div id="transfer-dock">
+      <div id="progress-bar">
+        <div class="progress-track"><div class="progress-fill"></div></div>
+        <span id="progress-label">Transferring...</span>
+      </div>
+      <button id="transfer-cancel-btn" onclick="cancelTransfer()">Cancel</button>
+    </div>
+  </footer>
 </div>
 
 <div id="save-contact-dialog" onclick="if(event.target===this)closeSaveContact()">
@@ -843,6 +901,7 @@ let mediaRecorder = null;
 let audioChunks = [];
 let ctxHash = null;
 let peersPollTimer = null;
+let activeTransfer = null;
 let allContacts = [];
 let sidebarOpen = true;
 
@@ -994,17 +1053,55 @@ function sendReadReceipt(msgId) {
 function showProgress(data) {
   var bar = document.getElementById('progress-bar');
   var label = document.getElementById('progress-label');
+  var cancelBtn = document.getElementById('transfer-cancel-btn');
   if (!bar) return;
-  bar.style.display = 'block';
+
+  if (data.status === 'cancelled' || data.status === 'failed') {
+    hideProgress(data.status === 'cancelled' ? 'Transfer cancelled' : 'Transfer failed');
+    return;
+  }
+  if (data.status === 'complete' || (data.progress >= 100 && data.status !== 'direct')) {
+    bar.querySelector('.progress-fill').style.width = '100%';
+    label.textContent = (data.file_name || 'File') + ' — complete';
+    setTimeout(hideProgress, 2500);
+    return;
+  }
+
+  bar.classList.add('active');
+  cancelBtn?.classList.add('visible');
+  activeTransfer = data;
   var pct = data.progress || 0;
-  bar.querySelector('.progress-fill').style.width = pct + '%';
-  var text = data.file_name + ' — ' + pct + '%';
+  if (data.status === 'direct' && pct === 0) pct = 1;
+  bar.querySelector('.progress-fill').style.width = Math.max(pct, 1) + '%';
+  var dir = data.direction === 'receive' ? 'Receiving' : 'Sending';
+  var text = dir + ': ' + (data.file_name || 'file') + ' — ' + pct + '%';
   if (data.size) text += ' (' + formatSize(data.size) + ')';
   if (data.speed) text += ' @ ' + data.speed;
   label.textContent = text;
-  if (pct >= 100) {
-    setTimeout(function() { bar.style.display = 'none'; }, 2000);
+}
+
+function hideProgress(msg) {
+  var bar = document.getElementById('progress-bar');
+  var cancelBtn = document.getElementById('transfer-cancel-btn');
+  if (bar) {
+    bar.classList.remove('active');
+    bar.querySelector('.progress-fill').style.width = '0%';
   }
+  cancelBtn?.classList.remove('visible');
+  activeTransfer = null;
+  if (msg) toast(msg);
+}
+
+function cancelTransfer() {
+  if (!activeTransfer) return;
+  fetch('/api/transfer/cancel', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      transfer_id: activeTransfer.transfer_id,
+      file_name: activeTransfer.file_name,
+    })
+  }).then(() => hideProgress('Transfer cancelled')).catch(() => toast('Cancel failed'));
 }
 
 function startPeerPolling() {
@@ -1428,10 +1525,11 @@ function addMessage(data) {
       html += `<div style="margin-top:2px"><a href="${url}" download="${escapeHtml(data.file_name || 'image')}" style="color:var(--primary);font-size:11px">💾 Save image</a></div>`;
     }
   } else if (data.type === 'voice') {
+    div.classList.add('voice-msg');
     html = `<div>🎤 ${escapeHtml(data.file_name || 'Voice note')}</div>`;
     if (data.content) {
       const url = fileUrl(data.content);
-      html += `<audio class="voice-player" controls preload="auto" src="${url}"></audio>`;
+      html += `<div class="voice-wrap"><audio class="voice-player" controls preload="metadata" src="${url}"></audio></div>`;
     }
   } else if (data.type === 'file') {
     const sz = data.file_size ? formatSize(data.file_size) : '';
