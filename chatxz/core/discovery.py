@@ -15,7 +15,7 @@ class PeerDiscovery:
         self.running = True
         self._handler = self._announce_handler
         RNS.Transport.register_announce_handler(self._handler)
-        print("[discovery] Registered RNS announce handler")
+        print("[discovery] Registered RNS announce handler, listening for all announces")
 
     def stop(self):
         self.running = False
@@ -24,27 +24,28 @@ class PeerDiscovery:
         if not self.running:
             return
         try:
-            if not app_data:
-                return
+            hash_hex = RNS.hexrep(destination_hash)
+            name = ""
+            app_name = ""
 
-            try:
-                data = json.loads(app_data.decode("utf-8"))
-            except:
-                return
+            if app_data:
+                try:
+                    data = json.loads(app_data.decode("utf-8"))
+                    app_name = data.get("app", "")
+                    name = data.get("name", "")
+                except:
+                    pass
 
-            app_name = data.get("app", "")
             if app_name != APP_NAME:
                 return
 
-            hash_hex = RNS.hexrep(destination_hash)
-            name = data.get("name", "") or hash_hex[:8]
-
             self.peers[hash_hex] = {
                 "hash": hash_hex,
-                "name": name,
+                "name": name or hash_hex[:8],
+                "app": app_name,
                 "last_seen": time.time(),
             }
-            print(f"[discovery] Peer seen: {hash_hex[:12]}... ({name})")
+            print(f"[discovery] Peer: {hash_hex[:12]}... ({name or 'unnamed'})")
         except:
             pass
 

@@ -23,7 +23,7 @@ DATA_DIR = get_data_dir()
 
 DEFAULT_RNS_CONFIG = """[reticulum]
 enable_transport = Yes
-share_identity = Yes
+share_instance = Yes
 
 [logging]
 loglevel = 3
@@ -31,6 +31,7 @@ loglevel = 3
 [interfaces]
   [[UDP Interface]]
     type = UDPInterface
+    enabled = Yes
     listen_ip = 0.0.0.0
     listen_port = 4242
     forward_ip = 255.255.255.255
@@ -62,8 +63,36 @@ class ChatWebServer:
 
     def start_rns(self):
         rns_config_path = os.path.join(self.config_dir, "config")
-        if not os.path.exists(rns_config_path):
-            os.makedirs(self.config_dir, exist_ok=True)
+        os.makedirs(self.config_dir, exist_ok=True)
+        if os.path.exists(rns_config_path):
+            with open(rns_config_path) as f:
+                existing = f.read()
+            modified = False
+            if "enable_transport = False" in existing:
+                existing = existing.replace("enable_transport = False", "enable_transport = Yes")
+                modified = True
+            if "UDPInterface" not in existing:
+                existing += "\n\n# Added by chatzx for IPv4 LAN discovery\n"
+                existing += "  [[UDP Interface]]\n"
+                existing += "    type = UDPInterface\n"
+                existing += "    enabled = Yes\n"
+                existing += "    listen_ip = 0.0.0.0\n"
+                existing += "    listen_port = 4242\n"
+                existing += "    forward_ip = 255.255.255.255\n"
+                existing += "    forward_port = 4242\n"
+                existing += "    ifac_size = 8\n"
+                modified = True
+            elif "enabled = Yes" not in existing:
+                existing = existing.replace(
+                    "type = UDPInterface",
+                    "type = UDPInterface\n    enabled = Yes"
+                )
+                modified = True
+            if modified:
+                with open(rns_config_path, "w") as f:
+                    f.write(existing)
+                print(f"[config] Updated {rns_config_path} (transport=Yes, UDPInterface enabled)")
+        else:
             with open(rns_config_path, "w") as f:
                 f.write(DEFAULT_RNS_CONFIG)
             print(f"[config] Created RNS config at {rns_config_path}")
