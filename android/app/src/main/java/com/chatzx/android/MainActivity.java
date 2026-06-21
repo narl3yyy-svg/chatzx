@@ -7,6 +7,7 @@ import android.webkit.WebSettings;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
 import android.widget.Toast;
+import android.app.AlertDialog;
 
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -35,7 +36,6 @@ public class MainActivity extends AppCompatActivity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
-                // Server not ready yet, retry
                 view.loadUrl(serverUrl);
             }
         });
@@ -65,12 +65,27 @@ public class MainActivity extends AppCompatActivity {
                         Toast.makeText(this, "chatxz starting...", Toast.LENGTH_SHORT).show();
                     });
                 } else {
-                    runOnUiThread(() ->
-                        Toast.makeText(this, "Server error: " + port, Toast.LENGTH_LONG).show());
+                    String error = port;
+                    runOnUiThread(() -> {
+                        new AlertDialog.Builder(this)
+                            .setTitle("Server Error")
+                            .setMessage(error)
+                            .setPositiveButton("OK", null)
+                            .show();
+                    });
                 }
             } catch (Exception e) {
-                runOnUiThread(() ->
-                    Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_LONG).show());
+                String msg = e.getMessage();
+                if (msg == null) msg = "Unknown error (null message)";
+                String stack = android.util.Log.getStackTraceString(e);
+                final String fullError = msg + "\n\n" + stack;
+                runOnUiThread(() -> {
+                    new AlertDialog.Builder(this)
+                        .setTitle("Python Error")
+                        .setMessage(fullError)
+                        .setPositiveButton("OK", null)
+                        .show();
+                });
             }
         }).start();
     }
