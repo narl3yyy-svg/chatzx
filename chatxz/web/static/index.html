@@ -147,6 +147,7 @@ body {
   background: rgba(0,0,0,.6); z-index: 1000; align-items: center; justify-content: center;
 }
 #connect-dialog.open, #settings-dialog.open, #save-contact-dialog.open { display: flex; }
+.dialog-open #main { pointer-events: none; }
 .dialog {
   background: var(--surface); border-radius: 12px; padding: 24px;
   width: 400px; max-width: 90vw; overflow: visible;
@@ -310,8 +311,9 @@ body {
 </div>
 
 <!-- Save contact dialog -->
-<div id="save-contact-dialog">
-  <div class="dialog">
+<div id="save-contact-dialog" onclick="if(event.target===this)closeSaveContact()">
+  <div class="dialog" style="position:relative">
+    <button onclick="closeSaveContact()" style="position:absolute;top:12px;right:16px;background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer;line-height:1" title="Close">&times;</button>
     <h2>Save Contact</h2>
     <input id="save-contact-hash" readonly style="font-size:11px;color:var(--text2)">
     <input id="save-contact-name" placeholder="Contact name...">
@@ -323,8 +325,9 @@ body {
 </div>
 
 <!-- Connect dialog -->
-<div id="connect-dialog">
-  <div class="dialog">
+<div id="connect-dialog" onclick="if(event.target===this)closeConnectDialog()">
+  <div class="dialog" style="position:relative">
+    <button onclick="closeConnectDialog()" style="position:absolute;top:12px;right:16px;background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer;line-height:1" title="Close">&times;</button>
     <h2>Connect to Peer</h2>
     <input id="connect-hash" placeholder="Paste peer identity hash..." spellcheck="false">
     <input id="contact-name" placeholder="Save as name (optional)">
@@ -336,8 +339,9 @@ body {
 </div>
 
 <!-- Settings dialog -->
-<div id="settings-dialog">
-  <div class="dialog" style="max-height:90vh;overflow-y:auto">
+<div id="settings-dialog" onclick="if(event.target===this)closeSettings()">
+  <div class="dialog" style="max-height:90vh;overflow-y:auto;position:relative">
+    <button onclick="closeSettings()" style="position:absolute;top:12px;right:16px;background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer;line-height:1" title="Close">&times;</button>
     <h2>Settings</h2>
     <div class="settings-section">
       <label>Display Name (shown in announces)</label>
@@ -621,6 +625,7 @@ function ctxSaveContact() {
     document.getElementById('save-contact-hash').value = ctxHash;
     document.getElementById('save-contact-name').value = '';
     document.getElementById('save-contact-dialog').classList.add('open');
+    document.body.classList.add('dialog-open');
     document.getElementById('save-contact-name').focus();
   }
   document.getElementById('context-menu').classList.remove('open');
@@ -628,6 +633,7 @@ function ctxSaveContact() {
 
 function closeSaveContact() {
   document.getElementById('save-contact-dialog').classList.remove('open');
+  document.body.classList.remove('dialog-open');
 }
 
 function doSaveContact() {
@@ -658,6 +664,7 @@ function ctxDelete() {
 
 function showConnectDialog() {
   document.getElementById('connect-dialog').classList.add('open');
+  document.body.classList.add('dialog-open');
   document.getElementById('connect-hash').value = '';
   document.getElementById('contact-name').value = '';
   document.getElementById('connect-hash').focus();
@@ -665,6 +672,7 @@ function showConnectDialog() {
 
 function closeConnectDialog() {
   document.getElementById('connect-dialog').classList.remove('open');
+  document.body.classList.remove('dialog-open');
 }
 
 function doConnect() {
@@ -716,11 +724,13 @@ function showSettings() {
       document.getElementById('settings-hash').value = myHash;
       document.getElementById('settings-files-dir').value = s.received_dir || '';
       document.getElementById('settings-dialog').classList.add('open');
+      document.body.classList.add('dialog-open');
     });
 }
 
 function closeSettings() {
   document.getElementById('settings-dialog').classList.remove('open');
+  document.body.classList.remove('dialog-open');
 }
 
 function saveSettings() {

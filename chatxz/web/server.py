@@ -407,33 +407,82 @@ class ChatWebServer:
             return web.json_response({"error": str(e)}, status=400)
 
     async def handle_restart(self, request):
-        import sys
-        asyncio.get_event_loop().call_later(0.5, lambda: os._exit(42))
+        import sys, subprocess
+        try:
+            args = [sys.executable, "-m", "chatxz.web.server"] + sys.argv[1:]
+            subprocess.Popen(args)
+        except:
+            args = [sys.executable] + sys.argv
+            subprocess.Popen(args)
+        print("[restart] Spawned new process, exiting old one")
+        asyncio.get_event_loop().call_later(1, lambda: os._exit(0))
         return web.json_response({"status": "restarting"})
 
     async def handle_temperature(self, request):
+        import subprocess as _sp
         try:
             temps = {}
-            base = "/sys/class/thermal"
-            if os.path.exists(base):
-                for name in os.listdir(base):
-                    if name.startswith("thermal_zone"):
-                        tpath = os.path.join(base, name, "temp")
-                        ttype_path = os.path.join(base, name, "type")
-                        if os.path.exists(tpath):
-                            with open(tpath) as f:
+            for base in ["/sys/class/thermal", "/sys/devices/virtual/thermal"]:
+                if os.path.exists(base):
+                    for name in os.listdir(base):
+                        if name.startswith("thermal_zone"):
+                            tpath = os.path.join(base, name, "temp")
+                            ttype_path = os.path.join(base, name, "type")
+                            if os.path.exists(tpath):
+                                with open(tpath) as f:
+                                    raw = f.read().strip()
+                                    celsius = int(raw) / 1000.0 if raw else 0
+                                ttype = "unknown"
+                                if os.path.exists(ttype_path):
+                                    with open(ttype_path) as f:
+                                        ttype = f.read().strip()
+                                if ttype not in temps:
+                                    temps[ttype] = round(celsius, 1)
+
+            hwmon = "/sys/class/hwmon"
+            if os.path.exists(hwmon):
+                for name in os.listdir(hwmon):
+                    hpath = os.path.join(hwmon, name)
+                    for entry in os.listdir(hpath):
+                        if entry.endswith("_input") and "temp" in entry:
+                            with open(os.path.join(hpath, entry)) as f:
                                 raw = f.read().strip()
                                 celsius = int(raw) / 1000.0 if raw else 0
-                            ttype = "unknown"
-                            if os.path.exists(ttype_path):
-                                with open(ttype_path) as f:
-                                    ttype = f.read().strip()
-                            temps[ttype] = round(celsius, 1)
+                            label = name
+                            lpath = os.path.join(hpath, entry.replace("_input", "_label"))
+                            if os.path.exists(lpath):
+                                with open(lpath) as f:
+                                    label = f.read().strip()
+                            if label not in temps:
+                                temps[label] = round(celsius, 1)
+
             if not temps:
-                import subprocess
-                r = subprocess.run(["sensors", "-j"], capture_output=True, text=True, timeout=5)
+                r = _sp.run(["sensors", "-j"], capture_output=True, text=True, timeout=5)
                 if r.returncode == 0:
-                    temps = {"raw": r.stdout[:500]}
+                    import json as _json
+                    try:
+                        data = _json.loads(r.stdout)
+                        for chip, vals in data.items():
+                            for key, val in vals.items():
+                                if isinstance(val, dict) and "temp1_input" in val:
+                                    temps[f"{chip} {key}"] = round(val["temp1_input"], 1)
+                    except:
+                        pass
+            if not temps:
+                r = _sp.run(["acpi", "-t"], capture_output=True, text=True, timeout=5)
+                if r.returncode == 0:
+                    for line in r.stdout.strip().split("\n"):
+                        line = line.strip()
+                        if "thermal" in line.lower() and "degrees" in line.lower():
+                            parts = line.split(",")
+                            for p in parts:
+                                p = p.strip()
+                                if "degrees C" in p:
+                                    val = p.replace("degrees C", "").strip()
+                                    try:
+                                        temps["acpi"] = round(float(val), 1)
+                                    except:
+                                        pass
             return web.json_response({"temperatures": temps})
         except:
             return web.json_response({"temperatures": {}})
