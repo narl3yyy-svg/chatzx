@@ -38,6 +38,11 @@ android {
     }
 }
 
+configurations.all {
+    exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-jdk7")
+    exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-jdk8")
+}
+
 chaquopy {
     defaultConfig {
         version = "3.13"
