@@ -382,7 +382,7 @@ class ChatWebServer:
             if "name" in data:
                 settings["name"] = data["name"].strip()[:50]
             if "history_retention" in data:
-                valid = ["1d", "1w", "1m", "6m", "12m", "never"]
+                valid = ["1d", "1w", "1m", "6m", "12m", "never", "on_restart", "on_close"]
                 if data["history_retention"] in valid:
                     settings["history_retention"] = data["history_retention"]
             if "received_dir" in data:
@@ -752,6 +752,11 @@ class ChatWebServer:
             self.messaging._save_queue()
         return web.json_response({"status": "ok"})
 
+    async def handle_history_clear(self, request):
+        self.message_history = []
+        self._save_history()
+        return web.json_response({"status": "ok"})
+
     async def handle_history(self, request):
         self._apply_retention()
         limit = int(request.query.get("limit", 500))
@@ -842,6 +847,11 @@ class ChatWebServer:
         self._loop = asyncio.get_running_loop()
         print(f"[startup] Event loop captured: {self._loop}")
         asyncio.create_task(self._discovery_broadcaster())
+        retention = self.load_settings().get("history_retention", "never")
+        if retention == "on_restart":
+            self.message_history = []
+            self._save_history()
+            print("[history] Cleared on restart")
 
     def run(self):
         app = web.Application()
@@ -858,6 +868,7 @@ class ChatWebServer:
         app.router.add_post("/api/voice", self.handle_voice_upload)
         app.router.add_post("/api/play", self.handle_play_voice)
         app.router.add_get("/api/history", self.handle_history)
+        app.router.add_post("/api/history/clear", self.handle_history_clear)
         app.router.add_get("/api/discover", self.handle_discover)
         app.router.add_get("/api/debug", self.handle_debug)
         app.router.add_get("/api/settings", self.handle_settings_get)
