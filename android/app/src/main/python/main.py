@@ -1,7 +1,4 @@
-"""
-chatxz Android entry point - starts the web server and returns the URL.
-"""
-import threading, time
+import threading, time, traceback, sys, os
 
 def start_server():
     host = "127.0.0.1"
@@ -14,4 +11,5 @@ def start_server():
         time.sleep(2)
         return host, str(port)
     except Exception as e:
-        return "None", str(e)
+        tb = traceback.format_exc()
+        return "None", f"{type(e).__name__}: {e}\n{tb}"

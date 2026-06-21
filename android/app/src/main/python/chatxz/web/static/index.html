@@ -1,0 +1,1146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>chatxz</title>
+
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --surface2: #0f3460;
+  --primary: #e94560;
+  --text: #eee;
+  --text2: #aaa;
+  --msg-self: #0f3460;
+  --msg-other: #16213e;
+  --msg-system: #533483;
+  --danger: #e94560;
+  --success: #2d6a4f;
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+}
+#app { display: flex; height: 100vh; }
+
+/* Sidebar */
+#sidebar {
+  width: 300px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(255,255,255,.05);
+}
+#sidebar-header { padding: 16px; border-bottom: 1px solid rgba(255,255,255,.05); display: flex; align-items: center; justify-content: space-between; }
+#sidebar-header h1 { font-size: 18px; color: var(--primary); }
+#identity-box { margin-top: 8px; font-size: 11px; color: var(--text2); word-break: break-all; cursor: pointer; }
+#identity-box:hover { color: var(--text); }
+#settings-btn {
+  background: none; border: 1px solid rgba(255,255,255,.1);
+  color: var(--text2); width: 32px; height: 32px;
+  border-radius: 6px; cursor: pointer; font-size: 16px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+#settings-btn:hover { border-color: var(--primary); color: var(--primary); }
+
+#contacts-section { flex: 1; overflow-y: auto; padding: 8px; }
+#contacts-section h3 { font-size: 12px; text-transform: uppercase; color: var(--text2); margin: 8px 0; }
+.contact-item {
+  display: flex; align-items: center; padding: 10px 12px;
+  border-radius: 8px; cursor: pointer; margin-bottom: 2px;
+  transition: background .15s; position: relative;
+}
+.contact-item:hover { background: rgba(255,255,255,.05); }
+.contact-item.active { background: var(--surface2); }
+.contact-avatar {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: var(--primary); display: flex; align-items: center; justify-content: center;
+  font-weight: bold; font-size: 14px; margin-right: 12px; flex-shrink: 0;
+}
+.contact-info { flex: 1; min-width: 0; }
+.contact-name { font-size: 14px; font-weight: 500; }
+.contact-hash { font-size: 11px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Context menu (replaced by sidebar panel) */
+
+/* Main */
+#main { flex: 1; display: flex; flex-direction: column; }
+#chat-header {
+  padding: 12px 20px; border-bottom: 1px solid rgba(255,255,255,.05);
+  display: flex; align-items: center; justify-content: space-between;
+}
+#chat-header .peer-info { font-size: 14px; }
+#chat-header .peer-info .status { font-size: 11px; color: var(--text2); }
+#disconnect-btn {
+  background: none; border: 1px solid rgba(255,255,255,.1);
+  color: var(--text2); padding: 4px 12px; border-radius: 4px;
+  cursor: pointer; font-size: 12px;
+}
+#disconnect-btn:hover { border-color: var(--primary); color: var(--primary); }
+
+#placeholder {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  color: var(--text2); font-size: 16px; flex-direction: column; gap: 8px;
+}
+#placeholder .keyhint { font-size: 12px; opacity: .5; }
+
+#messages {
+  flex: 1; overflow-y: auto; padding: 16px 20px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.msg {
+  max-width: 75%; padding: 10px 14px; border-radius: 12px;
+  font-size: 14px; line-height: 1.4; position: relative; word-wrap: break-word;
+  user-select: text;
+}
+.msg:hover .copy-btn { opacity: 1; }
+.msg .copy-btn {
+  position: absolute; top: 4px; right: 4px; opacity: 0;
+  background: rgba(0,0,0,.4); border: none; color: var(--text2);
+  font-size: 11px; padding: 2px 6px; border-radius: 4px;
+  cursor: pointer; transition: opacity .15s; line-height: 1.4;
+}
+.msg .copy-btn:hover { color: var(--text); background: rgba(0,0,0,.6); }
+.msg.self { align-self: flex-end; background: var(--msg-self); border-bottom-right-radius: 4px; }
+.msg.other { align-self: flex-start; background: var(--msg-other); border-bottom-left-radius: 4px; }
+.msg.system { align-self: center; background: var(--msg-system); font-size: 12px; opacity: .8; border-radius: 6px; padding: 6px 12px; }
+.msg .time { font-size: 10px; color: var(--text2); margin-top: 4px; text-align: right; }
+.msg img.msg-img { max-width: 100%; border-radius: 8px; margin-top: 6px; cursor: pointer; }
+.msg .file-info { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.msg .file-info .file-icon { font-size: 20px; }
+.msg .voice-player { margin-top: 6px; }
+
+/* Input */
+#input-area { padding: 12px 20px; border-top: 1px solid rgba(255,255,255,.05); background: var(--surface); }
+#input-row { display: flex; gap: 8px; align-items: flex-end; }
+#input-row textarea {
+  flex: 1; background: var(--bg); border: 1px solid rgba(255,255,255,.1);
+  border-radius: 8px; color: var(--text); padding: 10px 14px; font-size: 14px;
+  font-family: inherit; resize: none; outline: none; min-height: 42px; max-height: 120px; line-height: 1.4;
+}
+#input-row textarea:focus { border-color: var(--primary); }
+.input-btn {
+  background: none; border: 1px solid rgba(255,255,255,.1); color: var(--text2);
+  width: 42px; height: 42px; border-radius: 8px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; font-size: 18px;
+  transition: all .15s; flex-shrink: 0;
+}
+.input-btn:hover { border-color: var(--primary); color: var(--primary); }
+.input-btn.recording { border-color: #f00; color: #f00; animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: .5; } }
+#send-btn { background: var(--primary); border-color: var(--primary); color: #fff; }
+#send-btn:hover { opacity: .8; }
+
+/* Dialog */
+#save-contact-dialog {
+  display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,.6); z-index: 1000; align-items: center; justify-content: center;
+}
+#save-contact-dialog.open { display: flex; }
+.dialog {
+  background: var(--surface); border-radius: 12px; padding: 24px;
+  width: 400px; max-width: 90vw; overflow: visible;
+}
+.dialog h2 { margin-bottom: 16px; font-size: 16px; }
+.dialog input, .dialog select {
+  width: 100%; background: var(--bg); border: 1px solid rgba(255,255,255,.1);
+  border-radius: 6px; color: var(--text); padding: 10px 12px; font-size: 14px;
+  margin-bottom: 12px; outline: none;
+}
+.dialog input:focus { border-color: var(--primary); }
+.dialog select option { background: var(--surface); color: var(--text); }
+.dialog label { font-size: 12px; color: var(--text2); display: block; margin-bottom: 4px; }
+.dlg-btn-row { display: flex; gap: 8px; justify-content: flex-end; }
+.dlg-btn { padding: 8px 20px; border-radius: 6px; border: none; font-size: 14px; cursor: pointer; }
+.dlg-btn.primary { background: var(--primary); color: #fff; }
+.dlg-btn.secondary { background: rgba(255,255,255,.1); color: var(--text); }
+#settings-panel input, #settings-panel select {
+  width: 100%; background: var(--bg); border: 1px solid rgba(255,255,255,.1);
+  border-radius: 6px; color: var(--text); padding: 8px 10px; font-size: 13px;
+  margin-bottom: 8px; outline: none;
+}
+#settings-panel input:focus { border-color: var(--primary); }
+#settings-panel select option { background: var(--surface); color: var(--text); }
+#settings-panel label { font-size: 11px; color: var(--text2); display: block; margin-bottom: 3px; }
+.settings-section { margin-bottom: 14px; }
+.settings-section p { font-size: 12px; color: var(--text2); margin-bottom: 8px; }
+
+/* Emoji picker */
+#emoji-picker {
+  display: none; position: absolute; bottom: 60px; left: 20px;
+  background: var(--surface); border: 1px solid rgba(255,255,255,.1);
+  border-radius: 8px; padding: 8px; width: 320px; max-height: 200px;
+  overflow-y: auto; z-index: 10;
+}
+#emoji-picker.open { display: flex; flex-wrap: wrap; gap: 4px; }
+.emoji-item {
+  width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+  cursor: pointer; border-radius: 4px; font-size: 20px;
+}
+.emoji-item:hover { background: rgba(255,255,255,.1); }
+
+/* Toast */
+#toast {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  background: var(--surface2); color: var(--text); padding: 10px 20px;
+  border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .3s;
+  z-index: 200; pointer-events: none;
+}
+#toast.show { opacity: 1; }
+
+/* Image modal */
+#image-modal {
+  display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,.9); z-index: 300; align-items: center; justify-content: center; cursor: pointer;
+}
+#image-modal.open { display: flex; }
+#image-modal img { max-width: 90vw; max-height: 90vh; border-radius: 8px; }
+
+/* Progress bar */
+#progress-bar {
+  display: none; padding: 8px 20px; background: var(--surface);
+  border-top: 1px solid rgba(255,255,255,.05);
+}
+#progress-bar .progress-track {
+  width: 100%; height: 20px; background: var(--bg);
+  border-radius: 10px; overflow: hidden; position: relative;
+}
+#progress-bar .progress-fill {
+  height: 100%; background: var(--primary); border-radius: 10px;
+  transition: width .3s; width: 0%;
+}
+#progress-bar #progress-label {
+  font-size: 11px; color: var(--text2); margin-top: 4px; text-align: center;
+}
+
+/* Scrollbar */
+#ws-dot.connected { background: var(--success); }
+#ws-dot.disconnected { background: #f00; }
+#ws-dot.connecting { background: #ffa500; }
+#link-dot.connected { background: var(--success); }
+#link-dot.disconnected { background: #666; }
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.2); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <div>
+        <h1>chatxz</h1>
+        <div id="identity-box" onclick="copyIdentity()" title="Click to copy">Loading...</div>
+      </div>
+      <div style="display:flex;gap:2px">
+        <button id="settings-btn" onclick="toggleSettings()" title="Settings" style="background:none;border:1px solid rgba(255,255,255,.1);color:var(--text2);width:32px;height:32px;border-radius:6px;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;flex-shrink:0">⚙</button>
+      </div>
+    </div>
+    <div id="contacts-section">
+      <h3>Contacts</h3>
+      <div id="contacts-list"></div>
+      <div style="padding:8px;display:flex;gap:4px">
+        <button class="input-btn" style="flex:1;border-radius:6px;font-size:12px;gap:4px;display:flex;align-items:center;justify-content:center" onclick="toggleConnectPanel()">
+          <span>+</span> Add
+        </button>
+        <button class="input-btn" style="flex:1;border-radius:6px;font-size:12px;gap:4px;display:flex;align-items:center;justify-content:center" onclick="announceSelf()" title="Broadcast on LAN">
+          Announce
+        </button>
+      </div>
+      <h3 style="margin-top:12px">Discovered on LAN</h3>
+      <div id="discovered-list"></div>
+      <div id="debug-bar" style="padding:8px;font-size:10px;color:var(--text2);border-top:1px solid rgba(255,255,255,.05)">
+        <div id="ws-status" style="display:flex;align-items:center;gap:4px">
+          <span id="ws-dot" style="width:6px;height:6px;border-radius:50%;background:#666;display:inline-block"></span>
+          WS: connecting...
+        </div>
+        <div id="link-status" style="display:flex;align-items:center;gap:4px;margin-top:2px">
+          <span id="link-dot" style="width:6px;height:6px;border-radius:50%;background:#666;display:inline-block"></span>
+          Link: inactive
+        </div>
+        <div id="peer-count" style="margin-top:2px">Peers: 0</div>
+        <div id="temp-display" style="margin-top:2px">🌡 --°C</div>
+        <div id="queue-count" style="display:none;margin-top:2px"></div>
+      </div>
+    </div>
+    <div id="settings-panel" style="display:none;flex-direction:column;flex:1;overflow-y:auto;padding:12px;font-size:13px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <h3 style="font-size:14px;color:var(--text)">Settings</h3>
+        <button onclick="toggleSettings()" style="background:none;border:none;color:var(--text2);font-size:18px;cursor:pointer;line-height:1" title="Close">&times;</button>
+      </div>
+      <div class="settings-section">
+        <label>Display Name</label>
+        <input id="settings-name" placeholder="Your name...">
+      </div>
+      <div class="settings-section">
+        <label>Chat History Retention</label>
+        <select id="settings-retention" onchange="saveRetentionOnly()">
+          <option value="1d">1 day</option>
+          <option value="1w">1 week</option>
+          <option value="1m">1 month</option>
+          <option value="6m">6 months</option>
+          <option value="12m">12 months</option>
+          <option value="never">Never delete</option>
+          <option value="on_restart">Delete on restart</option>
+          <option value="on_close">Delete on close</option>
+        </select>
+        <button class="dlg-btn secondary" style="margin-top:6px;width:100%" onclick="clearHistory()">Clear History Now</button>
+      </div>
+      <div class="settings-section">
+        <label>Save Received Files To</label>
+        <div style="display:flex;gap:4px">
+          <input id="settings-files-dir" style="flex:1;font-size:11px;color:var(--text2)">
+          <button class="dlg-btn secondary" onclick="document.getElementById('folder-picker').click()" style="padding:6px 10px">📂</button>
+        </div>
+        <input type="file" id="folder-picker" style="display:none" webkitdirectory onchange="pickReceivedDir(this)">
+      </div>
+      <div class="settings-section" style="border-top:1px solid rgba(255,255,255,.1);padding-top:10px;margin-top:4px">
+        <label>Your Identity</label>
+        <input id="settings-hash" readonly style="font-size:10px;color:var(--text2);margin-bottom:6px">
+        <button class="dlg-btn secondary" style="width:100%" onclick="regenerateIdentity()">🔄 Regenerate Identity</button>
+      </div>
+      <div class="settings-section" style="border-top:1px solid rgba(255,255,255,.1);padding-top:10px">
+        <label>Server</label>
+        <button class="dlg-btn secondary" style="width:100%;color:var(--primary)" onclick="restartServer()">🔄 Restart Server</button>
+      </div>
+      <div style="margin-top:auto;padding-top:12px;display:flex;gap:6px">
+        <button class="dlg-btn secondary" style="flex:1" onclick="toggleSettings()">Cancel</button>
+        <button class="dlg-btn primary" style="flex:1" onclick="saveSettings()">Save</button>
+      </div>
+    </div>
+    <div id="action-panel" style="display:none;flex-direction:column;flex:1;overflow-y:auto;padding:12px;font-size:13px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <h3 style="font-size:14px;color:var(--text)" id="action-panel-title">Actions</h3>
+        <button onclick="toggleActionPanel()" style="background:none;border:none;color:var(--text2);font-size:18px;cursor:pointer;line-height:1" title="Close">&times;</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <button class="dlg-btn primary" style="width:100%" onclick="actionConnect()">Connect</button>
+        <button class="dlg-btn secondary" style="width:100%" onclick="actionSaveContact()">Save as Contact</button>
+        <button class="dlg-btn secondary" style="width:100%;color:var(--danger)" onclick="actionDelete()">Delete Contact</button>
+      </div>
+    </div>
+    <div id="connect-panel" style="display:none;flex-direction:column;flex:1;overflow-y:auto;padding:12px;font-size:13px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <h3 style="font-size:14px;color:var(--text)">Connect to Peer</h3>
+        <button onclick="toggleConnectPanel()" style="background:none;border:none;color:var(--text2);font-size:18px;cursor:pointer;line-height:1" title="Close">&times;</button>
+      </div>
+      <div class="settings-section">
+        <label>Peer Identity Hash</label>
+        <input id="connect-hash" placeholder="Paste peer identity hash..." spellcheck="false">
+      </div>
+      <div class="settings-section">
+        <label>Save as Contact (optional)</label>
+        <input id="contact-name" placeholder="Contact name...">
+      </div>
+      <div style="margin-top:auto;padding-top:12px;display:flex;gap:6px">
+        <button class="dlg-btn secondary" style="flex:1" onclick="toggleConnectPanel()">Cancel</button>
+        <button class="dlg-btn primary" style="flex:1" onclick="doConnectFromPanel()">Connect</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="chat-header">
+      <div class="peer-info">
+        <span id="peer-name">No one connected</span>
+        <div class="status" id="peer-status">Waiting for connection...</div>
+      </div>
+      <button id="disconnect-btn" style="display:none" onclick="disconnect()">Disconnect</button>
+    </div>
+    <div id="placeholder">
+      <div style="font-size:48px;opacity:.3"></div>
+      <div>Connect to someone to start chatting</div>
+      <div class="keyhint">Use the sidebar to find and connect to peers</div>
+    </div>
+    <div id="messages" style="display:none"></div>
+    <div id="input-area" style="display:none">
+      <div style="position:relative">
+        <div id="emoji-picker"></div>
+        <div id="input-row">
+          <button class="input-btn" id="emoji-btn" onclick="toggleEmoji()" title="Emoji">😊</button>
+          <textarea id="msg-input" rows="1" placeholder="Type a message..." onkeydown="onInputKey(event)" oninput="autoResize(this)"></textarea>
+          <button class="input-btn" id="voice-btn" onclick="toggleVoice()" title="Voice note">🎤</button>
+          <button class="input-btn" id="file-btn" onclick="document.getElementById('file-input').click()" title="Attach file">📎</button>
+          <input type="file" id="file-input" style="display:none" multiple onchange="uploadFiles(this.files)">
+          <button class="input-btn" id="folder-btn" onclick="document.getElementById('folder-input').click()" title="Attach folder">📁</button>
+          <input type="file" id="folder-input" style="display:none" webkitdirectory multiple onchange="uploadFolder(this.files)">
+          <button class="input-btn" id="send-btn" onclick="sendMessage()" title="Send">➤</button>
+        </div>
+      </div>
+    </div>
+    <div id="progress-bar">
+      <div class="progress-track"><div class="progress-fill"></div></div>
+      <div id="progress-label">Sending...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Save contact dialog -->
+<div id="save-contact-dialog" onclick="if(event.target===this)closeSaveContact()">
+  <div class="dialog" style="position:relative">
+    <button onclick="closeSaveContact()" style="position:absolute;top:12px;right:16px;background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer;line-height:1" title="Close">&times;</button>
+    <h2>Save Contact</h2>
+    <input id="save-contact-hash" readonly style="font-size:11px;color:var(--text2)">
+    <input id="save-contact-name" placeholder="Contact name...">
+    <div class="dlg-btn-row">
+      <button class="dlg-btn secondary" onclick="closeSaveContact()">Cancel</button>
+      <button class="dlg-btn primary" onclick="doSaveContact()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Image modal -->
+<div id="image-modal" onclick="this.classList.remove('open')">
+  <img id="modal-img" src="">
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+let ws = null;
+let myHash = '';
+let connected = null;
+let recording = false;
+let mediaRecorder = null;
+let audioChunks = [];
+let ctxHash = null;
+let peersPollTimer = null;
+
+const EMOJIS = ['😀','😃','😄','😁','😅','😂','🤣','😊','😇','🙂','😉','😌','😍','🥰','😘','😋','😛','😜','🤪','😝','🤗','🤭','🤫','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','🤥','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🥴','😵','🤯','🤠','🥳','🥺','😢','😭','😤','😠','😡','🤬','💀','💩','🤡','👻','👽','🤖','😺','😸','😹','😻','😼','😽','🙀','😿','😾','🙌','👏','👍','👎','👊','✊','🤛','🤜','🤞','✌️','🤟','🤘','👌','👈','👉','👆','👇','☝️','✋','🤚','🖐','🖖','👋','🤙','💪','🦾','🖕','✍️','🙏','💯','🔥','⭐','🌟','✨','💥','💫','💦','💨','❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🙈','🙉','🙊','🐔','🐧','🐦','🐤','🐣','🐥','🦆','🦅','🦉','🦇','🐺','🐗','🐴','🦄','🐝','🐛','🦋','🐌','🐞','🐜','🦟','🦗','🕷','🦂','🐢','🐍','🦎','🦖','🦕','🐙','🦑','🦐','🦀','🐡','🐠','🐟','🐬','🐳','🐋','🦈','🐊','🐅','🐆','🦓','🦍','🐘','🦛','🦏','🐪','🐫','🦒','🦘','🐃','🐂','🐄','🐎','🐖','🐏','🐑','🦙','🐐','🦌','🐕','🐩','🐈','🐓','🦃','🦚','🦜','🦢','🦩','🕊','🐇','🦝','🦡','🦨','🦦','🦥','🐁','🐀','🐿','🦔','🌵','🎄','🌲','🌳','🌴','🌱','🌿','☘️','🍀','🍃','🍂','🍁','🍄','🌾','💐','🌷','🌹','🥀','🌺','🌸','🌼','🌻','🌞','🌝','🌛','🌜','🌚','🌕','🌖','🌗','🌘','🌑','🌒','🌓','🌔','🌙','🌎','🌍','🌏','🪐','💫','⚡','☄️','🔥','🌪','🌈','☀️','🌤','⛅','🌥','☁️','🌦','🌧','⛈','🌩','🌨','❄️','☃️','⛄','🌬','💧','💦','☔','🌊','🍏','🍎','🍐','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍈','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🥬','🥒','🌶','🌽','🥕','🧄','🧅','🥔','🍠','🥐','🍞','🥖','🥨','🧀','🥚','🍳','🥞','🧇','🥓','🥩','🍗','🍖','🌭','🍔','🍟','🍕','🥪','🥙','🌮','🌯','🥗','🥘','🍝','🍜','🍲',' curry','🍣','🍱','🥟','🍤','🍙','🍚','🍘','🍥','🥠','🥮','🍢','🍡','🍧','🍨','🍦','🥧','🧁','🍰','🎂','🍮','🍭','🍬','🍫','🍿','🍩','🍪','🌰','🥜','🍯','🥛','🍼','☕','🫖','🍵','🧃','🥤','🧋','🍶','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🧉','🍾','🧊','🥄','🍴','🥢','🥡','🥣','🧂','⚽','🏀','🏈','⚾','🥎','🎾','🏐','🏉','🥏','🎱','🪀','🏓','🏸','🏒','🏑','🥍','🏏','🥅','⛳','🪁','🏹','🎣','🤿','🥊','🥋','🎽','⛸','🥌','sled','🎿','⛷','🏂','🪐','🏋️','🤼','🤸','⛹️','🤺','🏌️','🏇','🧘','🏄','🏊','🤽','🚣','🧗','🚵','🚴','🏆','🥇','🥈','🥉','🏅','🎖','🏵','🎗','🎫','🎟','🎪','🤹','🎭','🩰','🎨','🎬','🎤','🎧','🎼','🎹','🥁','🪘','🎷','🎺','🎸','🪕','🎻','🎲','♟','🎯','🎳','🎮','🎰','🧩','⌚','📱','📲','💻','⌨️','🖥','🖨','🖱','🖲','🕹','🗜','💽','💾','💿','📀','📼','📷','📸','📹','🎥','📽','🎞','📞','☎️','📟','📠','📺','📻','🎙','🎚','🎛','🧭','⏱','⏲','⏰','🕰','⌛','⏳','📡','🔋','🔌','💡','🔦','🕯','🪔','🧯','🛢','💸','💵','💴','💶','💷','🪙','💰','💳','💎','⚖️','🪜','🧰','🪛','🔧','🔨','⚒','🛠','⛏','🪚','🔩','⚙️','🪤','🧱','⛓','🧲','🔫','💣','🧨','🪓','🔪','🗡','⚔️','盾','🚬','⚰️','🪦','⚱️','🏺','🔮','📿','🧿','💈','⚗️','🔭','🔬','🕳','🩹','🩺','💊','💉','🩸','🧬','🦠','🧫','🧬','🔬','🔭','📡','💡','🔦','🕯','🪔','🧯','🛢','🔋','🔌','💻','⌨️','🖥','🖨','🖱','🖲','🕹','🗜','💽','💾','💿','📀','📼','📷','📸','📹','🎥','📽','🎞','📞','☎️','📟','📠','📺','📻','🎙','🎚','🎛','🧭','⌚','📱','📲','⏱','⏲','⏰','🕰','⌛','⏳','📊','📈','📉','📌','📍','📎','🖇','📏','📐','✂️','🗃','🗄','🗑','🔒','🔓','🔏','🔐','🔑','🗝','🔨','🪓','⛏','⚒','🛠','🗡','⚔️','🔫','弓','🛡','🔧','🔩','⚙️','🧰','🧲','🧪','🧫','🧬','🔬','🔭','📡','💉','💊','🩹','🩺','🩻','🚪','🛏','🛋','🪑','🚽','🚿','🛁','🪒','🧴','🧷','🧹','🧺','🧻','🪣','🧼','🪥','🧽','🧯','🛒','🚬','⚰️','🪦','⚱️','🗿','🪧','🪪','🏧','🚮','🚰','🚹','🚺','🚻','🚼','🚾','🛂','🛃','🛄','🛅','⚠️','🚸','⛔','🚫','🚳','🚭','🚯','🚱','🚷','📵','🔞','☢️','☣️','⬆️','↗️','➡️','↘️','⬇️','↙️','⬅️','↖️','↕️','↔️','↩️','↪️','⤴️','⤵️','🔃','🔄','🔙','🔚','🔛','🔜','🔝','🛐','⚛️','🕉','✡️','☸️','☯️','✝️','☦️','☪️','☮️','🕎','🔯','♈','♉','♊','♋','♌','♍','♎','♏','♐','♑','♒','♓','⛎','🔀','🔁','🔂','▶️','⏩','⏭','⏯','◀️','⏪','⏮','🔼','⏫','🔽','⏬','⏸','⏹','⏺','⏏','🎦','🔅','🔆','📶','📳','📴','♀️','♂️','⚧','✖️','➕','➖','➗','♾','‼️','⁉️','❓','❔','❕','❗','〰️','💱','💲','⚕️','♻️','⚜️','🔱','📛','🔰','⭕','✅','☑️','✔️','❌','❎','➰','➿','〽️','✳️','✴️','❇️','©️','®️','™️','#️⃣','*️⃣','0️⃣','1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟','🔞','🔠','🔡','🔢','🔣','🔤','🅰️','🆎','🅱️','🆑','🆒','🆓','ℹ️','🆔','Ⓜ️','🆕','🆖','🅾️','🆗','🅿️','🆘','🆙','🆚','🈁','🈂️','🈷️','🈶','🈯','🉐','🈹','🈚','🈲','🉑','🈸','🈴','🈳','㊗️','㊙️','🈺','🈵','🔴','🟠','🟡','🟢','🔵','🟣','🟤','⚫','⚪','🟥','🟧','🟨','🟩','🟦','🟪','🟫','⬛','⬜','◼️','◻️','◾','◽','▪️','▫️','🔶','🔷','🔸','🔹','🔺','🔻','💠','🔘','🔲','🔳','🏁','🚩','🎌','🏴','🏳️','🏴‍☠️'];
+
+function init() {
+  fetchIdentity();
+  connectWS();
+  buildEmojiPicker();
+  startPeerPolling();
+  loadHistory();
+}
+
+function loadHistory() {
+  fetch('/api/history?limit=500')
+    .then(r => r.json())
+    .then(msgs => {
+      console.log('[history] Loaded', msgs.length, 'messages');
+      if (msgs.length > 0) {
+        document.getElementById('placeholder').style.display = 'none';
+        document.getElementById('messages').style.display = 'flex';
+        msgs.forEach(m => addMessage(m));
+      }
+    });
+}
+
+function fetchIdentity() {
+  fetch('/api/identity')
+    .then(r => r.json())
+    .then(d => {
+      myHash = d.hash;
+      document.getElementById('identity-box').textContent = 'ID: ' + myHash;
+      renderContacts(d.contacts);
+      renderDiscovered(d.discovered);
+      if (d.connected) {
+        setConnected(d.connected);
+      }
+    });
+  pollQueue();
+}
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws');
+  ws.onopen = () => {
+    console.log('[ws] Connected');
+    document.getElementById('ws-status').innerHTML = '<span id="ws-dot" class="connected" style="width:6px;height:6px;border-radius:50%;display:inline-block"></span> WS: connected';
+  };
+  ws.onmessage = e => {
+    console.log('[ws] Received:', e.data.substring(0, 200));
+    try {
+      const msg = JSON.parse(e.data);
+      handleWSMessage(msg);
+    } catch(_) {}
+  };
+  ws.onclose = () => {
+    console.log('[ws] Disconnected, reconnecting...');
+    document.getElementById('ws-status').innerHTML = '<span id="ws-dot" class="disconnected" style="width:6px;height:6px;border-radius:50%;display:inline-block"></span> WS: disconnected';
+    document.getElementById('link-status').innerHTML = '<span id="link-dot" class="disconnected" style="width:6px;height:6px;border-radius:50%;display:inline-block"></span> Link: inactive';
+    setTimeout(connectWS, 2000);
+  };
+  ws.onerror = (e) => {
+    console.error('[ws] Error:', e);
+  };
+}
+
+function handleWSMessage(msg) {
+  console.log('[ws] Message type:', msg.type);
+  if (msg.type === 'message') {
+    addMessage(msg.data);
+  } else if (msg.type === 'receipt') {
+    const r = msg.data;
+    const el = document.querySelector(`.msg[data-msgid="${r.msg_id}"] .receipt`);
+    if (el) el.textContent = receiptIcon(r.status);
+  } else if (msg.type === 'peers') {
+    console.log('[ws] Peers received:', msg.data ? msg.data.length : 0, msg.data);
+    renderDiscovered(msg.data);
+  } else if (msg.type === 'progress') {
+    showProgress(msg.data);
+  } else if (msg.type === 'connect_ok') {
+    setConnected(msg.hash);
+    toast('Connected!');
+  } else if (msg.type === 'connect_fail') {
+    toast('Connection failed: ' + (msg.error || 'unknown'));
+  } else if (msg.type === 'info') {
+    toast(msg.data || '');
+  }
+}
+
+function sendReadReceipt(msgId) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({type: 'read_receipt', msg_id: msgId}));
+  }
+}
+
+function showProgress(data) {
+  var bar = document.getElementById('progress-bar');
+  var label = document.getElementById('progress-label');
+  if (!bar) return;
+  bar.style.display = 'block';
+  var pct = data.progress || 0;
+  bar.querySelector('.progress-fill').style.width = pct + '%';
+  var text = data.file_name + ' — ' + pct + '%';
+  if (data.size) text += ' (' + formatSize(data.size) + ')';
+  if (data.speed) text += ' @ ' + data.speed;
+  label.textContent = text;
+  if (pct >= 100) {
+    setTimeout(function() { bar.style.display = 'none'; }, 2000);
+  }
+}
+
+function startPeerPolling() {
+  if (peersPollTimer) clearInterval(peersPollTimer);
+  peersPollTimer = setInterval(() => {
+    fetch('/api/discover')
+      .then(r => r.json())
+      .then(d => {
+        renderDiscovered(d.peers);
+      })
+      .catch(() => {});
+    pollTemperature();
+    pollQueue();
+  }, 5000);
+}
+
+function pollTemperature() {
+  fetch('/api/temperature')
+    .then(r => r.json())
+    .then(d => {
+      const temps = d.temperatures || {};
+      const el = document.getElementById('temp-display');
+      if (Object.keys(temps).length === 0) {
+        el.textContent = '🌡 --°C';
+        return;
+      }
+      let labels = [];
+      for (const [k, v] of Object.entries(temps)) {
+        if (typeof v === 'number') labels.push(k + ': ' + v + '°C');
+      }
+      if (labels.length === 0) {
+        el.textContent = '🌡 --°C';
+      } else {
+        el.textContent = '🌡 ' + labels.join(' | ');
+      }
+    })
+    .catch(() => {
+      document.getElementById('temp-display').textContent = '🌡 --°C';
+    });
+}
+
+function pollQueue() {
+  fetch('/api/queue')
+    .then(r => r.json())
+    .then(q => {
+      var el = document.getElementById('queue-count');
+      if (q.count > 0) {
+        el.style.display = 'block';
+        el.textContent = 'Queue: ' + q.count + ' pending';
+      } else {
+        el.style.display = 'none';
+      }
+    })
+    .catch(() => {});
+}
+
+function renderContacts(contacts) {
+  const el = document.getElementById('contacts-list');
+  el.innerHTML = '';
+  contacts.forEach(c => {
+    const div = document.createElement('div');
+    const name = c.name || c.hash;
+    div.className = 'contact-item' + (c.hash === connected ? ' active' : '');
+    div.innerHTML = `<div class="contact-avatar">${name.charAt(0).toUpperCase()}</div>
+      <div class="contact-info">
+        <div class="contact-name">${escapeHtml(name)}</div>
+        <div class="contact-hash">${truncateHash(c.hash)}</div>
+      </div>`;
+    div.onclick = () => connectTo(c.hash);
+    div.oncontextmenu = (e) => { e.preventDefault(); showActionPanel(e, c.hash); };
+    el.appendChild(div);
+  });
+}
+
+function renderDiscovered(peers) {
+  console.log('[render] Discovered peers:', peers);
+  const el = document.getElementById('discovered-list');
+  el.innerHTML = '';
+  let connected = document.getElementById('peer-name').textContent !== 'No one connected';
+  let discovered = peers ? peers.filter(p => !p.connected) : [];
+  let count = discovered.length;
+  document.getElementById('peer-count').textContent = 'Peers: ' + count + (connected ? ' (1 connected)' : '');
+  if (!discovered || discovered.length === 0) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text2);padding:8px">No peers found on LAN</div>';
+    if (!connected) return;
+  }
+  discovered.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'contact-item';
+    const name = p.name || truncateHash(p.hash);
+    div.innerHTML = `<div class="contact-avatar" style="background:var(--success)">${escapeHtml(name).charAt(0).toUpperCase()}</div>
+      <div class="contact-info">
+        <div class="contact-name">${escapeHtml(name)}</div>
+        <div class="contact-hash">${truncateHash(p.hash)}</div>
+      </div>
+      <div style="font-size:11px;color:var(--text2)">LAN</div>`;
+    div.onclick = () => connectTo(p.hash);
+    div.oncontextmenu = (e) => {
+      e.preventDefault();
+      showActionPanel(e, p.hash);
+    };
+    el.appendChild(div);
+  });
+}
+
+let actionShown = false;
+
+function showActionPanel(e, hash) {
+  ctxHash = hash;
+  if (settingsShown) { settingsShown = false; document.getElementById('settings-panel').style.display = 'none'; }
+  if (connectShown) { connectShown = false; document.getElementById('connect-panel').style.display = 'none'; }
+  document.getElementById('contacts-section').style.display = 'none';
+  document.getElementById('action-panel').style.display = 'flex';
+  document.getElementById('action-panel-title').textContent = truncateHash(hash);
+  actionShown = true;
+}
+
+function toggleActionPanel() {
+  actionShown = !actionShown;
+  document.getElementById('action-panel').style.display = actionShown ? 'flex' : 'none';
+  if (!actionShown) document.getElementById('contacts-section').style.display = 'flex';
+}
+
+function actionConnect() {
+  if (ctxHash) connectTo(ctxHash);
+  toggleActionPanel();
+}
+
+function actionSaveContact() {
+  if (ctxHash) {
+    document.getElementById('save-contact-hash').value = ctxHash;
+    document.getElementById('save-contact-name').value = '';
+    document.getElementById('save-contact-dialog').classList.add('open');
+    document.getElementById('save-contact-name').focus();
+  }
+  toggleActionPanel();
+}
+
+function closeSaveContact() {
+  document.getElementById('save-contact-dialog').classList.remove('open');
+}
+
+function doSaveContact() {
+  const hash = document.getElementById('save-contact-hash').value;
+  const name = document.getElementById('save-contact-name').value.trim();
+  if (!hash) return;
+  fetch('/api/contacts', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({hash, name: name || hash.substring(0, 12)})
+  }).then(() => {
+    toast('Contact saved');
+    closeSaveContact();
+    fetchIdentity();
+  });
+}
+
+function actionDelete() {
+  if (ctxHash) {
+    fetch('/api/contacts/' + ctxHash.replace(/:/g, ''), { method: 'DELETE' })
+      .then(() => {
+        toast('Contact deleted');
+        fetchIdentity();
+      });
+  }
+  toggleActionPanel();
+}
+
+function connectTo(hash) {
+  toast('Connecting...');
+  fetch('/api/connect', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({hash})
+  }).then(r => r.json()).then(d => {
+    if (d.status === 'ok') {
+      setConnected(hash);
+      toast('Connected!');
+    } else {
+      toast('Connection failed: ' + (d.error || 'unknown'));
+    }
+  }).catch(() => toast('Connection failed'));
+}
+
+function announceSelf() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({type: 'announce'}));
+  } else {
+    fetch('/api/identity').then(() => {});
+  }
+  toast('Announcing on LAN...');
+}
+
+let settingsShown = false;
+let connectShown = false;
+
+function toggleSettings() {
+  settingsShown = !settingsShown;
+  if (connectShown) { connectShown = false; document.getElementById('connect-panel').style.display = 'none'; }
+  if (actionShown) { actionShown = false; document.getElementById('action-panel').style.display = 'none'; }
+  const contacts = document.getElementById('contacts-section');
+  const panel = document.getElementById('settings-panel');
+  if (settingsShown) {
+    contacts.style.display = 'none';
+    panel.style.display = 'flex';
+    fetch('/api/settings')
+      .then(r => r.json())
+      .then(s => {
+        document.getElementById('settings-name').value = s.name || '';
+        document.getElementById('settings-retention').value = s.history_retention || 'never';
+        document.getElementById('settings-hash').value = myHash;
+        document.getElementById('settings-files-dir').value = s.received_dir || '';
+      });
+  } else {
+    contacts.style.display = 'flex';
+    panel.style.display = 'none';
+  }
+}
+
+function toggleConnectPanel() {
+  connectShown = !connectShown;
+  if (settingsShown) { settingsShown = false; document.getElementById('settings-panel').style.display = 'none'; }
+  if (actionShown) { actionShown = false; document.getElementById('action-panel').style.display = 'none'; }
+  const contacts = document.getElementById('contacts-section');
+  const panel = document.getElementById('connect-panel');
+  if (connectShown) {
+    contacts.style.display = 'none';
+    panel.style.display = 'flex';
+    document.getElementById('connect-hash').value = '';
+    document.getElementById('contact-name').value = '';
+    document.getElementById('connect-hash').focus();
+  } else {
+    contacts.style.display = 'flex';
+    panel.style.display = 'none';
+  }
+}
+
+function doConnectFromPanel() {
+  const hash = document.getElementById('connect-hash').value.trim();
+  const name = document.getElementById('contact-name').value.trim();
+  if (!hash) return;
+  if (name) {
+    fetch('/api/contacts', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({hash, name})
+    });
+  }
+  connectTo(hash);
+  toggleConnectPanel();
+}
+
+function saveRetentionOnly() {
+  const retention = document.getElementById('settings-retention').value;
+  fetch('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({history_retention: retention})
+  }).then(r => r.json()).then(d => {
+    if (d.status === 'ok') toast('Retention saved');
+  });
+}
+
+function saveSettings() {
+  const name = document.getElementById('settings-name').value.trim();
+  const retention = document.getElementById('settings-retention').value;
+  const received_dir = document.getElementById('settings-files-dir').value.trim();
+  fetch('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name, history_retention: retention, received_dir})
+  }).then(r => r.json()).then(d => {
+    if (d.status === 'ok') {
+      toast('Settings saved');
+      toggleSettings();
+    } else {
+      toast('Failed to save settings');
+    }
+  });
+}
+
+function clearHistory() {
+  if (!confirm('Delete all chat history?')) return;
+  fetch('/api/history/clear', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).then(() => {
+    document.getElementById('messages').innerHTML = '';
+    toast('History cleared');
+  });
+}
+
+function setConnected(hash) {
+  connected = hash.replace(/:/g, '');
+  document.getElementById('peer-name').textContent = truncateHash(hash);
+  document.getElementById('peer-status').textContent = 'Connected';
+  document.getElementById('placeholder').style.display = 'none';
+  document.getElementById('messages').style.display = 'flex';
+  document.getElementById('input-area').style.display = 'block';
+  document.getElementById('disconnect-btn').style.display = 'block';
+  document.getElementById('msg-input').focus();
+  document.getElementById('link-status').innerHTML = '<span id="link-dot" class="connected" style="width:6px;height:6px;border-radius:50%;display:inline-block"></span> Link: active';
+  fetchIdentity();
+}
+
+function disconnect() {
+  fetch('/api/disconnect', {method: 'POST'});
+  connected = null;
+  document.getElementById('peer-name').textContent = 'No one connected';
+  document.getElementById('peer-status').textContent = 'Disconnected';
+  document.getElementById('placeholder').style.display = 'flex';
+  document.getElementById('messages').style.display = 'none';
+  document.getElementById('input-area').style.display = 'none';
+  document.getElementById('disconnect-btn').style.display = 'none';
+  document.getElementById('link-status').innerHTML = '<span id="link-dot" class="disconnected" style="width:6px;height:6px;border-radius:50%;display:inline-block"></span> Link: inactive';
+  fetchIdentity();
+}
+
+function sendMessage() {
+  const input = document.getElementById('msg-input');
+  const text = input.value.trim();
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({type: 'send', text}));
+  input.value = '';
+  autoResize(input);
+}
+
+function onInputKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+function fileUrl(path) {
+  if (!path) return '';
+  var idx = path.indexOf('/received/');
+  if (idx >= 0) return '/api/file/received/' + encodeURIComponent(path.substring(idx + 10));
+  idx = path.indexOf('/sent/');
+  if (idx >= 0) return '/api/file/sent/' + encodeURIComponent(path.substring(idx + 6));
+  return '';
+}
+
+function receiptIcon(status) {
+  if (status === 'sending') return '🕐';
+  if (status === 'sent') return '✓';
+  if (status === 'received') return '✓✓';
+  if (status === 'read') return '👁';
+  if (status === 'failed') return '✗';
+  return '';
+}
+
+function addMessage(data) {
+  const msgs = document.getElementById('messages');
+  if (msgs.style.display === 'none') return;
+
+  if (data.msg_id) {
+    const existing = document.querySelector(`.msg[data-msgid="${data.msg_id}"]`);
+    if (existing) {
+      const statusEl = existing.querySelector('.receipt');
+      if (statusEl) statusEl.textContent = receiptIcon(data.status || '');
+      if (data.status === 'received' || data.status === 'read') {
+        data.type === 'text' && data.sender !== myHash && sendReadReceipt(data.msg_id);
+      }
+      return;
+    }
+  }
+
+  const div = document.createElement('div');
+  const isSelf = data.sender === myHash;
+  const isSystem = data.sender === 'system' || data.type === 'system';
+  div.className = 'msg ' + (isSystem ? 'system' : isSelf ? 'self' : 'other');
+  if (data.msg_id) div.setAttribute('data-msgid', data.msg_id);
+  const time = new Date(data.timestamp * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  const copyable = data.type === 'text' || data.type === 'emoji';
+  let html = '';
+  if (data.type === 'text' || data.type === 'emoji') {
+    html = `<button class="copy-btn" onclick="event.stopPropagation();copyMsgText(this)" title="Copy text">📋</button><span class="msg-text">${escapeHtml(data.content)}</span>`;
+  } else if (data.type === 'image') {
+    html = `<div>📷 ${escapeHtml(data.file_name || 'Image')}</div>`;
+    if (data.content) {
+      const url = fileUrl(data.content);
+      html += `<img class="msg-img" src="${url}" onclick="showImage(this.src)">`;
+      html += `<div style="margin-top:2px"><a href="${url}" download="${escapeHtml(data.file_name || 'image')}" style="color:var(--primary);font-size:11px">💾 Save image</a></div>`;
+    }
+  } else if (data.type === 'voice') {
+    html = `<div>🎤 ${escapeHtml(data.file_name || 'Voice note')}</div>`;
+    if (data.content) {
+      const url = fileUrl(data.content);
+      html += `<audio class="voice-player" controls src="${url}"></audio>`;
+    }
+  } else if (data.type === 'file') {
+    const sz = data.file_size ? formatSize(data.file_size) : '';
+    html = `<div class="file-info"><span class="file-icon">📄</span><span>${escapeHtml(data.file_name || 'File')} ${sz}</span></div>`;
+    if (data.content) {
+      const url = fileUrl(data.content);
+      html += `<div style="margin-top:4px"><a href="${url}" download="${escapeHtml(data.file_name || 'file')}" style="color:var(--primary);font-size:12px">Download</a></div>`;
+    }
+  } else if (data.type === 'system') {
+    html = escapeHtml(data.content);
+  }
+  const icon = receiptIcon(data.status || (isSelf && data.type !== 'system' ? 'sending' : ''));
+  html += `<div class="time">${time}${icon ? ' <span class="receipt" style="font-size:11px;margin-left:4px">' + icon + '</span>' : ''}</div>`;
+  div.innerHTML = html;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+
+  if (isSelf && data.msg_id && (data.status === 'received' || data.status === 'read')) {
+    data.type === 'text' && sendReadReceipt(data.msg_id);
+  }
+}
+
+function toggleEmoji() {
+  document.getElementById('emoji-picker').classList.toggle('open');
+}
+
+function buildEmojiPicker() {
+  const picker = document.getElementById('emoji-picker');
+  EMOJIS.forEach(e => {
+    const span = document.createElement('span');
+    span.className = 'emoji-item';
+    span.textContent = e;
+    span.onclick = () => {
+      const input = document.getElementById('msg-input');
+      input.value += e;
+      input.focus();
+      autoResize(input);
+      picker.classList.remove('open');
+    };
+    picker.appendChild(span);
+  });
+}
+
+let voiceChunks = [];
+function toggleVoice() {
+  if (recording) { stopVoice(); } else { startVoice(); }
+}
+
+function startVoice() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    toast('Voice recording not supported');
+    return;
+  }
+  navigator.mediaDevices.getUserMedia({audio: true})
+    .then(stream => {
+      recording = true;
+      voiceChunks = [];
+      document.getElementById('voice-btn').classList.add('recording');
+      toast('Recording... click 🎤 to stop');
+      mediaRecorder = new MediaRecorder(stream, {mimeType: 'audio/webm;codecs=opus'});
+      mediaRecorder.ondataavailable = e => { if (e.data.size > 0) voiceChunks.push(e.data); };
+      mediaRecorder.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(voiceChunks, {type: 'audio/webm'});
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const b64 = reader.result.split(',')[1];
+          fetch('/api/voice', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({audio: b64})
+          }).then(r => r.json()).then(d => {
+            if (d.status === 'ok') toast('Voice sent');
+            else toast('Voice send failed');
+          });
+        };
+        reader.readAsDataURL(blob);
+      };
+      mediaRecorder.start();
+    })
+    .catch(() => toast('Microphone access denied'));
+}
+
+function stopVoice() {
+  recording = false;
+  document.getElementById('voice-btn').classList.remove('recording');
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+}
+
+function uploadFiles(files) {
+  Array.from(files).forEach(file => {
+    const formData = new FormData();
+    formData.append('file', file);
+    fetch('/api/file', {method: 'POST', body: formData})
+      .then(r => r.json()).then(d => {
+        if (d.status === 'ok') toast(`Sent ${d.name}`);
+        else if (d.status === 'queued') toast(`Queued ${d.name} (${d.size})`);
+        else toast('Upload failed: ' + (d.error || ''));
+      });
+  });
+}
+
+function uploadFolder(files) {
+  const total = files.length;
+  if (total === 0) return;
+  const folderPath = files[0].webkitRelativePath || files[0].name;
+  const folderName = folderPath.split('/')[0];
+  if (!confirm(`Compress "${folderName}" (${total} files) and send as ${folderName}.zip?`)) return;
+  const formData = new FormData();
+  Array.from(files).forEach(file => {
+    const path = file.webkitRelativePath || file.name;
+    formData.append('file', file, path);
+  });
+  toast(`Zipping ${total} file(s)...`);
+  fetch('/api/folder?name=' + encodeURIComponent(folderName), {method: 'POST', body: formData})
+    .then(r => r.json())
+    .then(d => {
+      if (d.status === 'ok') toast(`Sent ${d.name} (${formatSize(d.size)})`);
+      else if (d.status === 'queued') toast(`Queued ${d.name} (${formatSize(d.size)})`);
+      else toast('Folder upload failed: ' + (d.error || ''));
+    })
+    .catch(() => toast('Folder upload failed'));
+}
+
+function pickReceivedDir(input) {
+  if (input.files && input.files.length > 0) {
+    const path = input.files[0].webkitRelativePath || input.files[0].name;
+    const dir = path.substring(0, path.lastIndexOf('/'));
+    document.getElementById('settings-files-dir').value = dir || '/home/' + input.files[0].name;
+  }
+}
+
+function regenerateIdentity() {
+  if (!confirm('Generate a new identity? The old one will be deleted. All peers will need to reconnect with the new hash.')) return;
+  fetch('/api/identity/regenerate', {method: 'POST'})
+    .then(r => r.json())
+    .then(d => {
+      if (d.status === 'ok') {
+        myHash = d.new_hash;
+        document.getElementById('settings-hash').value = myHash;
+        document.getElementById('identity-box').textContent = 'ID: ' + myHash;
+        toast('New identity: ' + d.new_hash.substring(0, 16) + '...');
+      } else {
+        toast('Failed: ' + (d.error || ''));
+      }
+    });
+}
+
+function restartServer() {
+  if (!confirm('Restart the server? The web interface will be unavailable for a few seconds.')) return;
+  fetch('/api/restart', {method: 'POST'}).then(() => {
+    toast('Server restarting...');
+    setTimeout(() => { location.reload(); }, 3000);
+  });
+}
+
+document.addEventListener('paste', e => {
+  const items = e.clipboardData.items;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (file) uploadFiles([file]);
+    }
+  }
+});
+
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
+});
+
+function showImage(src) {
+  document.getElementById('modal-img').src = src;
+  document.getElementById('image-modal').classList.add('open');
+}
+
+function copyMsgText(btn) {
+  const textEl = btn.parentElement?.querySelector('.msg-text');
+  const text = textEl ? textEl.textContent : '';
+  if (text) {
+    navigator.clipboard.writeText(text).then(() => toast('Copied!'));
+  }
+}
+
+function copyIdentity() {
+  navigator.clipboard.writeText(myHash).then(() => toast('Identity copied!'));
+}
+
+function truncateHash(h) {
+  if (!h || h.length <= 16) return h || '';
+  return h.substring(0, 16) + '...';
+}
+
+function formatSize(bytes) {
+  if (!bytes) return '';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0; let size = bytes;
+  while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
+  return size.toFixed(1) + units[i];
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+let toastTimer = null;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+init();
+
+window.addEventListener('beforeunload', () => {
+  const retention = document.getElementById('settings-retention')?.value;
+  if (retention === 'on_close') {
+    navigator.sendBeacon('/api/history/clear', '{}');
+  }
+});
+
+</script>
+</body>
+</html>
