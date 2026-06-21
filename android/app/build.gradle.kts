@@ -53,7 +53,7 @@ chaquopy {
     }
     sourceSets {
         getByName("main") {
-            srcDir("../../chatxz")
+            srcDir("../../")
         }
     }
 }
