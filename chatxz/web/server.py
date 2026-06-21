@@ -1,4 +1,4 @@
-import os, json, time, base64, mimetypes, asyncio, socket, zipfile, shutil, subprocess, tempfile, signal, re, sys
+import os, json, time, base64, mimetypes, asyncio, socket, zipfile, shutil, subprocess, tempfile, signal, re, sys, threading
 from pathlib import Path
 
 import aiohttp
@@ -24,7 +24,7 @@ from chatxz.utils.system import get_avg_cpu_temperature, get_cpu_percent
 CONFIG_DIR = get_config_dir()
 DATA_DIR = get_data_dir()
 SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
-APP_VERSION = "0.3.9"
+APP_VERSION = "0.3.10"
 
 def build_desktop_rns_config(broadcast_ip="255.255.255.255"):
     return f"""[reticulum]
@@ -252,6 +252,7 @@ class ChatWebServer:
         self.lan_beacon = None
         self._loop = None
         self.rns_init_error = None
+        self._announce_lock = threading.Lock()
 
     @staticmethod
     def _clean_hash(h):
@@ -459,9 +460,9 @@ class ChatWebServer:
             display_name=settings.get("name", ""),
             ip=my_ip,
             port=self.port,
+            periodic=False,
         )
         self.lan_beacon.start()
-        self.lan_beacon.send(count=2, subnet_probe=is_android())
 
         return my_hash
 
@@ -622,6 +623,10 @@ class ChatWebServer:
                         peer_info = p
                         resolved_hash = p.get("hash", peer_hash)
                         break
+            if data.get("ip"):
+                peer_info = peer_info or {}
+                peer_info["ip"] = data.get("ip")
+                peer_info["port"] = data.get("port", 8742)
             if self.messaging:
                 self.messaging.prepare_connect(resolved_hash, peer_info)
             ok = await asyncio.to_thread(self.messaging.connect_to, resolved_hash)
@@ -736,22 +741,25 @@ class ChatWebServer:
         ok, err = await self._wait_for_rns()
         if not ok:
             return web.json_response({"error": err or "not ready"}, status=400)
-        try:
-            await asyncio.to_thread(self.messaging.announce)
-            beacon_sent = 0
-            if self.lan_beacon:
-                beacon_sent = await asyncio.to_thread(self.lan_beacon.send, 2, True)
-            http_hits = await self._fanout_beacon_http()
-            return web.json_response({
-                "status": "ok",
-                "broadcast": lan_broadcast(),
-                "beacon_port": BEACON_PORT,
-                "beacon_sent": beacon_sent,
-                "http_probe_hits": http_hits,
-                "lan_ip": detect_lan_ip(),
-            })
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=400)
+        with self._announce_lock:
+            try:
+                await asyncio.to_thread(self.messaging.announce)
+                beacon_sent = 0
+                if self.lan_beacon:
+                    beacon_sent = await asyncio.to_thread(
+                        self.lan_beacon.send, 1, is_android()
+                    )
+                http_hits = await self._fanout_beacon_http()
+                return web.json_response({
+                    "status": "ok",
+                    "broadcast": lan_broadcast(),
+                    "beacon_port": BEACON_PORT,
+                    "beacon_sent": beacon_sent,
+                    "http_probe_hits": http_hits,
+                    "lan_ip": detect_lan_ip(),
+                })
+            except Exception as e:
+                return web.json_response({"error": str(e)}, status=400)
 
     async def handle_disconnect(self, request):
         if self.messaging and self.messaging.active_link:
@@ -1381,6 +1389,10 @@ class ChatWebServer:
                             peer_info = p
                             resolved_hash = p.get("hash", peer_hash)
                             break
+                if data.get("ip"):
+                    peer_info = peer_info or {}
+                    peer_info["ip"] = data.get("ip")
+                    peer_info["port"] = data.get("port", 8742)
                 self.messaging.prepare_connect(resolved_hash, peer_info)
                 ok = await asyncio.to_thread(self.messaging.connect_to, resolved_hash)
                 if ok:
@@ -1392,10 +1404,11 @@ class ChatWebServer:
         elif msg_type == "announce":
             ok, err = await self._wait_for_rns(timeout=30.0)
             if ok:
-                await asyncio.to_thread(self.messaging.announce)
-                if self.lan_beacon:
-                    await asyncio.to_thread(self.lan_beacon.send, 2, True)
-                await self._fanout_beacon_http()
+                with self._announce_lock:
+                    await asyncio.to_thread(self.messaging.announce)
+                    if self.lan_beacon:
+                        await asyncio.to_thread(self.lan_beacon.send, 1, is_android())
+                    await self._fanout_beacon_http()
             elif err:
                 await ws.send_str(json.dumps({"type": "info", "data": "Announce failed: " + err}))
         elif msg_type == "read_receipt":
@@ -1503,7 +1516,7 @@ class ChatWebServer:
         my_hash = self.start_rns()
         app.on_startup.append(self._on_startup)
 
-        print(f"chatxz web server v0.1.0")
+        print(f"chatxz web server v{APP_VERSION}")
         print(f"Your identity: {my_hash}")
         print(f"Web interface: http://{self.host}:{self.port}")
         print("Press Ctrl+C to stop")

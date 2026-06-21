@@ -26,6 +26,7 @@ class PeerDiscovery:
         self.running = False
         self._handler = None
         self.on_peer_seen = on_peer_seen
+        self._last_log = {}
 
     def start(self):
         self.running = True
@@ -86,7 +87,7 @@ class PeerDiscovery:
             "last_seen": time.time(),
             "via": "rns",
         })
-        print(f"[discovery] RNS peer discovered: {name or hash_hex[:12]}...")
+        self._log_once(hash_hex, f"[discovery] RNS peer discovered: {name or hash_hex[:12]}...")
 
     def _on_beacon(self, data, my_hash):
         if not self.running:
@@ -107,7 +108,17 @@ class PeerDiscovery:
             "last_seen": time.time(),
             "via": "beacon",
         })
-        print(f"[discovery] Beacon peer discovered: {name} ({data.get('ip', '?')})")
+        self._log_once(
+            f"beacon:{hash_hex}",
+            f"[discovery] Beacon peer discovered: {name} ({data.get('ip', '?')})",
+        )
+
+    def _log_once(self, key, message, interval=30):
+        now = time.time()
+        if now - self._last_log.get(key, 0) < interval:
+            return
+        self._last_log[key] = now
+        print(message)
 
     def _peer_rank(self, peer):
         score = 0

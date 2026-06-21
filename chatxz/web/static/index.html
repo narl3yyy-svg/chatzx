@@ -771,7 +771,7 @@ body.sidebar-open #sidebar-backdrop { display: block; }
         <button class="sidebar-btn primary" onclick="toggleConnectPanel()">
           <span>＋</span> Connect
         </button>
-        <button class="sidebar-btn" onclick="announceSelf()" title="Broadcast your presence on LAN">
+        <button class="sidebar-btn" onclick="announceSelf()" title="Manual LAN announce (RNS + beacon)">
           <span>📡</span> Announce
         </button>
       </div>
@@ -1357,7 +1357,7 @@ function renderContacts(contacts) {
         <div class="contact-name">${escapeHtml(name)}</div>
         <div class="contact-hash">${truncateHash(c.hash)}</div>
       </div>`;
-    div.onclick = () => connectTo(c.hash);
+    div.onclick = () => connectTo(c.hash, c.ip, c.port);
     div.oncontextmenu = (e) => { e.preventDefault(); showActionPanel(e, c.hash); };
     el.appendChild(div);
   });
@@ -1389,7 +1389,7 @@ function renderDiscovered(peers) {
         <div class="contact-hash">${truncateHash(p.hash)}${p.ip ? ' · ' + escapeHtml(p.ip) : ''}</div>
       </div>
       <span class="contact-badge lan">LAN</span>`;
-    div.onclick = () => connectTo(p.hash);
+    div.onclick = () => connectTo(p.hash, p.ip, p.port);
     div.oncontextmenu = (e) => {
       e.preventDefault();
       showActionPanel(e, p.hash);
@@ -1468,12 +1468,15 @@ function actionDelete() {
   toggleActionPanel();
 }
 
-function connectTo(hash) {
+function connectTo(hash, ip, port) {
   toast('Connecting...');
+  const body = {hash};
+  if (ip) body.ip = ip;
+  if (port) body.port = port;
   fetch('/api/connect', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({hash})
+    body: JSON.stringify(body)
   }).then(r => r.json()).then(d => {
     if (d.status === 'ok') {
       setConnected(hash);
@@ -1551,10 +1554,12 @@ function refreshNetworkStatus() {
       html += row('Discovered peers', d.discovered_count ?? 0, (d.discovered_count || 0) > 0);
       html += row('WS clients', d.ws_clients ?? 0);
       if (d.beacon) {
+        html += row('Beacon mode', (d.beacon.interval_sec ? 'auto' : 'manual only'), !d.beacon.interval_sec);
         html += row('Beacon sent', d.beacon.packets_sent ?? 0);
         html += row('Beacon received', d.beacon.packets_received ?? 0, (d.beacon.packets_received || 0) > 0);
         html += row('Subnet probes', d.beacon.last_subnet_probes ?? 0);
       }
+      html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);line-height:1.45">Announce is manual only (📡 button). Beacon = UDP discovery ping; RNS announce = mesh identity broadcast.</div>';
       if (Array.isArray(d.interfaces) && d.interfaces.length) {
         html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em">Interfaces</div>';
         d.interfaces.forEach(iface => {

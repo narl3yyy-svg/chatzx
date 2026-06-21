@@ -586,8 +586,8 @@ class MessagingBackend:
         else:
             RNS.Transport.request_path(dest_hash)
         if hasattr(RNS.Transport, "await_path"):
-            return RNS.Transport.await_path(dest_hash, timeout=12)
-        for _ in range(24):
+            return RNS.Transport.await_path(dest_hash, timeout=18)
+        for _ in range(36):
             time.sleep(0.5)
             if RNS.Transport.has_path(dest_hash):
                 return True
@@ -607,30 +607,28 @@ class MessagingBackend:
         print(f"[connect] Connecting to {RNS.hexrep(dest_hash)[:20]}...")
 
         try:
+            peer = self._lookup_peer_ip(clean)
+            if peer:
+                print(f"[connect] Bootstrapping via HTTP {peer['ip']}:{peer['port']}...")
+                dest_hash = self._bootstrap_via_http(dest_hash, peer["ip"], peer["port"])
+                clean = dest_hash.hex()
+
             known_identity = RNS.Identity.recall(dest_hash)
             if known_identity is None:
                 known_identity = RNS.Identity.recall(dest_hash, from_identity_hash=True)
 
             if known_identity is None:
-                peer = self._lookup_peer_ip(clean)
-                if peer:
-                    print(f"[connect] Bootstrapping identity via HTTP {peer['ip']}:{peer['port']}...")
-                    dest_hash = self._bootstrap_via_http(dest_hash, peer["ip"], peer["port"])
-                    known_identity = RNS.Identity.recall(dest_hash)
-
-            if known_identity is None:
                 print(f"[connect] No known identity, requesting path...")
                 if not RNS.Transport.has_path(dest_hash):
                     if not self._request_path(dest_hash):
-                        peer = self._lookup_peer_ip(clean)
                         if peer:
-                            print(f"[connect] Retrying path via HTTP announce at {peer['ip']}...")
+                            print(f"[connect] Retrying path after remote announce...")
                             self._bootstrap_via_http(dest_hash, peer["ip"], peer["port"])
                             if not self._request_path(dest_hash):
-                                print(f"[connect] No path to destination")
+                                print(f"[connect] No path to destination (is the peer running and on the same LAN?)")
                                 return False
                         else:
-                            print(f"[connect] No path to destination")
+                            print(f"[connect] No path to destination (no peer IP known — try Announce first)")
                             return False
                 known_identity = RNS.Identity.recall(dest_hash)
                 if known_identity is None:

@@ -14,12 +14,13 @@ MAGIC = b"CHATXZ1"
 
 
 class LanBeacon:
-    def __init__(self, discovery, identity_hash, display_name="", ip=None, port=8742):
+    def __init__(self, discovery, identity_hash, display_name="", ip=None, port=8742, periodic=False):
         self.discovery = discovery
         self.identity_hash = (identity_hash or "").replace(":", "")
         self.display_name = display_name or ""
         self.ip = ip
         self.port = port
+        self.periodic = periodic
         self.running = False
         self._rx_sock = None
         self._tx_sock = None
@@ -53,9 +54,12 @@ class LanBeacon:
 
         self._listen_thread = threading.Thread(target=self._listen, name="chatxz-beacon-rx", daemon=True)
         self._listen_thread.start()
-        self._periodic_thread = threading.Thread(target=self._periodic, name="chatxz-beacon-tx", daemon=True)
-        self._periodic_thread.start()
-        print(f"[beacon] Listening on UDP {BEACON_PORT}")
+        if self.periodic:
+            self._periodic_thread = threading.Thread(target=self._periodic, name="chatxz-beacon-tx", daemon=True)
+            self._periodic_thread.start()
+        else:
+            self._periodic_thread = None
+        print(f"[beacon] Listening on UDP {BEACON_PORT} (periodic={'on' if self.periodic else 'off'})")
 
     def stop(self):
         self.running = False
@@ -176,10 +180,11 @@ class LanBeacon:
         return {
             "port": BEACON_PORT,
             "running": self.running,
+            "periodic": self.periodic,
             "lan_ip": self.ip or lan_ip(),
             "broadcast_targets": self.last_send_targets,
             "last_subnet_probes": self.last_subnet_probes,
             "packets_sent": self.packets_sent,
             "packets_received": self.packets_received,
-            "interval_sec": self._interval,
+            "interval_sec": self._interval if self.periodic else 0,
         }
