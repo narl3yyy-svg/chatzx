@@ -195,7 +195,10 @@ class ChatWebServer:
         if not filepath.exists() or not filepath.is_file():
             return web.Response(text="Not found", status=404)
         ct, _ = mimetypes.guess_type(str(filepath))
-        return web.FileResponse(filepath, content_type=ct or "application/octet-stream")
+        resp = web.FileResponse(filepath)
+        if ct:
+            resp.headers['Content-Type'] = ct
+        return resp
 
     async def handle_identity(self, request):
         h = self.identity_mgr.get_hex_hash()
@@ -399,7 +402,10 @@ class ChatWebServer:
         if not os.path.exists(full_path) or not os.path.isfile(full_path):
             return web.Response(text="Not found", status=404)
         ct, _ = mimetypes.guess_type(full_path)
-        return web.FileResponse(full_path, content_type=ct or "application/octet-stream")
+        resp = web.FileResponse(full_path)
+        if ct:
+            resp.headers['Content-Type'] = ct
+        return resp
 
     async def handle_history(self, request):
         limit = int(request.query.get("limit", 100))
@@ -432,12 +438,16 @@ class ChatWebServer:
 
     async def _discovery_broadcaster(self):
         print("[broadcaster] Started")
+        last_count = -1
         while True:
             await asyncio.sleep(3)
             if self.discovery:
                 peers = self.discovery.get_peers()
+                count = len(peers)
+                if count != last_count:
+                    print(f"[broadcaster] {count} peer(s), {len(self.websockets)} ws client(s)")
+                    last_count = count
                 if peers:
-                    print(f"[broadcaster] Broadcasting {len(peers)} peers to {len(self.websockets)} ws clients")
                     await self._broadcast({"type": "peers", "data": peers})
 
     async def handle_discover(self, request):
