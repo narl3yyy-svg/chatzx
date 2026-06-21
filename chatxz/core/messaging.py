@@ -59,17 +59,19 @@ class ChatMessage:
 
 class MessagingBackend:
     def __init__(self, identity, config_dir, on_message=None, on_file=None,
-                 display_name="", announce_interval=30):
+                 display_name="", announce_interval=30, auto_announce=False):
         self.identity = identity
         self.config_dir = config_dir
         self.on_message = on_message
         self.on_file = on_file
         self.display_name = display_name
         self.announce_interval = announce_interval
+        self.auto_announce = auto_announce
         self.destination = None
         self.links = {}
         self.active_link = None
         self.running = False
+        self._announce_thread = None
 
     def start(self):
         self.destination = RNS.Destination(
@@ -81,10 +83,14 @@ class MessagingBackend:
         )
         self.destination.set_proof_strategy(RNS.Destination.PROVE_ALL)
         self.destination.set_link_established_callback(self._link_callback)
-        self._announce()
-        self._announce_thread = threading.Thread(target=self._announce_loop, daemon=True)
-        self._announce_thread.start()
+
+        if self.auto_announce:
+            self._announce()
+            self._announce_thread = threading.Thread(target=self._announce_loop, daemon=True)
+            self._announce_thread.start()
+
         self.running = True
+        print(f"[messaging] Started (auto_announce={self.auto_announce})")
         return self.destination
 
     def announce(self):
@@ -97,6 +103,7 @@ class MessagingBackend:
                 "name": self.display_name or ""
             }).encode("utf-8")
             self.destination.announce(app_data=announce_data)
+            print(f"[messaging] Announced on LAN (name={self.display_name or 'none'})")
 
     def _announce_loop(self):
         while self.running:
@@ -114,8 +121,18 @@ class MessagingBackend:
             except:
                 pass
 
+    def _get_remote_hash(self, link):
+        try:
+            ident = link.get_remote_identity()
+            if ident:
+                return RNS.hexrep(ident.hash)
+        except:
+            pass
+        return "unknown"
+
     def _link_callback(self, link):
-        remote_hash = RNS.hexrep(link.get_remote_identity().hash)
+        print(f"[messaging] Incoming link established: {link.link_id}")
+        remote_hash = self._get_remote_hash(link)
         self.links[link.link_id] = link
         link.set_link_closed_callback(self._link_closed(link))
         link.set_packet_callback(self._packet_callback(link))
@@ -129,7 +146,7 @@ class MessagingBackend:
             if link.link_id in self.links:
                 del self.links[link.link_id]
             if self.on_message:
-                remote_hash = RNS.hexrep(link.get_remote_identity().hash)
+                remote_hash = self._get_remote_hash(link)
                 system_msg = ChatMessage("system", f"Link closed with {remote_hash}")
                 self.on_message(system_msg, remote_hash)
         return callback
@@ -138,15 +155,16 @@ class MessagingBackend:
         def callback(message, packet):
             try:
                 chat_msg = ChatMessage.from_json(message.decode("utf-8"))
-                remote_hash = RNS.hexrep(link.get_remote_identity().hash)
+                remote_hash = self._get_remote_hash(link)
                 chat_msg.sender = remote_hash
+                print(f"[messaging] Received {chat_msg.msg_type} from {remote_hash[:12]}...")
 
                 if chat_msg.msg_type in (MESSAGE_TYPE_FILE, MESSAGE_TYPE_IMAGE, MESSAGE_TYPE_VOICE):
-                    transfer_id = chat_msg.content
                     self._receive_file_resource(link, chat_msg, remote_hash)
                 elif self.on_message:
                     self.on_message(chat_msg, remote_hash)
             except Exception as e:
+                print(f"[messaging] Packet callback error: {e}")
                 if self.on_message:
                     self.on_message(
                         ChatMessage("system", f"Failed to parse message: {e}"),
@@ -229,15 +247,33 @@ class MessagingBackend:
         try:
             link = RNS.Link(destination)
             link.set_link_established_callback(self._outgoing_link_callback(link))
-            print(f"[connect] Link initiated successfully")
-            return True
+            print(f"[connect] Link initiated, waiting for establishment...")
+
+            for _ in range(20):
+                time.sleep(0.25)
+                if self.active_link is not None and self.active_link.link_id == link.link_id:
+                    print(f"[connect] Link established successfully")
+                    return True
+                try:
+                    if link.status == RNS.Link.CLOSED:
+                        print(f"[connect] Link was closed")
+                        return False
+                except:
+                    pass
+
+            if self.active_link is not None:
+                print(f"[connect] Link established (timeout)")
+                return True
+            print(f"[connect] Link establishment timed out")
+            return False
         except Exception as e:
             print(f"[connect] Link creation failed: {e}")
             return False
 
     def _outgoing_link_callback(self, link):
         def callback(link):
-            remote_hash = RNS.hexrep(link.get_remote_identity().hash)
+            remote_hash = self._get_remote_hash(link)
+            print(f"[messaging] Outgoing link established: {link.link_id} -> {remote_hash[:12]}...")
             self.links[link.link_id] = link
             link.set_link_closed_callback(self._link_closed(link))
             link.set_packet_callback(self._packet_callback(link))
@@ -251,13 +287,16 @@ class MessagingBackend:
 
     def send_message(self, text):
         if not self.active_link:
+            print("[messaging] send_message: no active link")
             return False
         msg = ChatMessage(MESSAGE_TYPE_TEXT, text)
         try:
             packet = RNS.Packet(self.active_link, msg.to_json().encode("utf-8"))
             packet.send()
+            print(f"[messaging] Sent text message: {text[:50]}...")
             return True
-        except:
+        except Exception as e:
+            print(f"[messaging] Send failed: {e}")
             return False
 
     def send_file(self, file_path, msg_type=MESSAGE_TYPE_FILE):
@@ -272,6 +311,7 @@ class MessagingBackend:
             resource = RNS.Resource(file_path, self.active_link, callback=self._resource_send_callback(file_path))
             return True
         except Exception as e:
+            print(f"[messaging] File send failed: {e}")
             return False
 
     def _resource_send_callback(self, file_path):

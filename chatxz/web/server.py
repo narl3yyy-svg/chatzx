@@ -127,6 +127,7 @@ class ChatWebServer:
             on_message=self._on_message,
             display_name=settings.get("name", ""),
             announce_interval=settings.get("announce_interval", 30),
+            auto_announce=False,
         )
         self.file_transfer = FileTransfer(self.config_dir)
         self.voice_recorder = VoiceRecorder(self.config_dir)
