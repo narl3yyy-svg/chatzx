@@ -1,0 +1,311 @@
+import os
+import json
+import time
+import base64
+import tempfile
+import mimetypes
+import asyncio
+from pathlib import Path
+
+import aiohttp
+from aiohttp import web
+import RNS
+
+from chatxz.core.identity import IdentityManager
+from chatxz.core.messaging import MessagingBackend, ChatMessage
+from chatxz.core.filetransfer import FileTransfer
+from chatxz.core.voice import VoiceRecorder, VoicePlayer
+from chatxz.utils.helpers import get_config_dir, get_data_dir, format_size, truncate_hash
+
+CONFIG_DIR = get_config_dir()
+DATA_DIR = get_data_dir()
+
+class ChatWebServer:
+    def __init__(self, host="127.0.0.1", port=8742):
+        self.host = host
+        self.port = port
+        self.config_dir = CONFIG_DIR
+        self.data_dir = DATA_DIR
+        os.makedirs(self.config_dir, exist_ok=True)
+        os.makedirs(self.data_dir, exist_ok=True)
+
+        self.identity_mgr = IdentityManager(self.config_dir)
+        self.identity = None
+        self.messaging = None
+        self.file_transfer = None
+        self.voice_recorder = None
+
+        self.websockets = set()
+        self.message_history = []
+        self.contact_list = {}
+        self.active_peer = None
+
+    def start_rns(self):
+        RNS.Reticulum(self.config_dir)
+        self.identity = self.identity_mgr.load_or_create()
+        self.messaging = MessagingBackend(
+            self.identity, self.config_dir, on_message=self._on_message
+        )
+        self.file_transfer = FileTransfer(self.config_dir)
+        self.voice_recorder = VoiceRecorder(self.config_dir)
+        dest = self.messaging.start()
+        return RNS.hexrep(dest.hash)
+
+    def _on_message(self, chat_msg, sender_hash):
+        entry = {
+            "type": chat_msg.msg_type,
+            "content": chat_msg.content,
+            "sender": sender_hash or "system",
+            "timestamp": chat_msg.timestamp,
+            "file_name": chat_msg.file_name,
+            "file_size": chat_msg.file_size,
+        }
+        self.message_history.append(entry)
+        asyncio.run_coroutine_threadsafe(
+            self._broadcast({"type": "message", "data": entry}),
+            self._loop
+        )
+
+    async def _broadcast(self, data):
+        msg = json.dumps(data)
+        for ws in self.websockets.copy():
+            try:
+                await ws.send_str(msg)
+            except:
+                self.websockets.discard(ws)
+
+    # HTTP handlers
+
+    async def handle_index(self, request):
+        static_dir = Path(__file__).parent / "static"
+        index_path = static_dir / "index.html"
+        if not index_path.exists():
+            return web.Response(text="Frontend not found", status=500)
+        return web.FileResponse(index_path)
+
+    async def handle_static(self, request):
+        static_dir = Path(__file__).parent / "static"
+        filepath = static_dir / request.match_info["filename"]
+        if not filepath.exists() or not filepath.is_file():
+            return web.Response(text="Not found", status=404)
+        ct, _ = mimetypes.guess_type(str(filepath))
+        return web.FileResponse(filepath, content_type=ct or "application/octet-stream")
+
+    async def handle_identity(self, request):
+        h = self.identity_mgr.get_hex_hash()
+        contacts = []
+        contacts_dir = os.path.join(self.config_dir, "contacts")
+        os.makedirs(contacts_dir, exist_ok=True)
+        for f in os.listdir(contacts_dir):
+            path = os.path.join(contacts_dir, f)
+            try:
+                with open(path) as fh:
+                    name = fh.read().strip()
+                contacts.append({"hash": f, "name": name})
+            except:
+                contacts.append({"hash": f, "name": f})
+        return web.json_response({
+            "hash": h,
+            "connected": self.active_peer,
+            "contacts": contacts,
+        })
+
+    async def handle_add_contact(self, request):
+        try:
+            data = await request.json()
+            peer_hash = data.get("hash", "").strip()
+            name = data.get("name", peer_hash).strip()
+            if not peer_hash:
+                return web.json_response({"error": "hash required"}, status=400)
+            contacts_dir = os.path.join(self.config_dir, "contacts")
+            os.makedirs(contacts_dir, exist_ok=True)
+            path = os.path.join(contacts_dir, peer_hash)
+            with open(path, "w") as f:
+                f.write(name)
+            return web.json_response({"status": "ok"})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def handle_connect(self, request):
+        try:
+            data = await request.json()
+            peer_hash = data.get("hash", "").strip()
+            if not peer_hash:
+                return web.json_response({"error": "hash required"}, status=400)
+            ok = self.messaging.connect_to(peer_hash)
+            if ok:
+                self.active_peer = peer_hash
+                return web.json_response({"status": "ok"})
+            return web.json_response({"error": "connection failed"}, status=400)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def handle_disconnect(self, request):
+        if self.messaging and self.messaging.active_link:
+            try:
+                self.messaging.active_link.teardown()
+            except:
+                pass
+            self.messaging.active_link = None
+        self.active_peer = None
+        return web.json_response({"status": "ok"})
+
+    async def handle_file_upload(self, request):
+        if not self.messaging or not self.messaging.active_link:
+            return web.json_response({"error": "not connected"}, status=400)
+        try:
+            reader = await request.multipart()
+            field = await reader.next()
+            if not field:
+                return web.json_response({"error": "no file"}, status=400)
+            fname = field.filename or f"file_{int(time.time())}"
+            ext = os.path.splitext(fname)[1].lower()
+            is_image = ext in ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp')
+
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
+            size = 0
+            while True:
+                chunk = await field.read_chunk(8192)
+                if not chunk:
+                    break
+                tmp.write(chunk)
+                size += len(chunk)
+            tmp.close()
+
+            msg_type = "image" if is_image else "file"
+            ok = self.messaging.send_file(tmp.name, msg_type)
+            os.unlink(tmp.name)
+            if ok:
+                return web.json_response({"status": "ok", "name": fname, "size": size})
+            return web.json_response({"error": "send failed"}, status=400)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def handle_voice_upload(self, request):
+        if not self.messaging or not self.messaging.active_link:
+            return web.json_response({"error": "not connected"}, status=400)
+        try:
+            data = await request.json()
+            audio_b64 = data.get("audio", "")
+            if not audio_b64:
+                return web.json_response({"error": "no audio data"}, status=400)
+            audio_bytes = base64.b64decode(audio_b64)
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".webm")
+            tmp.write(audio_bytes)
+            tmp.close()
+            ok = self.messaging.send_file(tmp.name, "voice")
+            os.unlink(tmp.name)
+            if ok:
+                return web.json_response({"status": "ok"})
+            return web.json_response({"error": "send failed"}, status=400)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def handle_play_voice(self, request):
+        try:
+            data = await request.json()
+            path = data.get("path", "")
+            if os.path.exists(path):
+                VoicePlayer.play(path)
+                return web.json_response({"status": "ok"})
+            return web.json_response({"error": "file not found"}, status=404)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def handle_serve_file(self, request):
+        filepath = request.match_info["filepath"]
+        received_dir = os.path.join(self.config_dir, "received")
+        full_path = os.path.normpath(os.path.join(received_dir, filepath))
+        if not full_path.startswith(os.path.normpath(received_dir)):
+            return web.Response(text="Forbidden", status=403)
+        if not os.path.exists(full_path) or not os.path.isfile(full_path):
+            return web.Response(text="Not found", status=404)
+        ct, _ = mimetypes.guess_type(full_path)
+        return web.FileResponse(full_path, content_type=ct or "application/octet-stream")
+
+    async def handle_history(self, request):
+        limit = int(request.query.get("limit", 100))
+        return web.json_response(self.message_history[-limit:])
+
+    # WebSocket handler
+
+    async def handle_websocket(self, request):
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        self.websockets.add(ws)
+
+        try:
+            async for msg in ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    try:
+                        data = json.loads(msg.data)
+                        await self._handle_ws_message(ws, data)
+                    except json.JSONDecodeError:
+                        pass
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    break
+        except:
+            pass
+        finally:
+            self.websockets.discard(ws)
+        return ws
+
+    async def _handle_ws_message(self, ws, data):
+        msg_type = data.get("type")
+        if msg_type == "send":
+            text = data.get("text", "")
+            if text and self.messaging:
+                self.messaging.send_message(text)
+        elif msg_type == "connect":
+            peer_hash = data.get("hash", "")
+            if peer_hash and self.messaging:
+                ok = self.messaging.connect_to(peer_hash)
+                if ok:
+                    self.active_peer = peer_hash
+
+    # Start server
+
+    def run(self):
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+
+        app = web.Application()
+
+        static_dir = Path(__file__).parent / "static"
+        app.router.add_get("/", self.handle_index)
+        app.router.add_get("/static/{filename:.*}", self.handle_static)
+        app.router.add_get("/api/identity", self.handle_identity)
+        app.router.add_post("/api/contacts", self.handle_add_contact)
+        app.router.add_post("/api/connect", self.handle_connect)
+        app.router.add_post("/api/disconnect", self.handle_disconnect)
+        app.router.add_post("/api/file", self.handle_file_upload)
+        app.router.add_post("/api/voice", self.handle_voice_upload)
+        app.router.add_post("/api/play", self.handle_play_voice)
+        app.router.add_get("/api/history", self.handle_history)
+        app.router.add_get("/api/file/{filepath:.*}", self.handle_serve_file)
+        app.router.add_get("/ws", self.handle_websocket)
+
+        my_hash = self.start_rns()
+
+        print(f"chatxz web server v0.1.0")
+        print(f"Your identity: {my_hash}")
+        print(f"Web interface: http://{self.host}:{self.port}")
+        print("Press Ctrl+C to stop")
+
+        web.run_app(app, host=self.host, port=self.port, print=lambda _: None)
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="chatxz web server")
+    parser.add_argument("--host", default="127.0.0.1", help="Bind address")
+    parser.add_argument("--port", type=int, default=8742, help="Port")
+    parser.add_argument("--share", action="store_true", help="Listen on 0.0.0.0 (accessible on LAN)")
+    args = parser.parse_args()
+    host = "0.0.0.0" if args.share else args.host
+    server = ChatWebServer(host=host, port=args.port)
+    server.run()
+
+
+if __name__ == "__main__":
+    main()

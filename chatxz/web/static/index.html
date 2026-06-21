@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>chatxz</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --surface2: #0f3460;
+  --primary: #e94560;
+  --text: #eee;
+  --text2: #aaa;
+  --msg-self: #0f3460;
+  --msg-other: #16213e;
+  --msg-system: #533483;
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+}
+#app {
+  display: flex;
+  height: 100vh;
+}
+
+/* Sidebar */
+#sidebar {
+  width: 300px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(255,255,255,.05);
+}
+#sidebar-header {
+  padding: 16px;
+  border-bottom: 1px solid rgba(255,255,255,.05);
+}
+#sidebar-header h1 { font-size: 18px; color: var(--primary); }
+#identity-box {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text2);
+  word-break: break-all;
+  cursor: pointer;
+}
+#identity-box:hover { color: var(--text); }
+
+#contacts-section { flex: 1; overflow-y: auto; padding: 8px; }
+#contacts-section h3 { font-size: 12px; text-transform: uppercase; color: var(--text2); margin: 8px 0; }
+.contact-item {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-bottom: 2px;
+  transition: background .15s;
+}
+.contact-item:hover { background: rgba(255,255,255,.05); }
+.contact-item.active { background: var(--surface2); }
+.contact-avatar {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  background: var(--primary);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: bold; font-size: 14px; margin-right: 12px;
+  flex-shrink: 0;
+}
+.contact-info { flex: 1; min-width: 0; }
+.contact-name { font-size: 14px; font-weight: 500; }
+.contact-hash { font-size: 11px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Main */
+#main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+#chat-header {
+  padding: 12px 20px;
+  border-bottom: 1px solid rgba(255,255,255,.05);
+  display: flex; align-items: center; justify-content: space-between;
+}
+#chat-header .peer-info { font-size: 14px; }
+#chat-header .peer-info .status { font-size: 11px; color: var(--text2); }
+#disconnect-btn {
+  background: none; border: 1px solid rgba(255,255,255,.1);
+  color: var(--text2); padding: 4px 12px; border-radius: 4px;
+  cursor: pointer; font-size: 12px;
+}
+#disconnect-btn:hover { border-color: var(--primary); color: var(--primary); }
+
+#placeholder {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text2); font-size: 16px;
+  flex-direction: column; gap: 8px;
+}
+#placeholder .keyhint {
+  font-size: 12px; opacity: .5;
+}
+
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.msg {
+  max-width: 75%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.4;
+  position: relative;
+  word-wrap: break-word;
+}
+.msg.self { align-self: flex-end; background: var(--msg-self); border-bottom-right-radius: 4px; }
+.msg.other { align-self: flex-start; background: var(--msg-other); border-bottom-left-radius: 4px; }
+.msg.system { align-self: center; background: var(--msg-system); font-size: 12px; opacity: .8; border-radius: 6px; padding: 6px 12px; }
+.msg .time { font-size: 10px; color: var(--text2); margin-top: 4px; text-align: right; }
+.msg img.msg-img { max-width: 100%; border-radius: 8px; margin-top: 6px; cursor: pointer; }
+.msg .file-info { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.msg .file-info .file-icon { font-size: 20px; }
+.msg .voice-player { margin-top: 6px; }
+
+/* Input */
+#input-area {
+  padding: 12px 20px;
+  border-top: 1px solid rgba(255,255,255,.05);
+  background: var(--surface);
+}
+#input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+#input-row textarea {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 10px 14px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: none;
+  outline: none;
+  min-height: 42px;
+  max-height: 120px;
+  line-height: 1.4;
+}
+#input-row textarea:focus { border-color: var(--primary); }
+.input-btn {
+  background: none;
+  border: 1px solid rgba(255,255,255,.1);
+  color: var(--text2);
+  width: 42px; height: 42px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+  transition: all .15s;
+  flex-shrink: 0;
+}
+.input-btn:hover { border-color: var(--primary); color: var(--primary); }
+.input-btn.recording { border-color: #f00; color: #f00; animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: .5; } }
+#send-btn { background: var(--primary); border-color: var(--primary); color: #fff; }
+#send-btn:hover { opacity: .8; }
+
+/* Connect dialog */
+#connect-dialog {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,.6);
+  z-index: 100;
+  align-items: center; justify-content: center;
+}
+#connect-dialog.open { display: flex; }
+.dialog {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 24px;
+  width: 400px;
+  max-width: 90vw;
+}
+.dialog h2 { margin-bottom: 16px; font-size: 16px; }
+.dialog input, .dialog select {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 14px;
+  margin-bottom: 12px;
+  outline: none;
+}
+.dialog input:focus { border-color: var(--primary); }
+.dlg-btn-row { display: flex; gap: 8px; justify-content: flex-end; }
+.dlg-btn {
+  padding: 8px 20px;
+  border-radius: 6px;
+  border: none;
+  font-size: 14px;
+  cursor: pointer;
+}
+.dlg-btn.primary { background: var(--primary); color: #fff; }
+.dlg-btn.secondary { background: rgba(255,255,255,.1); color: var(--text); }
+
+/* Emoji picker */
+#emoji-picker {
+  display: none;
+  position: absolute;
+  bottom: 60px;
+  left: 20px;
+  background: var(--surface);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 8px;
+  padding: 8px;
+  width: 320px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 10;
+}
+#emoji-picker.open { display: flex; flex-wrap: wrap; gap: 4px; }
+.emoji-item {
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; border-radius: 4px; font-size: 20px;
+}
+.emoji-item:hover { background: rgba(255,255,255,.1); }
+
+/* Toast */
+#toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface2);
+  color: var(--text);
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  opacity: 0;
+  transition: opacity .3s;
+  z-index: 200;
+  pointer-events: none;
+}
+#toast.show { opacity: 1; }
+
+/* Modal for image view */
+#image-modal {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,.9);
+  z-index: 300;
+  align-items: center; justify-content: center;
+  cursor: pointer;
+}
+#image-modal.open { display: flex; }
+#image-modal img { max-width: 90vw; max-height: 90vh; border-radius: 8px; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.2); }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <h1>chatxz</h1>
+      <div id="identity-box" onclick="copyIdentity()" title="Click to copy">Loading...</div>
+    </div>
+    <div id="contacts-section">
+      <h3>Contacts</h3>
+      <div id="contacts-list"></div>
+      <div style="padding:8px">
+        <button class="input-btn" style="width:100%;border-radius:6px;font-size:13px;gap:6px;display:flex" onclick="showConnectDialog()">
+          <span>+</span> Connect / Add Contact
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div id="main">
+    <div id="chat-header">
+      <div class="peer-info">
+        <span id="peer-name">No one connected</span>
+        <div class="status" id="peer-status">Waiting for connection...</div>
+      </div>
+      <button id="disconnect-btn" style="display:none" onclick="disconnect()">Disconnect</button>
+    </div>
+    <div id="placeholder">
+      <div style="font-size:48px;opacity:.3">💬</div>
+      <div>Connect to someone to start chatting</div>
+      <div class="keyhint">Use the sidebar to find and connect to peers</div>
+    </div>
+    <div id="messages" style="display:none"></div>
+    <div id="input-area" style="display:none">
+      <div style="position:relative">
+        <div id="emoji-picker"></div>
+        <div id="input-row">
+          <button class="input-btn" id="emoji-btn" onclick="toggleEmoji()" title="Emoji">😊</button>
+          <textarea id="msg-input" rows="1" placeholder="Type a message..." onkeydown="onInputKey(event)" oninput="autoResize(this)"></textarea>
+          <button class="input-btn" id="voice-btn" onclick="toggleVoice()" title="Voice note">🎤</button>
+          <button class="input-btn" id="file-btn" onclick="document.getElementById('file-input').click()" title="Attach file">📎</button>
+          <input type="file" id="file-input" style="display:none" multiple onchange="uploadFiles(this.files)">
+          <button class="input-btn" id="send-btn" onclick="sendMessage()" title="Send">➤</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Connect dialog -->
+<div id="connect-dialog">
+  <div class="dialog">
+    <h2>Connect to Peer</h2>
+    <input id="connect-hash" placeholder="Paste peer identity hash..." spellcheck="false">
+    <input id="contact-name" placeholder="Save as name (optional)">
+    <div class="dlg-btn-row">
+      <button class="dlg-btn secondary" onclick="closeConnectDialog()">Cancel</button>
+      <button class="dlg-btn primary" onclick="doConnect()">Connect</button>
+    </div>
+  </div>
+</div>
+
+<!-- Image modal -->
+<div id="image-modal" onclick="this.classList.remove('open')">
+  <img id="modal-img" src="">
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+// State
+let ws = null;
+let myHash = '';
+let connected = false;
+let recording = false;
+let mediaRecorder = null;
+let audioChunks = [];
+
+const EMOJIS = ['😀','😃','😄','😁','😅','😂','🤣','😊','😇','🙂','😉','😌','😍','🥰','😘','😗','😋','😛','😜','🤪','😝','🤑','🤗','🤭','🤫','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','🤥','😌','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🥴','😵','🤯','🤠','🥳','🥺','😢','😭','😤','😠','😡','🤬','💀','☠️','💩','🤡','👹','👺','👻','💀','👽','🤖','🎃','😺','😸','😹','😻','😼','😽','🙀','😿','😾','🙌','👏','👍','👎','👊','✊','🤛','🤜','🤞','✌️','🤟','🤘','👌','👈','👉','👆','👇','☝️','✋','🤚','🖐','🖖','👋','🤙','💪','🦾','🖕','✍️','🙏','💅','🤳','💯','🔥','⭐','🌟','✨','💥','💫','💦','💨','🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🙈','🙉','🙊','🐒','🐔','🐧','🐦','🐤','🐣','🐥','🦆','🦅','🦉','🦇','🐺','🐗','🐴','🦄','🐝','🐛','🦋','🐌','🐞','🐜','🦟','🦗','🕷','🦂','🐢','🐍','🦎','🦖','🦕','🐙','🦑','🦐','🦀','🐡','🐠','🐟','🐬','🐳','🐋','🦈','🐊','🐅','🐆','🦓','🦍','🦧','🐘','🦛','🦏','🐪','🐫','🦒','🦘','🐃','🐂','🐄','🐎','🐖','🐏','🐑','🦙','🐐','🦌','🐕','🐩','🦮','🐈','🐓','🦃','🦚','🦜','🦢','🦩','🕊','🐇','🦝','🦡','🦨','🦦','🦥','🐁','🐀','🐿','🦔','🌵','🎄','🌲','🌳','🌴','🌱','🌿','☘️','🍀','🎍','🍃','🍂','🍁','🍄','🌾','💐','🌷','🌹','🥀','🌺','🌸','🌼','🌻','🌞','🌝','🌛','🌜','🌚','🌕','🌖','🌗','🌘','🌑','🌒','🌓','🌔','🌙','🌎','🌍','🌏','🪐','💫','⭐','🌟','✨','⚡','☄️','💥','🔥','🌪','🌈','☀️','🌤','⛅','🌥','☁️','🌦','🌧','⛈','🌩','🌨','❄️','☃️','⛄','🌬','💨','💧','💦','☔','☂️','🌊','🍏','🍎','🍐','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍈','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🥬','🥒','🌶','🫑','🌽','🥕','🧄','🧅','🥔','🍠','🥐','🍞','🥖','🥨','🧀','🥚','🍳','🥞','🧇','🥓','🥩','🍗','🍖','🦴','🌭','🍔','🍟','🍕','🫓','🥪','🥙','🧆','🌮','🌯','🥗','🥘','🫕','🥫','🍝','🍜','🍲','🍛','🍣','🍱','🥟','🦪','🍤','🍙','🍚','🍘','🍥','🥠','🥮','🍢','🍡','🍧','🍨','🍦','🥧','🧁','🍰','🎂','🍮','🍭','🍬','🍫','🍿','🍩','🍪','🌰','🥜','🍯','🥛','🍼','☕','🫖','🍵','🧃','🥤','🧋','🍶','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🧉','🍾','🧊','🥄','🍴','🥣','🍽','🥡','🥢','🧂','⚽','🏀','🏈','⚾','🥎','🎾','🏐','🏉','🥏','🎱','🪀','🏓','🏸','🏒','🏑','🥍','🏏','🪃','🥅','⛳','🪁','🏹','🎣','🤿','🥊','🛹','🛼','🛷','⛸','🥌','🎿','⛷','🏂','🪂','🏋','🤼','🤸','🤺','⛹','🤾','🏌','🏇','🧘','🏄','🏊','🤽','🚣','🧗','🚵','🚴','🏆','🥇','🥈','🥉','🏅','🎖','🏵','🎗','🎫','🎟','🎪','🤹','🎭','🎨','🎬','🎤','🎧','🎼','🎹','🥁','🪘','🎷','🎺','🪗','🎸','🪕','🎻','🎲','♟','🎯','🎳','🎮','🕹','🚗','🚙','🚕','🚌','🚎','🏎','🚓','🚑','🚒','🚐','🛻','🚚','🚛','🚜','🏍','🛵','🦽','🦼','🛺','🚲','🛴','🚨','🚔','🚍','🚘','🚖','🚡','🚠','🚟','🚃','🚋','🚞','🚝','🚄','🚅','🚈','🚂','🚆','🚇','🚊','🚉','✈️','🛫','🛬','🛩','💺','🛰','🚀','🛸','🚁','🛶','⛵','🚤','🛥','🛳','⛴','🚢','🛟','⚓','🛑','🚧','⛽','🚏','🚦','🗺','🗿','🏠','🏡','🏘','🏚','🏗','🏢','🏬','🏣','🏤','🏥','🏦','🏨','🏩','🏪','🏫','🏛','⛪','🕌','🕍','🛕','🕋','⛩','🛤','🛣','🗾','🎑','🏞','🌅','🌄','🌇','🌆','🏙','🌃','🌌','🌉','🌁','🎆','🎇','🌈','🏳️','🏴','🏁','🚩','🎌','🇺🇳','🇺🇸','🇬🇧','🇨🇦','🇦🇺','🇯🇵','🇰🇷','🇨🇳','🇮🇳','🇩🇪','🇫🇷','🇪🇸','🇮🇹','🇧🇷','🇲🇽','🇷🇺','🇿🇦','🇸🇪','🇳🇴','🇩🇰','🇫🇮','🇳🇱','🇧🇪','🇨🇭','🇦🇹','🇵🇹','🇬🇷','🇵🇱','🇨🇿','🇭🇺','🇹🇷','🇮🇱','🇸🇦','🇦🇪','🇸🇬','🇭🇰','🏴󠁧󠁢󠁥󠁮󠁧󠀿','🏴󠁧󠁢󠁳󠁣󠁴󠀿','🏴󠁧󠁢󠁷󠁬󠁳󠀿','❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','☮️','✝️','☪️','🕉','☸️','✡️','🔯','🕎','☯️','☦️','🛐','⛎','♈','♉','♊','♋','♌','♍','♎','♏','♐','♑','♒','♓','🆔','⚕️','♻️','⚜️','🔱','📵','🔞','☢️','☣️','⬆️','⬇️','⬅️','➡️','↗️','↘️','↙️','↖️','↕️','↔️','🔄','◀️','▶️','⏪','⏩','⏫','⏬','⏸','⏹','⏺','⏯','⏭','⏮','🎦','📶','🈳','🈹','🈴','🈺','🈁','🈵','🈶','🈚','🈷','🈸','🉐','🉑','㊗','㊙','🈲','🈳','🈴','🈵','🈶','🈷','🈸','🈹','🈺','🈁','🆚','🅰','🅱','🆎','🆑','🅾','🆘','❌','⭕','🛑','⛔','📛','🚫','💢','♨️','🚷','🚯','🚳','🚱','🔞','📵','🚭','❗','❕','❓','❔','‼️','⁉️','🔅','🔆','〽️','⚠️','🚸','🔱','⚜️','🔰','♻️','✅','🈯','💹','❇️','✳️','❎','🌐','💠','Ⓜ️','🌀','💤','🏧','🚾','♿','🅿️','🛗','🈳','🈹','🈴','🈺','🈁','🈵','🈶','🈚','🈷','🈸','🉐','🉑','㊗','㊙','🔟','🔢','🔤','🔡','🔠','🔣','🗯','💬','💭','🗨','🕐','🕑','🕒','🕓','🕔','🕕','🕖','🕗','🕘','🕙','🕚','🕛','🕜','🕝','🕞','🕟','🕠','🕡','🕢','🕣','🕤','🕥','🕦','🕧'];
+
+function init() {
+  fetchIdentity();
+  connectWS();
+  buildEmojiPicker();
+}
+
+function fetchIdentity() {
+  fetch('/api/identity')
+    .then(r => r.json())
+    .then(d => {
+      myHash = d.hash;
+      document.getElementById('identity-box').textContent = 'ID: ' + myHash;
+      renderContacts(d.contacts);
+      if (d.connected) {
+        setConnected(d.connected);
+      }
+    });
+}
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws');
+  ws.onmessage = e => {
+    try {
+      const msg = JSON.parse(e.data);
+      handleWSMessage(msg);
+    } catch(_) {}
+  };
+  ws.onclose = () => setTimeout(connectWS, 2000);
+}
+
+function handleWSMessage(msg) {
+  if (msg.type === 'message') {
+    addMessage(msg.data);
+  }
+}
+
+function renderContacts(contacts) {
+  const el = document.getElementById('contacts-list');
+  el.innerHTML = '';
+  contacts.forEach(c => {
+    const div = document.createElement('div');
+    div.className = 'contact-item' + (c.hash === connected ? ' active' : '');
+    div.innerHTML = `<div class="contact-avatar">${c.name.charAt(0).toUpperCase()}</div>
+      <div class="contact-info">
+        <div class="contact-name">${c.name}</div>
+        <div class="contact-hash">${truncateHash(c.hash)}</div>
+      </div>`;
+    div.onclick = () => connectTo(c.hash);
+    el.appendChild(div);
+  });
+}
+
+function showConnectDialog() {
+  document.getElementById('connect-dialog').classList.add('open');
+  document.getElementById('connect-hash').value = '';
+  document.getElementById('contact-name').value = '';
+  document.getElementById('connect-hash').focus();
+}
+
+function closeConnectDialog() {
+  document.getElementById('connect-dialog').classList.remove('open');
+}
+
+function doConnect() {
+  const hash = document.getElementById('connect-hash').value.trim();
+  const name = document.getElementById('contact-name').value.trim();
+  if (!hash) return;
+  if (name) {
+    fetch('/api/contacts', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({hash, name})
+    });
+  }
+  connectTo(hash);
+  closeConnectDialog();
+}
+
+function connectTo(hash) {
+  fetch('/api/connect', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({hash})
+  }).then(r => r.json()).then(d => {
+    if (d.status === 'ok') {
+      setConnected(hash);
+      toast('Connected!');
+    } else {
+      toast('Connection failed: ' + (d.error || 'unknown'));
+    }
+  });
+}
+
+function setConnected(hash) {
+  connected = hash;
+  document.getElementById('peer-name').textContent = truncateHash(hash);
+  document.getElementById('peer-status').textContent = 'Connected';
+  document.getElementById('placeholder').style.display = 'none';
+  document.getElementById('messages').style.display = 'flex';
+  document.getElementById('input-area').style.display = 'block';
+  document.getElementById('disconnect-btn').style.display = 'block';
+  document.getElementById('msg-input').focus();
+  fetchIdentity();
+}
+
+function disconnect() {
+  fetch('/api/disconnect', {method: 'POST'});
+  connected = null;
+  document.getElementById('peer-name').textContent = 'No one connected';
+  document.getElementById('peer-status').textContent = 'Disconnected';
+  document.getElementById('placeholder').style.display = 'flex';
+  document.getElementById('messages').style.display = 'none';
+  document.getElementById('input-area').style.display = 'none';
+  document.getElementById('disconnect-btn').style.display = 'none';
+  fetchIdentity();
+}
+
+function sendMessage() {
+  const input = document.getElementById('msg-input');
+  const text = input.value.trim();
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({type: 'send', text}));
+  input.value = '';
+  autoResize(input);
+}
+
+function onInputKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+function addMessage(data) {
+  const msgs = document.getElementById('messages');
+  if (msgs.style.display === 'none') return;
+  const div = document.createElement('div');
+  const isSelf = data.sender === myHash;
+  const isSystem = data.sender === 'system' || data.type === 'system';
+  div.className = 'msg ' + (isSystem ? 'system' : isSelf ? 'self' : 'other');
+  const time = new Date(data.timestamp * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  let html = '';
+  if (data.type === 'text' || data.type === 'emoji') {
+    html = data.content;
+  } else if (data.type === 'image') {
+    html = `<div>📷 ${data.file_name || 'Image'}</div>`;
+    if (data.content && data.content.startsWith('/')) {
+      html += `<img class="msg-img" src="/api/file/${encodeURIComponent(data.content)}" onclick="showImage(this.src)">`;
+    }
+  } else if (data.type === 'voice') {
+    html = `<div>🎤 ${data.file_name || 'Voice note'}</div>`;
+    if (data.content && data.content.startsWith('/')) {
+      html += `<audio class="voice-player" controls src="/api/file/${encodeURIComponent(data.content)}"></audio>`;
+    }
+  } else if (data.type === 'file') {
+    const sz = data.file_size ? formatSize(data.file_size) : '';
+    html = `<div class="file-info"><span class="file-icon">📄</span><span>${data.file_name || 'File'} ${sz}</span></div>`;
+    if (data.content && data.content.startsWith('/')) {
+      html += `<div style="margin-top:4px"><a href="/api/file/${encodeURIComponent(data.content)}" download="${data.file_name || 'file'}" style="color:var(--primary);font-size:12px">Download</a></div>`;
+    }
+  } else if (data.type === 'system') {
+    html = data.content;
+  }
+  html += `<div class="time">${time}</div>`;
+  div.innerHTML = html;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function toggleEmoji() {
+  document.getElementById('emoji-picker').classList.toggle('open');
+}
+
+function buildEmojiPicker() {
+  const picker = document.getElementById('emoji-picker');
+  EMOJIS.forEach(e => {
+    const span = document.createElement('span');
+    span.className = 'emoji-item';
+    span.textContent = e;
+    span.onclick = () => {
+      const input = document.getElementById('msg-input');
+      input.value += e;
+      input.focus();
+      autoResize(input);
+      picker.classList.remove('open');
+    };
+    picker.appendChild(span);
+  });
+}
+
+let voiceChunks = [];
+function toggleVoice() {
+  if (recording) {
+    stopVoice();
+  } else {
+    startVoice();
+  }
+}
+
+function startVoice() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    toast('Voice recording not supported in this browser');
+    return;
+  }
+  navigator.mediaDevices.getUserMedia({audio: true})
+    .then(stream => {
+      recording = true;
+      voiceChunks = [];
+      document.getElementById('voice-btn').classList.add('recording');
+      document.getElementById('voice-btn').title = 'Stop recording';
+      toast('Recording... click 🎤 to stop');
+      mediaRecorder = new MediaRecorder(stream, {mimeType: 'audio/webm;codecs=opus'});
+      mediaRecorder.ondataavailable = e => { if (e.data.size > 0) voiceChunks.push(e.data); };
+      mediaRecorder.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(voiceChunks, {type: 'audio/webm'});
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const b64 = reader.result.split(',')[1];
+          fetch('/api/voice', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({audio: b64})
+          }).then(r => r.json()).then(d => {
+            if (d.status === 'ok') toast('Voice sent');
+            else toast('Voice send failed');
+          });
+        };
+        reader.readAsDataURL(blob);
+      };
+      mediaRecorder.start();
+    })
+    .catch(() => toast('Microphone access denied'));
+}
+
+function stopVoice() {
+  recording = false;
+  document.getElementById('voice-btn').classList.remove('recording');
+  document.getElementById('voice-btn').title = 'Voice note';
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+}
+
+function uploadFiles(files) {
+  Array.from(files).forEach(file => {
+    const formData = new FormData();
+    formData.append('file', file);
+    fetch('/api/file', {method: 'POST', body: formData})
+      .then(r => r.json()).then(d => {
+        if (d.status === 'ok') toast(`Sent ${d.name}`);
+        else toast('Upload failed');
+      });
+  });
+}
+
+document.addEventListener('paste', e => {
+  const items = e.clipboardData.items;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (file) uploadFiles([file]);
+    }
+  }
+});
+
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
+});
+
+function showImage(src) {
+  document.getElementById('modal-img').src = src;
+  document.getElementById('image-modal').classList.add('open');
+}
+
+function copyIdentity() {
+  navigator.clipboard.writeText(myHash).then(() => toast('Identity copied!'));
+}
+
+function truncateHash(h) {
+  if (!h || h.length <= 12) return h || '';
+  return h.substring(0, 12) + '...';
+}
+
+function formatSize(bytes) {
+  if (!bytes) return '';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  let size = bytes;
+  while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
+  return size.toFixed(1) + units[i];
+}
+
+let toastTimer = null;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+init();
+</script>
+</body>
+</html>

@@ -46,21 +46,41 @@ pip install .
 
 ## Usage
 
+### Web UI (recommended)
+
+```bash
+# Start the web server (open http://localhost:8742 in your browser)
+chatzx-web
+
+# Share with LAN
+chatzx-web --share
+```
+
+The web interface includes:
+- Real-time messaging over WebSocket
+- Emoji picker
+- File upload (drag & drop, paste screenshots)
+- Voice recording (browser MediaRecorder API)
+- Image preview inline
+- Contact management
+
+### CLI
+
 ```bash
 # Start interactive mode
-chatxz
+chatzx
 
 # Send a one-off message
-chatxz --connect <peer_hash> --send "Hello!"
+chatzx --connect <peer_hash> --send "Hello!"
 
 # Send a file
-chatxz --connect <peer_hash> --file screenshot.png
+chatzx --connect <peer_hash> --file screenshot.png
 
 # Record and send voice
-chatxz --connect <peer_hash> --voice
+chatzx --connect <peer_hash> --voice
 
 # Listen daemon
-chatxz --daemon
+chatzx --daemon
 ```
 
 ### Interactive Commands
