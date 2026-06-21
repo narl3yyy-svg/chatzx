@@ -10,18 +10,22 @@ SERVER_ERROR = []
 def start_server():
     host, port = "127.0.0.1", 8742
 
+    # Track startup phases for diagnostics
+    phases = {}
+
     try:
         import RNS
         _log("RNS OK")
     except Exception as e:
         return "None", f"RNS: {type(e).__name__}: {e}"
-    import RNS
+    phases["rns"] = "ok"
 
     try:
         from aiohttp import web
         _log("aiohttp OK")
     except Exception as e:
         return "None", f"aiohttp: {type(e).__name__}: {e}"
+    phases["aiohttp"] = "ok"
 
     HERE = os.path.dirname(os.path.abspath(__file__))
     STATIC = os.path.join(HERE, "chatxz", "web", "static")
@@ -31,19 +35,27 @@ def start_server():
     INLINE_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>chatxz</title><style>body{background:#1a1a2e;color:#eee;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:12px;text-align:center;padding:20px}h1{color:#e94560;font-size:24px}p{color:#aaa;font-size:14px}</style></head><body><h1>chatxz</h1><p>Starting server...</p><p style="font-size:12px;color:#666">If this page persists, check python_crash_log.txt</p></body></html>"""
 
     async def index(request):
-        idx_path = os.path.join(STATIC, "index.html")
-        if os.path.isfile(idx_path):
-            try:
-                return web.FileResponse(idx_path)
-            except Exception:
-                pass
+        # Try multiple possible locations for index.html
+        for sp in [STATIC, os.path.join(HERE, "static"), "/data/data/com.chatzx.android/files/python/chatxz/web/static"]:
+            idx_path = os.path.join(sp, "index.html")
+            if os.path.isfile(idx_path):
+                try:
+                    with open(idx_path, "r", encoding="utf-8") as f:
+                        html = f.read()
+                    return web.Response(text=html, content_type="text/html")
+                except Exception as e:
+                    _log(f"index read error from {idx_path}: {e}")
         return web.Response(text=INLINE_HTML, content_type="text/html")
 
     async def static(request):
         fn = request.match_info.get("filename", "")
         if ".." in fn: raise web.HTTPNotFound()
         fp = os.path.join(STATIC, fn)
-        if os.path.isfile(fp): return web.FileResponse(fp)
+        if os.path.isfile(fp):
+            with open(fp, "rb") as f:
+                data = f.read()
+            ct = "text/html" if fn.endswith(".html") else "text/javascript" if fn.endswith(".js") else "text/css" if fn.endswith(".css") else "application/octet-stream"
+            return web.Response(body=data, content_type=ct)
         raise web.HTTPNotFound()
 
     async def temperature(request):
@@ -95,7 +107,6 @@ def start_server():
 
     async def cpu(request):
         try:
-            # Count CPUs for loadavg fallback
             nproc = 0
             try:
                 with open("/proc/cpuinfo") as f:
@@ -107,8 +118,6 @@ def start_server():
                     nproc = len(os.listdir("/sys/devices/system/cpu/"))
                 except:
                     pass
-
-            # Try /proc/stat with delta
             try:
                 with open("/proc/stat") as f:
                     p = [int(x) for x in f.readline().split()[1:]]
@@ -122,7 +131,6 @@ def start_server():
                 pct = round(100.0 * (1.0 - id_ / td), 1) if td > 0 else 0.0
                 return web.json_response({"cpu_percent": pct})
             except (PermissionError, FileNotFoundError, IndexError, ValueError) as e:
-                # Fallback: estimate from loadavg
                 try:
                     with open("/proc/loadavg") as f:
                         la = float(f.read().split()[0])
@@ -131,16 +139,19 @@ def start_server():
                         return web.json_response({"cpu_percent": pct, "approx": True})
                 except:
                     pass
-                raise  # re-raise original if loadavg fallback also fails
+                raise
         except Exception as e:
-            import traceback
             tb = traceback.format_exc()
             return web.json_response({"cpu_percent": None, "error": str(e), "traceback": tb})
+
+    async def health(request):
+        return web.Response(text="ok")
 
     app.router.add_get("/", index)
     app.router.add_get("/static/{filename:.*}", static)
     app.router.add_get("/api/temperature", temperature)
     app.router.add_get("/api/cpu", cpu)
+    app.router.add_get("/api/health", health)
 
     # Stub endpoints so frontend JS doesn't break
     async def json_stub(request):
@@ -162,21 +173,24 @@ def start_server():
         return web.json_response({"count": 0, "items": []})
     app.router.add_get("/api/queue", queue)
 
+    _log("Routes configured")
+
     async def run_server():
-        runner = web.AppRunner(app)
+        runner = web.AppRunner(app, access_log=None)
         await runner.setup()
-        site = web.TCPSite(runner, host, port)
+        site = web.TCPSite(runner, host, port, reuse_address=True)
         await site.start()
         _log(f"Server listening on {host}:{port}")
-        SERVER_READY.set()
-        await asyncio.Event().wait()
+        # Keep event loop alive
+        while True:
+            await asyncio.sleep(3600)
 
     def server_thread():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         try:
-            loop.run_until_complete(run_server())
+            asyncio.run(run_server())
         except Exception as e:
+            tb = traceback.format_exc()
+            _log(f"Server thread error: {e}\n{tb}")
             SERVER_ERROR.append(f"{type(e).__name__}: {e}")
             SERVER_READY.set()
 
@@ -184,10 +198,21 @@ def start_server():
     t.start()
     _log("Server thread started")
 
-    if SERVER_READY.wait(timeout=60):
+    # Wait for server ready with port polling
+    deadline = time.time() + 60
+    while time.time() < deadline:
         if SERVER_ERROR:
             return "None", SERVER_ERROR[0]
-        _log("Server is ready")
-        return host, str(port)
-    else:
-        return "None", "Server timeout (60s)"
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            s.connect((host, port))
+            s.close()
+            _log("Server ready (port open)")
+            SERVER_READY.set()
+            return host, str(port)
+        except (socket.timeout, ConnectionRefusedError, OSError):
+            pass
+        time.sleep(0.3)
+
+    return "None", "Server timeout (60s)"
