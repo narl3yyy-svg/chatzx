@@ -28,18 +28,30 @@ import androidx.core.content.ContextCompat;
 import com.chaquo.python.Python;
 import com.chaquo.python.PyObject;
 
+import android.database.Cursor;
+import android.content.ContentResolver;
+
+import java.io.BufferedInputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 public class MainActivity extends AppCompatActivity {
     private static final int PERM_REQUEST = 1001;
     private static final int REQ_AUDIO = 1002;
     private static final int REQ_FOLDER = 1003;
     private static final int REQ_FILE = 1004;
+    private static final int REQ_SEND_FOLDER = 1005;
 
     private WebView webView;
     private ValueCallback<Uri[]> filePathCallback;
@@ -287,6 +299,19 @@ public class MainActivity extends AppCompatActivity {
         }, "chatxz-python").start();
     }
 
+    public void openFolderSendPicker() {
+        try {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            intent.addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            );
+            startActivityForResult(intent, REQ_SEND_FOLDER);
+        } catch (Exception e) {
+            notifyFolderSendError("Could not open folder picker: " + e.getMessage());
+        }
+    }
+
     public void openFolderPicker() {
         try {
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
@@ -311,6 +336,118 @@ public class MainActivity extends AppCompatActivity {
         String js = "window.onChatxzFolderPicked && window.onChatxzFolderPicked("
             + org.json.JSONObject.quote(path) + ")";
         webView.post(() -> webView.evaluateJavascript(js, null));
+    }
+
+    private void notifyFolderSendError(String message) {
+        String js = "window.onChatxzFolderSendError && window.onChatxzFolderSendError("
+            + org.json.JSONObject.quote(message) + ")";
+        webView.post(() -> webView.evaluateJavascript(js, null));
+    }
+
+    private void notifyFolderSendOk(String name, long size) {
+        String js = "window.onChatxzFolderSendOk && window.onChatxzFolderSendOk("
+            + org.json.JSONObject.quote(name) + "," + size + ")";
+        webView.post(() -> webView.evaluateJavascript(js, null));
+    }
+
+    private void zipAndUploadFolder(Uri treeUri) {
+        Toast.makeText(this, "Zipping folder...", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            try {
+                String treeId = DocumentsContract.getTreeDocumentId(treeUri);
+                String folderName = "folder";
+                if (treeId != null) {
+                    int slash = treeId.lastIndexOf('/');
+                    folderName = slash >= 0 ? treeId.substring(slash + 1) : treeId;
+                    int colon = folderName.indexOf(':');
+                    if (colon >= 0 && colon < folderName.length() - 1) {
+                        folderName = folderName.substring(colon + 1);
+                    }
+                }
+                if (folderName.isEmpty()) {
+                    folderName = "folder";
+                }
+                File zipFile = new File(getCacheDir(), folderName + ".zip");
+                try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipFile))) {
+                    zipDocumentChildren(treeUri, treeId, "", zos);
+                }
+                long size = zipFile.length();
+                if (size == 0) {
+                    throw new IllegalStateException("Folder is empty");
+                }
+                uploadZipToServer(zipFile, folderName + ".zip");
+                notifyFolderSendOk(folderName + ".zip", size);
+            } catch (Exception e) {
+                notifyFolderSendError(e.getMessage() != null ? e.getMessage() : "Folder send failed");
+            }
+        }, "folder-send").start();
+    }
+
+    private void zipDocumentChildren(Uri treeUri, String parentDocId, String pathPrefix, ZipOutputStream zos)
+            throws Exception {
+        Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocId);
+        ContentResolver resolver = getContentResolver();
+        try (Cursor cursor = resolver.query(childrenUri,
+                new String[]{
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE
+                }, null, null, null)) {
+            if (cursor == null) {
+                return;
+            }
+            while (cursor.moveToNext()) {
+                String docId = cursor.getString(0);
+                String name = cursor.getString(1);
+                String mime = cursor.getString(2);
+                if (name == null || docId == null) {
+                    continue;
+                }
+                String entryPath = pathPrefix.isEmpty() ? name : pathPrefix + "/" + name;
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
+                    zipDocumentChildren(treeUri, docId, entryPath, zos);
+                } else {
+                    Uri docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId);
+                    zos.putNextEntry(new ZipEntry(entryPath));
+                    try (InputStream in = new BufferedInputStream(resolver.openInputStream(docUri))) {
+                        byte[] buf = new byte[8192];
+                        int n;
+                        while ((n = in.read(buf)) > 0) {
+                            zos.write(buf, 0, n);
+                        }
+                    }
+                    zos.closeEntry();
+                }
+            }
+        }
+    }
+
+    private void uploadZipToServer(File zipFile, String filename) throws Exception {
+        String boundary = "----ChatxzBoundary" + System.currentTimeMillis();
+        URL url = new URL(serverUrl + "/api/file");
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setDoOutput(true);
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+        try (OutputStream out = conn.getOutputStream()) {
+            String header = "--" + boundary + "\r\n"
+                + "Content-Disposition: form-data; name=\"file\"; filename=\"" + filename + "\"\r\n"
+                + "Content-Type: application/zip\r\n\r\n";
+            out.write(header.getBytes());
+            try (InputStream in = new FileInputStream(zipFile)) {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    out.write(buf, 0, n);
+                }
+            }
+            out.write(("\r\n--" + boundary + "--\r\n").getBytes());
+        }
+        int code = conn.getResponseCode();
+        if (code < 200 || code >= 300) {
+            throw new IllegalStateException("Upload failed (HTTP " + code + ")");
+        }
+        conn.disconnect();
     }
 
     private String treeUriToPath(Uri uri) {
@@ -361,6 +498,18 @@ public class MainActivity extends AppCompatActivity {
             }
             filePathCallback.onReceiveValue(results);
             filePathCallback = null;
+            return;
+        }
+        if (requestCode == REQ_SEND_FOLDER) {
+            if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+                return;
+            }
+            Uri uri = data.getData();
+            try {
+                final int flags = data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION;
+                getContentResolver().takePersistableUriPermission(uri, flags);
+            } catch (Exception ignored) {}
+            zipAndUploadFolder(uri);
             return;
         }
         if (requestCode != REQ_FOLDER) {

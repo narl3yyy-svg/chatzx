@@ -476,11 +476,32 @@ class MessagingBackend:
     def _has_peer_ip(self):
         if not self.active_link:
             return False
+        if self.lan_transport == "http" and self.http_peer and self.http_peer.get("ip"):
+            return True
+        if self.active_peer_hash:
+            clean = normalize_hash(self.active_peer_hash)
+            if clean in self.peer_ips:
+                return True
         lid = self.active_link.link_id
         if lid in self.peer_ips:
             return True
+        if self.lan_transport == "http":
+            return False
         remote = self._get_remote_hash(self.active_link)
         return remote in self.peer_ips
+
+    def _active_peer_endpoint(self):
+        if self.lan_transport == "http" and self.http_peer:
+            return self.http_peer
+        if self.active_peer_hash:
+            clean = normalize_hash(self.active_peer_hash)
+            if clean in self.peer_ips:
+                return self.peer_ips[clean]
+        if self.active_link and self.active_link is not _HTTP_LINK:
+            lid = self.active_link.link_id
+            if lid in self.peer_ips:
+                return self.peer_ips[lid]
+        return None
 
     def cancel_transfer(self, transfer_id=None):
         cancelled = False
@@ -507,9 +528,11 @@ class MessagingBackend:
         def download():
             peer = self.peer_ips.get(link.link_id)
             if not peer:
+                peer = self.peer_ips.get(normalize_hash(remote_hash))
+            if not peer and remote_hash:
                 peer = self.peer_ips.get(remote_hash)
             if not peer:
-                print(f"[direct] No peer IP info for link {link.link_id.hex()[:12]} or hash {remote_hash[:16] if remote_hash else '?'}, cannot direct download")
+                print(f"[direct] No peer IP for {normalize_hash(remote_hash)[:16] if remote_hash else '?'}, cannot direct download")
                 return
 
             token = offer.get("token")
@@ -708,17 +731,10 @@ class MessagingBackend:
             return True
         if peer and peer.get("ip"):
             print(f"[connect] Trying directed UDP to {peer['ip']}...")
-            for attempt in range(3):
-                if self._interrupted():
-                    return False
-                if self._directed_path_attempt(dest_hash, peer["ip"], timeout=8):
-                    print(f"[connect] RNS path ready (directed UDP to {peer['ip']})")
-                    return True
-                self._bootstrap_via_http(dest_hash, peer["ip"], peer["port"])
-                time.sleep(0.5)
-            print(f"[connect] Retrying remote announce + path...")
+            if self._directed_path_attempt(dest_hash, peer["ip"], timeout=10):
+                print(f"[connect] RNS path ready (directed UDP to {peer['ip']})")
+                return True
             self._bootstrap_via_http(dest_hash, peer["ip"], peer["port"])
-            self._announce()
             if self._directed_path_attempt(dest_hash, peer["ip"], timeout=12):
                 print(f"[connect] RNS path ready after directed retry")
                 return True
@@ -905,14 +921,14 @@ class MessagingBackend:
                 return False
 
             if not self._prepare_paths(dest_hash, peer):
-                if peer and self._connect_via_http(peer, clean):
+                if peer and not RNS.Transport.has_path(dest_hash) and self._connect_via_http(peer, clean):
                     return True
                 return False
 
             print(f"[connect] Identity recalled successfully")
         except Exception as e:
             print(f"[connect] Identity/path setup failed: {e}")
-            if peer and self._connect_via_http(peer, clean):
+            if peer and not RNS.Transport.has_path(dest_hash) and self._connect_via_http(peer, clean):
                 return True
             return False
 
@@ -931,13 +947,19 @@ class MessagingBackend:
 
         self._teardown_active_link()
 
+        udp_saved = None
+        if peer and peer.get("ip"):
+            _, udp_saved = self._set_udp_forward_ip(peer["ip"])
+
         try:
             link = RNS.Link(destination)
             target_peer = clean
             link.set_link_established_callback(self._outgoing_link_callback(link, target_peer))
-            print(f"[connect] Link initiated, waiting for establishment...")
+            has_path = RNS.Transport.has_path(dest_hash)
+            max_wait = 120 if has_path else 60
+            print(f"[connect] Link initiated, waiting for establishment (up to {max_wait * 0.25:.0f}s)...")
 
-            for _ in range(60):
+            for _ in range(max_wait):
                 if self._interrupted():
                     print("[connect] Aborted (shutdown)")
                     try:
@@ -962,15 +984,24 @@ class MessagingBackend:
                     print(f"[connect] Link established successfully")
                     return True
 
-            if peer and self._connect_via_http(peer, clean):
+            try:
+                link.teardown()
+            except Exception:
+                pass
+            if peer and not has_path and self._connect_via_http(peer, clean):
                 return True
-            print(f"[connect] Link establishment timed out (check UDP 4242 firewall on both peers)")
+            if has_path:
+                print(f"[connect] RNS path exists but link timed out (peer may be on HTTP-only transport)")
+            else:
+                print(f"[connect] Link establishment timed out (check UDP 4242 firewall on both peers)")
             return False
         except Exception as e:
             print(f"[connect] Link creation failed: {e}")
-            if peer and self._connect_via_http(peer, clean):
+            if peer and not RNS.Transport.has_path(dest_hash) and self._connect_via_http(peer, clean):
                 return True
             return False
+        finally:
+            self._restore_udp_forward_ip(udp_saved)
 
     def _outgoing_link_callback(self, link, peer_hash):
         def callback(link):
@@ -1047,6 +1078,8 @@ class MessagingBackend:
     def send_file(self, file_path, msg_type=MESSAGE_TYPE_FILE, progress_callback=None):
         if not self.active_link or not os.path.exists(file_path):
             return False
+        if self.lan_transport == "http":
+            return self.direct_send_file(file_path, msg_type)
         with self._file_send_lock:
             fname = os.path.basename(file_path)
             fsize = os.path.getsize(file_path)
@@ -1128,6 +1161,13 @@ class MessagingBackend:
     def send_file_smart(self, file_path, msg_type=MESSAGE_TYPE_FILE, progress_callback=None):
         if not self.active_link or not os.path.exists(file_path):
             return False
+        if self.lan_transport == "http":
+            for _ in range(10):
+                if self._has_peer_ip():
+                    break
+                time.sleep(0.15)
+            result = self.direct_send_file(file_path, msg_type)
+            return result or False
         fsize = os.path.getsize(file_path)
         use_direct = fsize >= DIRECT_TRANSFER_THRESHOLD or msg_type in (MESSAGE_TYPE_FILE, MESSAGE_TYPE_IMAGE)
         if use_direct:

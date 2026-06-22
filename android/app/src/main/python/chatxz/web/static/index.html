@@ -931,7 +931,7 @@ body.sidebar-open #sidebar-backdrop { display: block; }
             <button class="input-btn" id="voice-btn" onclick="toggleVoice()" title="Voice note">🎤</button>
             <button class="input-btn" id="file-btn" onclick="pickFiles()" title="Attach file">📎</button>
             <input type="file" id="file-input" style="display:none" multiple onchange="uploadFiles(this.files);this.value=''">
-            <button class="input-btn" id="folder-btn" onclick="document.getElementById('folder-input').click()" title="Attach folder">📁</button>
+            <button class="input-btn" id="folder-btn" onclick="pickSendFolder()" title="Attach folder">📁</button>
             <input type="file" id="folder-input" style="display:none" webkitdirectory multiple onchange="uploadFolder(this.files);this.value=''">
             <button class="input-btn" id="send-btn" onclick="sendMessage()" title="Send">➤</button>
           </div>
@@ -1147,12 +1147,13 @@ function fetchIdentity() {
         if (hint) hint.textContent = 'Tap Browse to open the Android folder picker, then Save to apply.';
       }
       if (d.connected) {
-        const h = d.connected.replace(/:/g, '');
-        if (connected !== h) {
+        setLinkStatus('connected', 'Active');
+        if (!connected) {
           setConnected(d.connected);
         }
       } else if (connected) {
-        showWelcome();
+        setLinkStatus('disconnected', 'Inactive');
+        document.getElementById('peer-status').textContent = 'Disconnected · viewing history';
       }
     });
   pollQueue();
@@ -1198,8 +1199,10 @@ function handleWSMessage(msg) {
   } else if (msg.type === 'progress') {
     showProgress(msg.data);
   } else if (msg.type === 'connect_ok') {
-    setConnected(msg.hash);
-    toast('Connected!');
+    if (connectInFlight) {
+      setConnected(msg.hash);
+      toast('Connected!');
+    }
   } else if (msg.type === 'connect_fail') {
     toast('Connection failed: ' + (msg.error || 'unknown'));
   } else if (msg.type === 'message_deleted') {
@@ -1766,7 +1769,7 @@ function messageBelongsToPeer(data) {
   if (mp) return mp === active;
   const sender = peerKey(data.sender);
   if (sender === 'system') return false;
-  if (sender === peerKey(myHash)) return false;
+  if (sender === peerKey(myHash)) return true;
   return sender === active;
 }
 
@@ -1775,6 +1778,21 @@ function pickFiles() {
   if (!input) return;
   input.click();
 }
+
+function pickSendFolder() {
+  if (window.chatzxAndroid?.pickSendFolder) {
+    window.chatzxAndroid.pickSendFolder();
+    return;
+  }
+  document.getElementById('folder-input').click();
+}
+
+window.onChatxzFolderSendOk = function(name, size) {
+  toast('Sent ' + name + ' (' + formatSize(size) + ')');
+};
+window.onChatxzFolderSendError = function(msg) {
+  toast('Folder send failed: ' + (msg || 'unknown'));
+};
 
 function addMessage(data) {
   const msgs = document.getElementById('messages');

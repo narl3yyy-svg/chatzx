@@ -24,7 +24,7 @@ from chatxz.utils.system import get_avg_cpu_temperature, get_cpu_percent
 CONFIG_DIR = get_config_dir()
 DATA_DIR = get_data_dir()
 SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
-APP_VERSION = "0.3.16"
+APP_VERSION = "0.3.17"
 LAN_SESSION_TTL = 600
 
 def build_desktop_rns_config(broadcast_ip="255.255.255.255"):
@@ -547,12 +547,8 @@ class ChatWebServer:
 
     def _on_link_established(self, peer_hash, link):
         self.active_peer = self._clean_hash(peer_hash)
-        print(f"[connect] Session active with {self.active_peer[:16]}...")
-        if self.websockets and self._loop:
-            asyncio.run_coroutine_threadsafe(
-                self._broadcast({"type": "connect_ok", "hash": self.active_peer}),
-                self._loop,
-            )
+        transport = getattr(self.messaging, "lan_transport", "rns") if self.messaging else "rns"
+        print(f"[connect] Session active with {self.active_peer[:16]} ({transport})")
 
     def _on_transfer_progress(self, data):
         if self.websockets and self._loop:

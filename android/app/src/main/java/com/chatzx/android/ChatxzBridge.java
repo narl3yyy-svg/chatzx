@@ -19,6 +19,11 @@ public class ChatxzBridge {
     }
 
     @JavascriptInterface
+    public void pickSendFolder() {
+        activity.runOnUiThread(activity::openFolderSendPicker);
+    }
+
+    @JavascriptInterface
     public boolean isAndroid() {
         return true;
     }
