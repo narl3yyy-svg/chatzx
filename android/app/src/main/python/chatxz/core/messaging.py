@@ -253,7 +253,23 @@ class MessagingBackend:
         return str(iface_a) == str(iface_b)
 
     def _has_online_family(self, family):
-        return bool(online_interfaces(family=family))
+        ifaces = online_interfaces(family=family)
+        if not ifaces:
+            return False
+        if family != "lan":
+            return True
+        for iface in ifaces:
+            if type(iface).__name__ == "AutoInterfacePeer":
+                return True
+        for iface in ifaces:
+            spawned = getattr(iface, "spawned_interfaces", None)
+            if isinstance(spawned, dict) and spawned:
+                return True
+        try:
+            from chatxz.utils.platform import lan_ip as _lan_ip
+            return bool(_lan_ip())
+        except Exception:
+            return False
 
     def _preferred_failover_family(self, peer, attached=None):
         attached = attached or self._link_attached_interface(self.active_link)
