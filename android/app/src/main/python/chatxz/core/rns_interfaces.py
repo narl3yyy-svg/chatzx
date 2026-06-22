@@ -34,11 +34,13 @@ INTERFACE_PRESETS = {
         "defaults": {
             "enabled": False,
             "port": "",
-            "speed": 115200,
+            "speed": 57600,
             "ifac_size": 16,
         },
     },
 }
+
+SERIAL_DEFAULT_BAUD = 57600
 
 SERIAL_BAUD_RATES = [
     1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600,
@@ -169,6 +171,16 @@ def normalize_interface_list(items):
     return out or copy.deepcopy(DEFAULT_INTERFACE_LIST)
 
 
+def _pick_default_serial_port():
+    ports = list_serial_ports()
+    if not ports:
+        return ""
+    for port in ports:
+        if port.get("accessible"):
+            return port.get("device") or ""
+    return ports[0].get("device") or ""
+
+
 def add_interface(items, preset_key):
     preset = INTERFACE_PRESETS.get(preset_key)
     if not preset:
@@ -180,6 +192,10 @@ def add_interface(items, preset_key):
         "name": f"{preset['label']} {_new_id()}",
         **copy.deepcopy(preset["defaults"]),
     }
+    if preset_key == "serial":
+        entry["port"] = _pick_default_serial_port()
+        entry["speed"] = SERIAL_DEFAULT_BAUD
+        entry = _sync_serial_enabled(entry)
     items.append(entry)
     return items
 
@@ -324,7 +340,7 @@ def render_rns_config(interfaces, broadcast_ip=None, android=False, log=print):
                 lines.append(f"    ifac_size = {iface.get('ifac_size')}")
         elif itype == "SerialInterface":
             lines.append(f"    port = {iface.get('port', '/dev/ttyUSB0')}")
-            lines.append(f"    speed = {iface.get('speed', 115200)}")
+            lines.append(f"    speed = {iface.get('speed', SERIAL_DEFAULT_BAUD)}")
             if iface.get("ifac_size"):
                 lines.append(f"    ifac_size = {iface.get('ifac_size')}")
         lines.append("")

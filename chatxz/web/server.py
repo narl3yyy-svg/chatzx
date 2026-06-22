@@ -13,6 +13,7 @@ from chatxz.core.lan_beacon import LanBeacon, BEACON_PORT
 from chatxz.core.rns_interfaces import (
     INTERFACE_PRESETS,
     SERIAL_BAUD_RATES,
+    SERIAL_DEFAULT_BAUD,
     SERIAL_PERMISSION_HINT,
     serial_permission_hint_for_process,
     add_interface,
@@ -1023,7 +1024,7 @@ class ChatWebServer:
             self._write_rns_config(settings)
             return web.json_response({
                 "status": "ok",
-                "interfaces": settings["rns_interfaces"],
+                "interfaces": self._interfaces_for_api(settings["rns_interfaces"]),
                 "message": "Interface added. Restart chatxz to apply.",
             })
         except Exception as e:
@@ -1057,9 +1058,12 @@ class ChatWebServer:
         return web.json_response({
             "ports": ports,
             "baud_rates": SERIAL_BAUD_RATES,
+            "default_baud": SERIAL_DEFAULT_BAUD,
             "permission_hint": hint,
             "has_group_access": has_groups,
             "process_needs_restart": bool(denied and has_groups),
+            "count": len(ports),
+            "ready_count": sum(1 for p in ports if p.get("status") == "ok"),
         })
 
     async def handle_rns_interfaces_update(self, request):
@@ -1078,7 +1082,7 @@ class ChatWebServer:
             self._write_rns_config(settings)
             return web.json_response({
                 "status": "ok",
-                "interfaces": settings["rns_interfaces"],
+                "interfaces": self._interfaces_for_api(settings["rns_interfaces"]),
                 "message": "Interface updated. Restart chatxz to apply.",
             })
         except Exception as e:

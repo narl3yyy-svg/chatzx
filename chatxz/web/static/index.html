@@ -368,6 +368,57 @@ body::before {
   font-family: inherit;
 }
 .rns-serial-refresh:hover { text-decoration: underline; }
+.serial-devices-panel {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.02);
+  font-size: 11px;
+}
+.serial-devices-panel h5 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: var(--text2);
+  font-weight: 600;
+}
+.serial-device-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.serial-device-row:last-child { border-bottom: none; }
+.serial-device-row .dev-name {
+  font-family: ui-monospace, monospace;
+  color: var(--text);
+}
+.serial-device-row .dev-meta {
+  color: var(--text3);
+  font-size: 10px;
+  margin-top: 2px;
+}
+.serial-device-row .dev-status {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.serial-device-row .dev-status.ok { color: #5fd38d; }
+.serial-device-row .dev-status.denied { color: var(--warn, #e8a838); }
+.serial-device-row .dev-status.missing { color: var(--text3); }
+.rns-iface-serial-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  align-items: center;
+}
+.rns-iface-serial-actions .btn-block {
+  width: auto;
+  padding: 5px 10px;
+  font-size: 11px;
+}
 
 /* Bottom dock */
 #bottom-dock {
@@ -919,9 +970,10 @@ body.sidebar-open #sidebar-backdrop { display: block; }
               <button class="btn-block" style="flex:1;min-width:90px" onclick="addRnsInterface('tcp_client')">+ TCP</button>
               <button class="btn-block" style="flex:1;min-width:90px" onclick="addRnsInterface('serial')">+ Serial</button>
             </div>
+            <div id="serial-devices-panel" class="serial-devices-panel" style="display:none"></div>
             <div id="rns-interfaces-list" style="font-size:11px;color:var(--text2)">Loading...</div>
             <div id="serial-permission-hint" style="display:none;margin-top:6px;font-size:10px;color:var(--warn,#e8a838);line-height:1.45"></div>
-            <div style="margin-top:6px;font-size:10px;color:var(--text3)">Type or pick a port (e.g. /dev/ttyUSB0). Stays inactive until accessible. After usermod: log out of Ubuntu fully, restart chatxz, then refresh ports.</div>
+            <div style="margin-top:6px;font-size:10px;color:var(--text3)">Plug in USB serial, pick device + baud (default 57600), click Apply. Start with <code>./run.sh web --share</code> for dialout permissions. Restart chatxz after applying.</div>
           </div>
         </div>
         <div class="settings-card">
@@ -1807,20 +1859,61 @@ function netClass(ok) {
 }
 
 const SERIAL_BAUD_RATES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
+const SERIAL_DEFAULT_BAUD = 57600;
 
-function serialPortDatalistOptions(ports) {
-  return (ports || []).map(p => {
+function serialStatusLabel(status) {
+  if (status === 'ok') return { text: 'Ready', cls: 'ok' };
+  if (status === 'permission_denied') return { text: 'No permission', cls: 'denied' };
+  if (status === 'missing') return { text: 'Not connected', cls: 'missing' };
+  return { text: 'Unknown', cls: 'missing' };
+}
+
+function renderSerialDevicesPanel(ports, portData) {
+  const panel = document.getElementById('serial-devices-panel');
+  if (!panel) return;
+  const items = ports || [];
+  if (!items.length) {
+    panel.style.display = 'block';
+    panel.innerHTML = '<h5>Connected serial devices</h5><div style="color:var(--text3)">No USB serial devices detected. Plug in adapter and click Refresh below.</div>';
+    return;
+  }
+  const ready = items.filter(p => p.status === 'ok').length;
+  let html = `<h5>Connected serial devices (${ready}/${items.length} ready)</h5>`;
+  items.forEach(p => {
+    const st = serialStatusLabel(p.status);
+    const meta = [p.description, p.hwid].filter(Boolean).join(' · ') || 'USB serial';
+    html += `<div class="serial-device-row">
+      <div><div class="dev-name">${escapeHtml(p.device)}</div><div class="dev-meta">${escapeHtml(meta)}</div></div>
+      <div class="dev-status ${st.cls}">${escapeHtml(st.text)}</div>
+    </div>`;
+  });
+  if (portData && portData.has_group_access === false) {
+    html += '<div style="margin-top:6px;color:var(--warn,#e8a838);font-size:10px">dialout group not active — use ./run.sh web --share</div>';
+  }
+  panel.style.display = 'block';
+  panel.innerHTML = html;
+}
+
+function serialPortSelectOptions(ports, selected) {
+  const devices = (ports || []).map(p => p.device);
+  let html = '<option value="">— select device —</option>';
+  (ports || []).forEach(p => {
     const desc = p.description ? ` — ${p.description}` : '';
-    const denied = p.status === 'permission_denied' ? ' (permission denied)' : '';
-    return `<option value="${escapeHtml(p.device)}">${escapeHtml(p.device + desc + denied)}</option>`;
-  }).join('');
+    const st = p.status === 'ok' ? '' : (p.status === 'permission_denied' ? ' [no permission]' : ' [offline]');
+    const sel = p.device === selected ? ' selected' : '';
+    html += `<option value="${escapeHtml(p.device)}"${sel}>${escapeHtml(p.device + desc + st)}</option>`;
+  });
+  if (selected && !devices.includes(selected)) {
+    html += `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)} (saved)</option>`;
+  }
+  return html;
 }
 
 function baudOptions(rates, selected) {
-  const speed = parseInt(selected, 10) || 115200;
+  const speed = parseInt(selected, 10) || SERIAL_DEFAULT_BAUD;
   const list = rates && rates.length ? rates : SERIAL_BAUD_RATES;
   let html = list.map(r =>
-    `<option value="${r}"${r === speed ? ' selected' : ''}>${r}</option>`
+    `<option value="${r}"${r === speed ? ' selected' : ''}>${r}${r === SERIAL_DEFAULT_BAUD ? ' (default)' : ''}</option>`
   ).join('');
   if (!list.includes(speed)) {
     html = `<option value="${speed}" selected>${speed}</option>` + html;
@@ -1834,24 +1927,28 @@ function renderRnsInterfaceRow(iface, serialPorts, baudRates) {
   const isSerial = iface.preset === 'serial' || iface.type === 'SerialInterface';
   let metaBits = iface.type || '';
   if (isSerial) {
-    if (iface.serial_active) metaBits += ' · active (restart chatxz if RNS not up yet)';
-    else if (iface.port_status === 'permission_denied') metaBits += ' · no access — restart via ./run.sh web';
-    else if (iface.port_status === 'missing') metaBits += ' · waiting for device';
-    else if (iface.port) metaBits += ' · port saved';
-    else metaBits += ' · pick a port';
+    if (iface.serial_active) metaBits += ' · active';
+    else if (iface.port_status === 'permission_denied') metaBits += ' · saved, no permission yet';
+    else if (iface.port_status === 'missing') metaBits += ' · device unplugged';
+    else if (iface.port) metaBits += ' · ready after restart';
+    else metaBits += ' · pick a device below';
   } else if (iface.enabled === false) {
     metaBits += ' · disabled';
   }
   const meta = escapeHtml(metaBits);
   let body = `<div class="iface-head"><span class="net-label">${label}<div style="font-size:10px;color:var(--text3)">${meta}</div></span><button class="btn-block danger" style="width:auto;padding:4px 8px;font-size:11px" onclick="deleteRnsInterface('${id}')">Delete</button></div>`;
   if (isSerial) {
-    const portVal = escapeHtml(iface.port || '');
     body += `<div class="rns-iface-serial-fields">
-      <div><label>Serial port</label>
-        <input type="text" data-serial-port="${id}" list="serial-ports-${id}" value="${portVal}" placeholder="/dev/ttyUSB0" onchange="saveSerialInterface('${id}')">
-        <datalist id="serial-ports-${id}">${serialPortDatalistOptions(serialPorts)}</datalist>
+      <div><label>Device</label>
+        <select data-serial-port="${id}">${serialPortSelectOptions(serialPorts, iface.port)}</select>
       </div>
-      <div><label>Baud rate</label><select data-serial-baud="${id}" onchange="saveSerialInterface('${id}')">${baudOptions(baudRates, iface.speed)}</select></div>
+      <div><label>Baud rate</label>
+        <select data-serial-baud="${id}">${baudOptions(baudRates, iface.speed || SERIAL_DEFAULT_BAUD)}</select>
+      </div>
+    </div>
+    <div class="rns-iface-serial-actions">
+      <button type="button" class="btn-block" onclick="saveSerialInterface('${id}')">Apply</button>
+      <button type="button" class="rns-serial-refresh" onclick="refreshSerialPorts()">↻ Refresh devices</button>
     </div>`;
   }
   return `<div class="rns-iface-card">${body}</div>`;
@@ -1863,12 +1960,19 @@ function loadRnsInterfaces() {
   list.textContent = 'Loading...';
   Promise.all([
     fetch('/api/rns-interfaces').then(r => r.json()),
-    fetch('/api/serial-ports').then(r => r.json()).catch(() => ({ports: [], baud_rates: SERIAL_BAUD_RATES})),
+    fetch('/api/serial-ports').then(r => r.json()).catch(() => ({ports: [], baud_rates: SERIAL_BAUD_RATES, default_baud: SERIAL_DEFAULT_BAUD})),
   ]).then(([ifaceData, portData]) => {
     const items = ifaceData.interfaces || [];
     window._serialPorts = portData.ports || [];
+    window._serialPortData = portData;
     window._serialPermissionHint = portData.permission_hint || '';
     const baudRates = portData.baud_rates || SERIAL_BAUD_RATES;
+    const hasSerial = items.some(i => i.preset === 'serial' || i.type === 'SerialInterface');
+    if (hasSerial) renderSerialDevicesPanel(window._serialPorts, portData);
+    else {
+      const panel = document.getElementById('serial-devices-panel');
+      if (panel) { panel.style.display = 'none'; panel.innerHTML = ''; }
+    }
     const hintEl = document.getElementById('serial-permission-hint');
     const needsPerm = (portData.ports || []).some(p => p.status === 'permission_denied')
       || items.some(i => i.port_status === 'permission_denied');
@@ -1889,11 +1993,7 @@ function loadRnsInterfaces() {
       list.innerHTML = '<div style="color:var(--text3)">No interfaces configured.</div>';
       return;
     }
-    const hasSerial = items.some(i => i.preset === 'serial' || i.type === 'SerialInterface');
     let html = items.map(iface => renderRnsInterfaceRow(iface, window._serialPorts, baudRates)).join('');
-    if (hasSerial) {
-      html += '<button type="button" class="rns-serial-refresh" onclick="refreshSerialPorts()">↻ Refresh serial ports</button>';
-    }
     list.innerHTML = html;
   }).catch(() => { list.textContent = 'Failed to load interfaces.'; });
 }
@@ -1903,12 +2003,17 @@ function refreshSerialPorts() {
     .then(r => r.json())
     .then(d => {
       window._serialPorts = d.ports || [];
-      document.querySelectorAll('datalist[id^="serial-ports-"]').forEach(list => {
-        list.innerHTML = serialPortDatalistOptions(window._serialPorts);
+      window._serialPortData = d;
+      renderSerialDevicesPanel(window._serialPorts, d);
+      document.querySelectorAll('select[data-serial-port]').forEach(sel => {
+        const current = sel.value;
+        sel.innerHTML = serialPortSelectOptions(window._serialPorts, current);
       });
-      toast(window._serialPorts.length ? `Found ${window._serialPorts.length} serial port(s)` : 'No serial ports detected');
+      const ready = d.ready_count ?? window._serialPorts.filter(p => p.status === 'ok').length;
+      const total = d.count ?? window._serialPorts.length;
+      toast(total ? `Found ${total} device(s), ${ready} ready` : 'No USB serial devices detected');
     })
-    .catch(() => toast('Failed to refresh serial ports'));
+    .catch(() => toast('Failed to refresh serial devices'));
 }
 
 function saveSerialInterface(id) {
@@ -1949,7 +2054,11 @@ function addRnsInterface(preset) {
     body: JSON.stringify({preset})
   }).then(r => r.json()).then(d => {
     if (d.status === 'ok') {
-      toast(d.message || 'Interface added');
+      if (preset === 'serial') {
+        toast('Serial added — pick device, default baud 57600, click Apply');
+      } else {
+        toast(d.message || 'Interface added');
+      }
       loadRnsInterfaces();
       refreshNetworkStatus();
     } else toast('Add failed: ' + (d.error || ''));
