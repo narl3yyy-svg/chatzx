@@ -185,6 +185,10 @@ chatxz --daemon
 
 ## Changelog (recent)
 
+### v0.3.28
+- Bump Android APK build to match server version (0.3.28)
+- Network panel connect hint updated for longer announce/link wait
+
 ### v0.3.27
 - Remove duplicate Clear history button from chat header (keep peer actions menu only)
 - Connect waits up to 18s for peer RNS announce; 10s link timeout for slow devices (Android)

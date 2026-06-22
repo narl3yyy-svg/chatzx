@@ -11,8 +11,8 @@ android {
         applicationId = "com.chatzx.android"
         minSdk = 26
         targetSdk = 34
-        versionCode = 18
-        versionName = "0.3.18"
+        versionCode = 28
+        versionName = "0.3.28"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
