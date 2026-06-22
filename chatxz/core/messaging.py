@@ -13,6 +13,9 @@ class _HttpLink:
     link_id = b"httplanlink01"
     mtu = 65536
 
+
+_HTTP_LINK = _HttpLink()
+
 MESSAGE_TYPE_TEXT = "text"
 MESSAGE_TYPE_FILE = "file"
 MESSAGE_TYPE_IMAGE = "image"

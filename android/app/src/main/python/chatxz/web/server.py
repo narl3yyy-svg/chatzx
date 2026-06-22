@@ -24,7 +24,7 @@ from chatxz.utils.system import get_avg_cpu_temperature, get_cpu_percent
 CONFIG_DIR = get_config_dir()
 DATA_DIR = get_data_dir()
 SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
-APP_VERSION = "0.3.13"
+APP_VERSION = "0.3.14"
 LAN_SESSION_TTL = 600
 
 def build_desktop_rns_config(broadcast_ip="255.255.255.255"):
