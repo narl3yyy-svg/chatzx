@@ -12,10 +12,13 @@ from chatxz.core.discovery import PeerDiscovery
 from chatxz.core.lan_beacon import LanBeacon, BEACON_PORT
 from chatxz.core.rns_interfaces import (
     INTERFACE_PRESETS,
+    SERIAL_BAUD_RATES,
     add_interface,
     delete_interface,
+    list_serial_ports,
     normalize_interface_list,
     render_rns_config,
+    update_interface,
 )
 from chatxz.utils.helpers import get_config_dir, get_data_dir, format_speed, media_type_for_filename
 from chatxz.utils.platform import (
@@ -1003,6 +1006,35 @@ class ChatWebServer:
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
 
+    async def handle_serial_ports_get(self, request):
+        ports = await asyncio.to_thread(list_serial_ports)
+        return web.json_response({
+            "ports": ports,
+            "baud_rates": SERIAL_BAUD_RATES,
+        })
+
+    async def handle_rns_interfaces_update(self, request):
+        try:
+            data = await request.json()
+            iface_id = (data.get("id") or "").strip()
+            if not iface_id:
+                return web.json_response({"error": "id required"}, status=400)
+            settings = self.load_settings()
+            settings["rns_interfaces"] = update_interface(
+                settings.get("rns_interfaces"),
+                iface_id,
+                data,
+            )
+            self.save_settings(settings)
+            self._write_rns_config(settings)
+            return web.json_response({
+                "status": "ok",
+                "interfaces": settings["rns_interfaces"],
+                "message": "Interface updated. Restart chatxz to apply.",
+            })
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
     def _beacon_payload(self):
         dest = self._clean_hash(self.destination_hash or "")
         ident = self._clean_hash(self.identity_mgr.get_hex_hash() if self.identity_mgr else "")
@@ -1808,6 +1840,8 @@ class ChatWebServer:
         app.router.add_get("/api/rns-interfaces", self.handle_rns_interfaces_get)
         app.router.add_post("/api/rns-interfaces/add", self.handle_rns_interfaces_add)
         app.router.add_post("/api/rns-interfaces/delete", self.handle_rns_interfaces_delete)
+        app.router.add_post("/api/rns-interfaces/update", self.handle_rns_interfaces_update)
+        app.router.add_get("/api/serial-ports", self.handle_serial_ports_get)
         app.router.add_post("/api/announce", self.handle_announce)
         app.router.add_get("/api/network-status", self.handle_network_status)
         app.router.add_post("/api/network/reset", self.handle_network_reset)

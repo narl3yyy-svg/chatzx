@@ -38,6 +38,10 @@ INTERFACE_PRESETS = {
     },
 }
 
+SERIAL_BAUD_RATES = [
+    1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600,
+]
+
 DEFAULT_INTERFACE_LIST = [
     {
         "id": "udp-lan",
@@ -93,6 +97,79 @@ def add_interface(items, preset_key):
 def delete_interface(items, iface_id):
     items = normalize_interface_list(items)
     return [i for i in items if i.get("id") != iface_id]
+
+
+def _is_useful_serial_port(entry):
+    device = entry.device or ""
+    if any(
+        device.startswith(prefix)
+        for prefix in ("/dev/ttyUSB", "/dev/ttyACM", "/dev/ttyAMA", "/dev/rfcomm", "/dev/cu.")
+    ):
+        return True
+    desc = (entry.description or "").strip().lower()
+    hwid = (entry.hwid or "").strip().lower()
+    if desc and desc not in ("n/a", "none"):
+        return True
+    if hwid and hwid not in ("n/a", "none"):
+        return True
+    if "/ttyS" in device:
+        return False
+    return bool(device)
+
+
+def list_serial_ports():
+    """Return serial devices visible to pyserial (USB/ACM adapters, etc.)."""
+    try:
+        from serial.tools import list_ports
+    except ImportError:
+        return []
+    ports = []
+    try:
+        for entry in sorted(list_ports.comports(), key=lambda p: p.device):
+            if not _is_useful_serial_port(entry):
+                continue
+            ports.append({
+                "device": entry.device,
+                "description": entry.description or "",
+                "hwid": entry.hwid or "",
+            })
+    except Exception:
+        return []
+    return ports
+
+
+def update_interface(items, iface_id, updates):
+    items = normalize_interface_list(items)
+    if not iface_id:
+        raise ValueError("id required")
+    found = False
+    out = []
+    for item in items:
+        if item.get("id") != iface_id:
+            out.append(item)
+            continue
+        found = True
+        updated = {**item}
+        preset = updated.get("preset") or ""
+        itype = updated.get("type", "")
+        if preset == "serial" or itype == "SerialInterface":
+            if "port" in updates and updates["port"]:
+                updated["port"] = str(updates["port"]).strip()
+            if "speed" in updates and updates["speed"] is not None:
+                updated["speed"] = int(updates["speed"])
+        elif preset == "tcp_client" or itype == "TCPClientInterface":
+            if "target_host" in updates and updates["target_host"]:
+                updated["target_host"] = str(updates["target_host"]).strip()
+            if "target_port" in updates and updates["target_port"] is not None:
+                updated["target_port"] = int(updates["target_port"])
+        elif preset == "udp_lan" or itype == "UDPInterface":
+            for key in ("listen_ip", "listen_port", "forward_ip", "forward_port"):
+                if key in updates and updates[key] is not None:
+                    updated[key] = updates[key]
+        out.append(updated)
+    if not found:
+        raise ValueError(f"Interface not found: {iface_id}")
+    return out
 
 
 def render_rns_config(interfaces, broadcast_ip=None, android=False):

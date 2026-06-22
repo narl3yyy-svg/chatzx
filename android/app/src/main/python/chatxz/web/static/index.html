@@ -326,6 +326,47 @@ body::before {
 .settings-footer {
   flex-shrink: 0; padding-top: 12px; border-top: 1px solid var(--border);
 }
+.rns-iface-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: rgba(255,255,255,0.02);
+}
+.rns-iface-card .iface-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.rns-iface-serial-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 6px;
+}
+.rns-iface-serial-fields label {
+  display: block;
+  font-size: 10px;
+  color: var(--text3);
+  margin-bottom: 4px;
+}
+.rns-iface-serial-fields select {
+  width: 100%;
+  font-size: 11px;
+}
+.rns-serial-refresh {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--accent);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+}
+.rns-serial-refresh:hover { text-decoration: underline; }
 
 /* Bottom dock */
 #bottom-dock {
@@ -878,7 +919,7 @@ body.sidebar-open #sidebar-backdrop { display: block; }
               <button class="btn-block" style="flex:1;min-width:90px" onclick="addRnsInterface('serial')">+ Serial</button>
             </div>
             <div id="rns-interfaces-list" style="font-size:11px;color:var(--text2)">Loading...</div>
-            <div style="margin-top:6px;font-size:10px;color:var(--text3)">Add/delete presets, then restart chatxz to apply.</div>
+            <div style="margin-top:6px;font-size:10px;color:var(--text3)">Serial presets: pick port and baud below. Restart chatxz after changes.</div>
           </div>
         </div>
         <div class="settings-card">
@@ -1763,24 +1804,109 @@ function netClass(ok) {
   return ok ? 'net-ok' : 'net-bad';
 }
 
+const SERIAL_BAUD_RATES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
+
+function serialPortOptions(ports, selected) {
+  const devices = (ports || []).map(p => p.device);
+  const opts = (ports || []).map(p => {
+    const desc = p.description ? ` — ${p.description}` : '';
+    const sel = p.device === selected ? ' selected' : '';
+    return `<option value="${escapeHtml(p.device)}"${sel}>${escapeHtml(p.device + desc)}</option>`;
+  }).join('');
+  const customSel = selected && !devices.includes(selected)
+    ? `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)} (saved)</option>` : '';
+  const empty = !ports || !ports.length
+    ? `<option value="" disabled${!selected ? ' selected' : ''}>No ports detected — plug in device &amp; refresh</option>` : '';
+  return customSel + opts + empty;
+}
+
+function baudOptions(rates, selected) {
+  const speed = parseInt(selected, 10) || 115200;
+  const list = rates && rates.length ? rates : SERIAL_BAUD_RATES;
+  let html = list.map(r =>
+    `<option value="${r}"${r === speed ? ' selected' : ''}>${r}</option>`
+  ).join('');
+  if (!list.includes(speed)) {
+    html = `<option value="${speed}" selected>${speed}</option>` + html;
+  }
+  return html;
+}
+
+function renderRnsInterfaceRow(iface, serialPorts, baudRates) {
+  const id = escapeHtml(iface.id || '');
+  const label = escapeHtml(iface.name || iface.type || iface.preset || 'iface');
+  const meta = escapeHtml((iface.type || '') + (iface.enabled === false ? ' · disabled' : ''));
+  const isSerial = iface.preset === 'serial' || iface.type === 'SerialInterface';
+  let body = `<div class="iface-head"><span class="net-label">${label}<div style="font-size:10px;color:var(--text3)">${meta}</div></span><button class="btn-block danger" style="width:auto;padding:4px 8px;font-size:11px" onclick="deleteRnsInterface('${id}')">Delete</button></div>`;
+  if (isSerial) {
+    body += `<div class="rns-iface-serial-fields">
+      <div><label>Serial port</label><select data-serial-port="${id}" onchange="saveSerialInterface('${id}')">${serialPortOptions(serialPorts, iface.port)}</select></div>
+      <div><label>Baud rate</label><select data-serial-baud="${id}" onchange="saveSerialInterface('${id}')">${baudOptions(baudRates, iface.speed)}</select></div>
+    </div>`;
+  }
+  return `<div class="rns-iface-card">${body}</div>`;
+}
+
 function loadRnsInterfaces() {
   const list = document.getElementById('rns-interfaces-list');
   if (!list) return;
-  fetch('/api/rns-interfaces')
+  list.textContent = 'Loading...';
+  Promise.all([
+    fetch('/api/rns-interfaces').then(r => r.json()),
+    fetch('/api/serial-ports').then(r => r.json()).catch(() => ({ports: [], baud_rates: SERIAL_BAUD_RATES})),
+  ]).then(([ifaceData, portData]) => {
+    const items = ifaceData.interfaces || [];
+    window._serialPorts = portData.ports || [];
+    const baudRates = portData.baud_rates || SERIAL_BAUD_RATES;
+    if (!items.length) {
+      list.innerHTML = '<div style="color:var(--text3)">No interfaces configured.</div>';
+      return;
+    }
+    const hasSerial = items.some(i => i.preset === 'serial' || i.type === 'SerialInterface');
+    let html = items.map(iface => renderRnsInterfaceRow(iface, window._serialPorts, baudRates)).join('');
+    if (hasSerial) {
+      html += '<button type="button" class="rns-serial-refresh" onclick="refreshSerialPorts()">↻ Refresh serial ports</button>';
+    }
+    list.innerHTML = html;
+  }).catch(() => { list.textContent = 'Failed to load interfaces.'; });
+}
+
+function refreshSerialPorts() {
+  fetch('/api/serial-ports')
     .then(r => r.json())
     .then(d => {
-      const items = d.interfaces || [];
-      if (!items.length) {
-        list.innerHTML = '<div style="color:var(--text3)">No interfaces configured.</div>';
-        return;
-      }
-      list.innerHTML = items.map(iface => {
-        const label = escapeHtml(iface.name || iface.type || iface.preset || 'iface');
-        const meta = escapeHtml((iface.type || '') + (iface.enabled === false ? ' · disabled' : ''));
-        return `<div class="net-row" style="margin-bottom:6px"><span class="net-label">${label}<div style="font-size:10px;color:var(--text3)">${meta}</div></span><button class="btn-block danger" style="width:auto;padding:4px 8px;font-size:11px" onclick="deleteRnsInterface('${iface.id}')">Delete</button></div>`;
-      }).join('');
+      window._serialPorts = d.ports || [];
+      document.querySelectorAll('select[data-serial-port]').forEach(sel => {
+        const id = sel.getAttribute('data-serial-port');
+        const current = sel.value;
+        sel.innerHTML = serialPortOptions(window._serialPorts, current);
+      });
+      toast(window._serialPorts.length ? `Found ${window._serialPorts.length} serial port(s)` : 'No serial ports detected');
     })
-    .catch(() => { list.textContent = 'Failed to load interfaces.'; });
+    .catch(() => toast('Failed to refresh serial ports'));
+}
+
+function saveSerialInterface(id) {
+  const portEl = document.querySelector(`select[data-serial-port="${id}"]`);
+  const baudEl = document.querySelector(`select[data-serial-baud="${id}"]`);
+  if (!portEl || !baudEl) return;
+  const port = portEl.value;
+  if (!port) {
+    toast('Select a serial port first');
+    return;
+  }
+  fetch('/api/rns-interfaces/update', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id, port, speed: parseInt(baudEl.value, 10)}),
+  }).then(r => r.json()).then(d => {
+    if (d.status === 'ok') {
+      toast('Serial settings saved — restart chatxz to apply');
+      refreshNetworkStatus();
+    } else {
+      toast('Save failed: ' + (d.error || ''));
+    }
+  }).catch(() => toast('Save failed'));
 }
 
 function addRnsInterface(preset) {
