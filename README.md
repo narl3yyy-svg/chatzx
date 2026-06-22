@@ -32,6 +32,7 @@ The web interface handles day-to-day use: per-peer chats, send messages, transfe
 - **Folder upload** — entire directories compressed to zip and sent
 - **Drag & drop** and **clipboard paste** for files and screenshots
 - **Inline image preview** on both sender and receiver (click to enlarge)
+- **Inline video playback** — mp4, webm, mkv, mov, and other common formats play in chat
 - **Voice notes** — record from browser mic and send
 - **Configurable received-files directory** — custom save location with native folder picker
 
@@ -179,6 +180,10 @@ chatxz --daemon
 ```
 
 ## Changelog (recent)
+
+### v0.3.21
+- Inline video player in chat (mp4, webm, mkv, mov, avi, etc.)
+- Older video messages sent as `file` still play inline via extension detection
 
 ### v0.3.20
 - Per-peer messenger UI with correct sent/received alignment (`outgoing` flag)

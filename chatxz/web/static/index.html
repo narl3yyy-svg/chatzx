@@ -485,6 +485,11 @@ body::before {
   cursor: pointer; transition: transform var(--transition);
 }
 .msg img.msg-img:hover { transform: scale(1.02); }
+.msg video.msg-video {
+  max-width: 100%; max-height: 360px; border-radius: var(--radius-md);
+  margin-top: 8px; background: #000; display: block;
+}
+.msg.video-msg { max-width: 88%; min-width: 260px; }
 .msg .file-info { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
 .msg .file-info .file-icon { font-size: 22px; }
 .msg.voice-msg { max-width: 88%; min-width: 260px; overflow: visible; }
@@ -917,7 +922,7 @@ body.sidebar-open #sidebar-backdrop { display: block; }
         <div class="welcome-steps">
           <div class="welcome-step"><strong>1. Discover</strong>Find peers on your LAN or paste a hash</div>
           <div class="welcome-step"><strong>2. Connect</strong>Establish an encrypted link</div>
-          <div class="welcome-step"><strong>3. Chat</strong>Send text, files, images & voice</div>
+          <div class="welcome-step"><strong>3. Chat</strong>Send text, files, images, video & voice</div>
         </div>
       </div>
       <div class="keyhint">Drag & drop files anywhere · Paste screenshots from clipboard</div>
@@ -1802,6 +1807,26 @@ function autoResize(el) {
   el.style.height = Math.min(el.scrollHeight, 120) + 'px';
 }
 
+function isVideoFile(name) {
+  return /\.(mp4|webm|mkv|mov|avi|m4v|ogv|mpeg|mpg)$/i.test(name || '');
+}
+
+function renderVideoMessage(data) {
+  const name = escapeHtml(data.file_name || 'Video');
+  const sz = data.file_size ? ' ' + formatSize(data.file_size) : '';
+  let html = `<div>🎬 ${name}${sz}</div>`;
+  if (data.content) {
+    const url = fileUrl(data.content, data);
+    if (url) {
+      html += `<video class="msg-video" controls playsinline preload="metadata" src="${url}"></video>`;
+      html += `<div style="margin-top:4px"><a href="${url}" download="${escapeHtml(data.file_name || 'video')}" style="color:var(--primary);font-size:11px">💾 Save video</a></div>`;
+    } else {
+      html += `<div style="margin-top:4px;color:var(--text3);font-size:12px">Video saved locally</div>`;
+    }
+  }
+  return html;
+}
+
 function fileUrl(path, data) {
   if (data?.file_url) return data.file_url;
   if (!path) return '';
@@ -1904,6 +1929,9 @@ function addMessage(data) {
         html += `<div style="margin-top:4px;color:var(--text3);font-size:12px">Image saved locally</div>`;
       }
     }
+  } else if (data.type === 'video' || (data.type === 'file' && isVideoFile(data.file_name))) {
+    div.classList.add('video-msg');
+    html = renderVideoMessage(data);
   } else if (data.type === 'voice') {
     div.classList.add('voice-msg');
     html = `<div>🎤 ${escapeHtml(data.file_name || 'Voice note')}</div>`;

@@ -70,6 +70,10 @@ class ChatxzApp:
         elif chat_msg.msg_type == "voice":
             fname = chat_msg.file_name or "voice"
             print(f"\n[{timestamp}] {sender}: [Voice] {fname}")
+        elif chat_msg.msg_type == "video":
+            fname = chat_msg.file_name or "video"
+            fsize = format_size(chat_msg.file_size or 0)
+            print(f"\n[{timestamp}] {sender}: [Video] {fname} ({fsize})")
         elif chat_msg.msg_type == "file":
             fname = chat_msg.file_name or "file"
             fsize = format_size(chat_msg.file_size or 0)
@@ -125,8 +129,8 @@ class ChatxzApp:
         if not self.messaging or not self.messaging.active_link:
             print("Not connected to anyone")
             return False
-        is_image = file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'))
-        msg_type = "image" if is_image else "file"
+        from chatxz.utils.helpers import media_type_for_filename
+        msg_type = media_type_for_filename(file_path)
         return self.messaging.send_file(file_path, msg_type)
 
     def send_voice(self, duration=None):

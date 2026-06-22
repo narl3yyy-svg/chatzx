@@ -8,6 +8,7 @@ MESSAGE_TYPE_TEXT = "text"
 MESSAGE_TYPE_FILE = "file"
 MESSAGE_TYPE_IMAGE = "image"
 MESSAGE_TYPE_VOICE = "voice"
+MESSAGE_TYPE_VIDEO = "video"
 MESSAGE_TYPE_EMOJI = "emoji"
 MESSAGE_TYPE_LONGTEXT = "longtext"
 
@@ -162,7 +163,7 @@ class MessagingBackend:
                     if entry["type"] in ("text", "emoji"):
                         if self.send_message(entry["content"]):
                             sent += 1
-                    elif entry["type"] in ("file", "image", "voice"):
+                    elif entry["type"] in ("file", "image", "video", "voice"):
                         fp = entry.get("file_path") or entry.get("content")
                         if fp and os.path.exists(fp):
                             result = self.send_file(fp, entry["type"])
@@ -392,7 +393,7 @@ class MessagingBackend:
                 chat_msg.sender = remote_hash
                 print(f"[messaging] Received {chat_msg.msg_type} from {remote_hash[:16]}...")
 
-                if chat_msg.msg_type in (MESSAGE_TYPE_FILE, MESSAGE_TYPE_IMAGE, MESSAGE_TYPE_VOICE, MESSAGE_TYPE_LONGTEXT):
+                if chat_msg.msg_type in (MESSAGE_TYPE_FILE, MESSAGE_TYPE_IMAGE, MESSAGE_TYPE_VIDEO, MESSAGE_TYPE_VOICE, MESSAGE_TYPE_LONGTEXT):
                     self._pending_files[link.link_id] = chat_msg
                     print(f"[messaging] Waiting for resource data for {chat_msg.file_name}...")
                 elif self.on_message:

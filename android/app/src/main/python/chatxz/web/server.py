@@ -9,7 +9,7 @@ from chatxz.core.messaging import MessagingBackend
 from chatxz.core.voice import VoiceRecorder, VoicePlayer
 from chatxz.core.discovery import PeerDiscovery
 from chatxz.core.lan_beacon import LanBeacon, BEACON_PORT
-from chatxz.utils.helpers import get_config_dir, get_data_dir, format_speed
+from chatxz.utils.helpers import get_config_dir, get_data_dir, format_speed, media_type_for_filename
 from chatxz.utils.platform import (
     is_android,
     lan_ip as platform_lan_ip,
@@ -23,7 +23,7 @@ from chatxz.utils.system import get_avg_cpu_temperature, get_cpu_percent
 CONFIG_DIR = get_config_dir()
 DATA_DIR = get_data_dir()
 SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
-APP_VERSION = "0.3.20"
+APP_VERSION = "0.3.21"
 
 def build_desktop_rns_config(broadcast_ip="255.255.255.255"):
     return f"""[reticulum]
@@ -358,7 +358,7 @@ class ChatWebServer:
             else:
                 peer = enriched.get("sender")
         enriched["chat_peer"] = self._peer_dest_hash(peer)
-        if enriched.get("content") and enriched.get("type") in ("image", "file", "voice"):
+        if enriched.get("content") and enriched.get("type") in ("image", "video", "file", "voice"):
             url = self._file_url(enriched["content"])
             if url:
                 enriched["file_url"] = url
@@ -1020,8 +1020,7 @@ class ChatWebServer:
             if not field:
                 return web.json_response({"error": "no file"}, status=400)
             fname = field.filename or f"file_{int(time.time())}"
-            ext = os.path.splitext(fname)[1].lower()
-            is_image = ext in ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp')
+            msg_type = media_type_for_filename(fname)
 
             sent_dir = os.path.join(self.config_dir, "sent")
             save_path = os.path.join(sent_dir, fname)
@@ -1036,11 +1035,9 @@ class ChatWebServer:
                     size += len(chunk)
 
             if not self.messaging.active_link:
-                self.messaging.enqueue("image" if is_image else "file", save_path,
+                self.messaging.enqueue(msg_type, save_path,
                                         file_name=fname, file_size=size, file_path=save_path)
                 return web.json_response({"status": "queued", "name": fname, "size": size})
-
-            msg_type = "image" if is_image else "file"
             my_hash = self._my_sender_hash()
             ts = time.time()
             chat_peer = self._peer_dest_hash(self.active_peer)
@@ -1257,8 +1254,22 @@ class ChatWebServer:
             return web.Response(text="Not found: " + full_path, status=404)
         ct, _ = mimetypes.guess_type(full_path)
         if not ct:
-            ext = os.path.splitext(full_path)[1].lower()
-            ct = {"webm": "audio/webm"}.get(ext.lstrip("."))
+            ext = os.path.splitext(full_path)[1].lower().lstrip(".")
+            basename = os.path.basename(full_path)
+            if ext == "webm" and basename.startswith("voice_"):
+                ct = "audio/webm"
+            else:
+                ct = {
+                    "webm": "video/webm",
+                    "mp4": "video/mp4",
+                    "m4v": "video/mp4",
+                    "mkv": "video/x-matroska",
+                    "mov": "video/quicktime",
+                    "avi": "video/x-msvideo",
+                    "ogv": "video/ogg",
+                    "mpeg": "video/mpeg",
+                    "mpg": "video/mpeg",
+                }.get(ext)
         resp = web.FileResponse(full_path)
         if ct:
             resp.headers['Content-Type'] = ct
