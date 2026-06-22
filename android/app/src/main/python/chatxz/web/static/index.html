@@ -2196,6 +2196,14 @@ function refreshNetworkStatus() {
       if (d.rns_error) html += row('RNS error', d.rns_error, false);
       html += row('Link active', d.link_active ? 'yes — encrypted chat session' : 'no — not connected to a peer', d.link_active);
       if (d.active_peer) html += row('Active peer', truncateHash(d.active_peer), true);
+      if (d.link_rns_interface) html += row('Link path (RNS)', d.link_rns_interface, true);
+      if (d.serial_configured_port) {
+        html += row('Serial port', d.serial_configured_port, !!d.serial_in_rns);
+        html += row('Serial in RNS', d.serial_in_rns ? 'yes — failover ready' : 'no — plug USB & restart or wait for hot-add', d.serial_in_rns);
+      }
+      if (!d.link_active && d.session_peer) {
+        html += row('Session peer', truncateHash(d.session_peer) + ' (reconnecting)', false);
+      }
       html += row('Discovered peers', d.discovered_count ?? 0, (d.discovered_count || 0) > 0);
       html += row('WS clients', (d.ws_clients ?? 0) + ' (browser tabs on this device)', true);
       if (d.beacon) {
@@ -2207,7 +2215,9 @@ function refreshNetworkStatus() {
       html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);line-height:1.45">Beacon/subnet counters are <strong>session totals</strong> — each Announce sends ~259 packets (253 subnet probes + broadcasts). Use <strong>Reset network</strong> to zero counters and clear discovered peers without affecting your identity.</div>';
       html += '<div style="margin-top:6px;font-size:10px;color:var(--text3);line-height:1.45"><strong>Link active</strong> = encrypted RNS session open. <strong>Inactive</strong> = no session — connect to a peer or wait for incoming. Connect waits for RNS announce, then times out in ~10s if the peer is offline.</div>';
       html += '<div style="margin-top:6px;font-size:10px;color:var(--text3);line-height:1.45">Announce and beacon are <strong>manual only</strong> — use the Announce button. Connect uses reverse-connect for Android when outbound link fails.</div>';
-      html += '<div style="margin-top:6px;font-size:10px;color:var(--text3);line-height:1.45">Beacon UDP 8743 = LAN discovery. RNS UDP 4242 = encrypted chat. HTTP 8742 = this web UI only.</div>';
+      html += '<div style="margin-top:6px;font-size:10px;color:var(--text3);line-height:1.45"><strong>Dual-path failover:</strong> with USB serial + LAN both configured, chat auto-reconnects over the other path when one drops (serial unplugged → LAN/AutoInterface; LAN lost → serial). Both machines need the same version. Serial must show <strong>Serial in RNS: yes</strong> before LAN→serial failover works.</div>';
+      html += '<div style="margin-top:6px;font-size:10px;color:var(--text3);line-height:1.45"><strong>AutoInterface</strong> is RNS LAN mesh (IPv6 link-local on your NIC) — not a bypass. VPN disconnect does not kill physical LAN; chat may stay up on enp2s0/wlan0.</div>';
+      html += '<div style="margin-top:6px;font-size:10px;color:var(--text3);line-height:1.45">Beacon UDP 8743 = LAN discovery helper. RNS UDP 4242 + AutoInterface + Serial = encrypted chat paths. HTTP 8742 = this web UI only.</div>';
       html += '<div style="margin-top:6px;font-size:10px;color:var(--text3);line-height:1.45"><strong>WS clients</strong> counts open browser tabs connected to <em>this</em> machine\'s web UI — not remote peers. One tab on Arch = 1; Ubuntu has its own count.</div>';
       if (Array.isArray(d.configured_interfaces) && d.configured_interfaces.length) {
         html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em">Configured presets</div>';

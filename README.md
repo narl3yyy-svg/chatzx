@@ -10,7 +10,15 @@ chatxz is a self-hosted chat application with a modern web UI and a CLI. You run
 
 The web interface handles day-to-day use: per-peer chats, send messages, transfer large files with live progress, manage contacts, and configure storage. The CLI is for scripting, headless use, and quick one-off sends.
 
-**HTTP (port 8742) is only the local web UI** — it serves the browser interface and previews files saved on your machine. Peer-to-peer chat and file transfer always travel over encrypted RNS (UDP 4242).
+**HTTP (port 8742) is only the local web UI** — it serves the browser interface and previews files saved on your machine. Peer-to-peer chat and file transfer always travel over encrypted RNS links.
+
+| Path | RNS? | Role |
+|------|------|------|
+| **AutoInterface** | Yes | LAN mesh over IPv6 link-local (desktop default) |
+| **UDPInterface** (4242) | Yes | RNS UDP on your LAN subnet |
+| **SerialInterface** | Yes | RNS over USB serial |
+| **HTTP** `/api/request_connect` | No | Wake peer to open inbound RNS link (LAN/Android helper) |
+| **UDP beacon** (8743) | No | Discovery helper only |
 
 ## Features
 
@@ -39,12 +47,14 @@ The web interface handles day-to-day use: per-peer chats, send messages, transfe
 ### Network & Peers
 - **LAN discovery** — auto-discovers peers via RNS announces + UDP beacon (8743)
 - **Manual announce** — broadcast presence when you choose
-- **Fast connect** — outgoing links succeed or fail within ~4 seconds (no multi-minute retries)
+- **Dual-path failover** — USB serial + LAN (UDP / AutoInterface) run together; chat auto-reconnects on the other path when one drops (no server restart)
+- **Serial hot-add** — plug USB serial mid-session on desktop; watchdog adds it to RNS when the port appears
+- **Fast connect** — outgoing links succeed or fail within ~10s (22s during failover)
 - **Reset network** — Settings → Network clears discovered peers, disconnects links, and zeros beacon counters (identity unchanged)
 - **Weekly auto-reset** — beacon/discovery counters optionally reset after 7 days (toggle in Settings)
 - **Contacts** — save peers with display names; click to open their chat
 - **Incoming connections** — when a peer connects to you, the UI updates automatically
-- **Connection status** — WebSocket and Reticulum link indicators in the bottom dock
+- **Connection status** — WebSocket and Reticulum link indicators; Network panel shows active RNS path (`AutoInterfacePeer`, `SerialInterface`, `UDPInterface`)
 
 ### Platforms
 | Platform | Status |
@@ -115,10 +125,19 @@ Use these flags when diagnosing issues:
 **Additional visibility:**
 
 1. Edit `~/.config/chatxz/config` and set `loglevel = 7` under `[logging]` for maximum RNS detail (extreme).
-2. Check `http://localhost:8742/api/network-status` — RNS interfaces, link state, discovered peers.
-3. Reset discovery/beacon counters: `POST http://localhost:8742/api/network/reset` or **Settings → Network → Reset network**.
-4. Check `http://localhost:8742/api/debug` — beacon counters, active peer, message count.
-5. Browser devtools console shows WebSocket events (`[ws] Message type: ...`).
+2. Check **Settings → Network → Refresh status** or `GET /api/network-status` — RNS interfaces, `link_rns_interface`, `serial_in_rns`, `session_peer`, discovered peers.
+3. During failover, watch server logs for `[connect] Failover triggered` and `[connect] Path ready on …`.
+4. Reset discovery/beacon counters: `POST /api/network/reset` or **Settings → Network → Reset network**.
+5. Check `GET /api/debug` — beacon counters, active peer, message count.
+6. Browser devtools console shows WebSocket events (`[ws] Message type: ...`).
+
+### Serial + LAN failover (desktop)
+
+1. **Settings → Network** — add **UDP LAN** (default) and **Serial**; pick `/dev/ttyUSB0` (or your port), baud **57600**, click **Apply**, restart chatxz (or plug USB and wait ~5s for hot-add).
+2. Confirm **Serial in RNS: yes** in Network status on **both** machines before expecting LAN↔serial failover.
+3. Connect to peer over LAN; unplug Ethernet or USB to test — logs should show `[connect] Failover triggered` without clicking Connect again.
+4. **VPN disconnect ≠ LAN dead** if your physical NIC (`enp2s0`, `wlan0`) still has `10.10.x` — AutoInterface keeps working on the physical LAN.
+5. Use `./run.sh web --share` on Arch so the process has `dialout` group access for serial.
 
 **Firewall (Linux desktop):** allow UDP **4242** (RNS chat) and **8743** (discovery beacon):
 
@@ -163,10 +182,27 @@ All peer-to-peer files (images, folders, voice, large zips) use **RNS Resources*
 
 Download from [Releases](https://github.com/narl3yyy-svg/chatxz/releases). Push a `v*` tag to trigger the GitHub Actions APK build.
 
+The APK embeds the same Python tree as desktop (`chatxz/`) via Chaquopy. **Always sync before building:**
+
 ```bash
+# 1. Bump version (updates version.properties, chatxz/_version.py, Gradle)
+./scripts/bump-version.sh 0.3.38
+
+# 2. Copy chatxz/ → android/app/src/main/python/chatxz/ (Python + web UI)
 bash scripts/sync-android.sh
-cd android && ./gradlew assembleDebug
+
+# 3. Build debug APK locally
+cd android && chmod +x gradlew && ./gradlew assembleDebug
+# Output: android/app/build/outputs/apk/debug/app-debug.apk
 ```
+
+**Release APK via CI:** tag `v0.3.38` (or current `VERSION_NAME` in `version.properties`) — workflow runs `sync-android.sh` then `assembleDebug` and publishes to GitHub Releases.
+
+**Android notes:**
+- Same failover, messaging, and web UI as desktop (WebView loads embedded `index.html`)
+- USB serial via OTG: grant permission when prompted, Apply in Settings → Network, restart app
+- Wi-Fi multicast lock held while running; subnet unicast supplements UDP broadcast
+- Reverse-connect (`POST /api/request_connect`) helps when outbound RNS link from phone fails
 
 ## CLI Usage
 
@@ -184,6 +220,35 @@ chatxz --daemon
 ```
 
 ## Changelog (recent)
+
+### v0.3.38
+- **Android bundle synced** with desktop (failover, serial teardown, UI fixes, network panel)
+- **README** updated: RNS transport table, serial+LAN failover guide, APK build workflow, changelog through v0.3.37
+
+### v0.3.37
+- **Serial→LAN failover fix:** remove unplugged serial from RNS transport (stops reconnect spam and `mode` AttributeError on hot-added interfaces)
+- **Hot-add serial** finalized like Reticulum config load (`mode`, announce caps); prune dead serial before announces
+- **Ubuntu send UI:** keep `linkPeer` during reconnect; register identity/destination aliases on connect and `link_established`
+- **Network panel:** shows `link_rns_interface`, `serial_in_rns`, `session_peer`, failover help text
+
+### v0.3.36
+- **Session peer preserved** across unexpected link drops — failover loop reconnects without manual Connect
+- **Receipt timeout** and **UDP fallback** when AutoInterface carrier lost
+- **Serial hot-add** watchdog when USB plugged in mid-session
+- **Serial failover is RNS-only** (no HTTP reverse-connect on serial path)
+
+### v0.3.35
+- Interface health checks AutoInterface `timed_out_interfaces`; longer failover connect timeout (22s)
+- `lan_mesh_has_peer()` for real LAN mesh detection (not just `lan_ip()`)
+
+### v0.3.34
+- `reconnect_active_peer()`, link failover loop (every 3s), path scrubbing on dead interfaces
+
+### v0.3.33
+- Peer identity aliasing, link handoff without clearing chat history on reconnect
+
+### v0.3.32
+- Cancel transfer, history cleanup, Android USB serial permission flow
 
 ### v0.3.31
 - **Rename:** GitHub repo and all references `chatzx` → `chatxz`
