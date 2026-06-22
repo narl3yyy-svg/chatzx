@@ -1742,7 +1742,7 @@ function refreshNetworkStatus() {
         html += row('Subnet probes (last announce)', d.beacon.last_subnet_probes ?? 0);
       }
       html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);line-height:1.45">Beacon/subnet counters are <strong>session totals</strong> — each Announce sends ~259 packets (253 subnet probes + broadcasts). Use <strong>Reset network</strong> to zero counters and clear discovered peers without affecting your identity.</div>';
-      html += '<div style="margin-top:6px;font-size:10px;color:var(--text3);line-height:1.45"><strong>Link active</strong> = encrypted RNS session open. <strong>Inactive</strong> = no session — connect to a peer or wait for incoming. Connect fails in ~4s if the peer is offline.</div>';
+      html += '<div style="margin-top:6px;font-size:10px;color:var(--text3);line-height:1.45"><strong>Link active</strong> = encrypted RNS session open. <strong>Inactive</strong> = no session — connect to a peer or wait for incoming. Connect waits for RNS announce, then times out in ~10s if the peer is offline.</div>';
       html += '<div style="margin-top:6px;font-size:10px;color:var(--text3);line-height:1.45">Beacon UDP 8743 = LAN discovery. RNS UDP 4242 = encrypted chat. HTTP 8742 = this web UI only.</div>';
       if (Array.isArray(d.interfaces) && d.interfaces.length) {
         html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em">Interfaces</div>';
