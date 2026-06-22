@@ -1,4 +1,5 @@
 import os, json, time, base64, mimetypes, asyncio, socket, zipfile, shutil, subprocess, tempfile, signal, re, sys, threading
+from urllib.parse import quote, unquote
 from pathlib import Path
 
 from aiohttp import web
@@ -23,7 +24,7 @@ from chatxz.utils.system import get_avg_cpu_temperature, get_cpu_percent
 CONFIG_DIR = get_config_dir()
 DATA_DIR = get_data_dir()
 SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
-APP_VERSION = "0.3.21"
+APP_VERSION = "0.3.22"
 
 def build_desktop_rns_config(broadcast_ip="255.255.255.255"):
     return f"""[reticulum]
@@ -326,22 +327,27 @@ class ChatWebServer:
     def _sent_dir(self):
         return os.path.normpath(os.path.join(self.config_dir, "sent"))
 
+    def _encode_file_rel(self, rel):
+        return "/".join(quote(part, safe="") for part in rel.replace("\\", "/").split("/"))
+
     def _file_url(self, filepath):
-        if not filepath or not os.path.isfile(filepath):
+        if not filepath:
             return ""
         full = os.path.normpath(filepath)
+        if not os.path.isfile(full):
+            return ""
         received = self._received_dir()
         sent = self._sent_dir()
         if full.startswith(received + os.sep) or full == received:
             rel = os.path.relpath(full, received)
-            return "/api/file/received/" + rel.replace(os.sep, "/")
+            return "/api/file/received/" + self._encode_file_rel(rel)
         if full.startswith(sent + os.sep) or full == sent:
             rel = os.path.relpath(full, sent)
-            return "/api/file/sent/" + rel.replace(os.sep, "/")
+            return "/api/file/sent/" + self._encode_file_rel(rel)
         default_received = os.path.normpath(os.path.join(self.config_dir, "received"))
         if full.startswith(default_received + os.sep):
             rel = os.path.relpath(full, default_received)
-            return "/api/file/received/" + rel.replace(os.sep, "/")
+            return "/api/file/received/" + self._encode_file_rel(rel)
         return ""
 
     def _enrich_message(self, entry, outgoing=None):
@@ -358,6 +364,10 @@ class ChatWebServer:
             else:
                 peer = enriched.get("sender")
         enriched["chat_peer"] = self._peer_dest_hash(peer)
+        if enriched.get("file_name") and enriched.get("type") == "file":
+            inferred = media_type_for_filename(enriched["file_name"])
+            if inferred != "file":
+                enriched["type"] = inferred
         if enriched.get("content") and enriched.get("type") in ("image", "video", "file", "voice"):
             url = self._file_url(enriched["content"])
             if url:
@@ -547,7 +557,7 @@ class ChatWebServer:
             display_name=settings.get("name", ""),
             ip=my_ip,
             port=self.port,
-            periodic=False,
+            periodic=is_android(),
         )
         self.lan_beacon.start()
 
@@ -603,6 +613,12 @@ class ChatWebServer:
         dest = self._peer_dest_hash(peer.get("hash"))
         if peer.get("identity_hash"):
             self.messaging.register_peer_mapping(dest, peer.get("identity_hash"))
+        if self.discovery and self.websockets and self._loop:
+            peers = self.discovery.get_peers()
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast({"type": "peers", "data": peers}),
+                self._loop
+            )
 
     def _on_link_established(self, peer_hash, link):
         self.active_peer = self._peer_dest_hash(peer_hash)
@@ -818,7 +834,7 @@ class ChatWebServer:
                 beacon_sent = 0
                 if self.lan_beacon:
                     beacon_sent = await asyncio.to_thread(
-                        self.lan_beacon.send, 1, is_android()
+                        self.lan_beacon.send, 3, True
                     )
                 return web.json_response({
                     "status": "ok",
@@ -1234,15 +1250,18 @@ class ChatWebServer:
             return web.json_response({"error": str(e)}, status=400)
 
     async def handle_serve_file(self, request):
-        filepath = request.match_info["filepath"]
+        filepath = unquote(request.match_info["filepath"])
         received_dir = self._received_dir()
         sent_dir = self._sent_dir()
         if filepath.startswith("received/"):
-            full_path = os.path.normpath(os.path.join(received_dir, filepath[9:]))
+            rel = "/".join(unquote(p) for p in filepath[9:].split("/"))
+            full_path = os.path.normpath(os.path.join(received_dir, rel))
         elif filepath.startswith("sent/"):
-            full_path = os.path.normpath(os.path.join(sent_dir, filepath[5:]))
+            rel = "/".join(unquote(p) for p in filepath[5:].split("/"))
+            full_path = os.path.normpath(os.path.join(sent_dir, rel))
         else:
-            full_path = os.path.normpath(os.path.join(self.config_dir, filepath))
+            rel = "/".join(unquote(p) for p in filepath.split("/"))
+            full_path = os.path.normpath(os.path.join(self.config_dir, rel))
 
         allowed = (
             full_path.startswith(received_dir + os.sep) or full_path == received_dir or
@@ -1273,6 +1292,8 @@ class ChatWebServer:
         resp = web.FileResponse(full_path)
         if ct:
             resp.headers['Content-Type'] = ct
+        if ct and ct.startswith("video/"):
+            resp.headers['Accept-Ranges'] = 'bytes'
         return resp
 
     async def handle_queue(self, request):
@@ -1427,7 +1448,7 @@ class ChatWebServer:
                 with self._announce_lock:
                     await asyncio.to_thread(self.messaging.announce)
                     if self.lan_beacon:
-                        await asyncio.to_thread(self.lan_beacon.send, 1, is_android())
+                        await asyncio.to_thread(self.lan_beacon.send, 3, True)
             elif err:
                 await ws.send_str(json.dumps({"type": "info", "data": "Announce failed: " + err}))
         elif msg_type == "read_receipt":

@@ -181,6 +181,10 @@ chatxz --daemon
 
 ## Changelog (recent)
 
+### v0.3.22
+- Receiver-side inline video playback (URL encoding, metadata race fix, Accept-Ranges)
+- Android LAN discovery: periodic beacon, subnet unicast probes on all announces, instant peer WS push
+
 ### v0.3.21
 - Inline video player in chat (mp4, webm, mkv, mov, avi, etc.)
 - Older video messages sent as `file` still play inline via extension detection

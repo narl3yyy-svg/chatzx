@@ -79,6 +79,7 @@ class MessagingBackend:
         self.shutdown_requested = False
         self._announce_thread = None
         self._pending_files = {}
+        self._pending_lock = threading.Lock()
         self.queue_file = os.path.join(config_dir, "queue.json")
         self.message_queue = self._load_queue()
         self._file_send_lock = threading.Lock()
@@ -394,7 +395,9 @@ class MessagingBackend:
                 print(f"[messaging] Received {chat_msg.msg_type} from {remote_hash[:16]}...")
 
                 if chat_msg.msg_type in (MESSAGE_TYPE_FILE, MESSAGE_TYPE_IMAGE, MESSAGE_TYPE_VIDEO, MESSAGE_TYPE_VOICE, MESSAGE_TYPE_LONGTEXT):
-                    self._pending_files[link.link_id] = chat_msg
+                    with self._pending_lock:
+                        queue = self._pending_files.setdefault(link.link_id, [])
+                        queue.append(chat_msg)
                     print(f"[messaging] Waiting for resource data for {chat_msg.file_name}...")
                 elif self.on_message:
                     self.on_message(chat_msg, remote_hash)
@@ -410,14 +413,39 @@ class MessagingBackend:
                     )
         return callback
 
+    def _dequeue_pending_file(self, link_id, resource=None):
+        with self._pending_lock:
+            queue = self._pending_files.get(link_id, [])
+            if queue:
+                return queue.pop(0)
+        for _ in range(20):
+            time.sleep(0.05)
+            with self._pending_lock:
+                queue = self._pending_files.get(link_id, [])
+                if queue:
+                    return queue.pop(0)
+        fname = None
+        if resource is not None:
+            for attr in ("name", "title", "file_name"):
+                val = getattr(resource, attr, None)
+                if val:
+                    fname = os.path.basename(str(val))
+                    break
+            spath = getattr(resource, "storagepath", None)
+            if not fname and spath:
+                fname = os.path.basename(str(spath))
+        msg_type = MESSAGE_TYPE_FILE
+        if fname:
+            from chatxz.utils.helpers import media_type_for_filename
+            msg_type = media_type_for_filename(fname)
+        return ChatMessage(msg_type, "", file_name=fname or f"file_{int(time.time())}")
+
     def _resource_concluded(self, link):
         def callback(resource):
             try:
                 print(f"[messaging] Resource concluded, status={resource.status}")
                 if resource.status == RNS.Resource.COMPLETE:
-                    chat_msg = self._pending_files.pop(link.link_id, None)
-                    if chat_msg is None:
-                        chat_msg = ChatMessage(MESSAGE_TYPE_FILE, "", file_name="unknown")
+                    chat_msg = self._dequeue_pending_file(link.link_id, resource)
 
                     os.makedirs(self.receive_dir, exist_ok=True)
                     fname = chat_msg.file_name or f"file_{int(time.time())}"
@@ -456,7 +484,9 @@ class MessagingBackend:
                     self._send_receipt(link, chat_msg.msg_id, "received")
                 else:
                     print(f"[messaging] Resource transfer failed (status={resource.status})")
-                    chat_msg = self._pending_files.pop(link.link_id, None)
+                    with self._pending_lock:
+                        queue = self._pending_files.get(link.link_id, [])
+                        chat_msg = queue.pop(0) if queue else None
                     if chat_msg and self.on_message:
                         self.on_message(
                             ChatMessage("system", f"File transfer failed: {chat_msg.file_name}"),
