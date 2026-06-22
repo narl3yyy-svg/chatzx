@@ -1003,6 +1003,7 @@ body.sidebar-open #sidebar-backdrop { display: block; }
 let ws = null;
 let myHash = '';
 let connected = null;
+let connectInFlight = false;
 let recording = false;
 let mediaRecorder = null;
 let audioChunks = [];
@@ -1469,6 +1470,11 @@ function actionDelete() {
 }
 
 function connectTo(hash, ip, port) {
+  if (connectInFlight) {
+    toast('Connection already in progress...');
+    return;
+  }
+  connectInFlight = true;
   toast('Connecting...');
   const body = {hash};
   if (ip) body.ip = ip;
@@ -1484,7 +1490,8 @@ function connectTo(hash, ip, port) {
     } else {
       toast('Connection failed: ' + (d.error || 'unknown'));
     }
-  }).catch(() => toast('Connection failed'));
+  }).catch(() => toast('Connection failed'))
+    .finally(() => { connectInFlight = false; });
 }
 
 function announceSelf() {
@@ -1546,6 +1553,8 @@ function refreshNetworkStatus() {
         `<div class="net-row"><span class="net-label">${label}</span><span class="net-value ${ok === undefined ? '' : netClass(ok)}">${escapeHtml(String(value ?? '—'))}</span></div>`;
       html += row('Platform', d.platform);
       html += row('HTTP bind', d.http_bind);
+      html += row('RNS UDP', d.rns_udp_port ? d.rns_udp_port + ' (required for chat)' : '4242', true);
+      html += row('Beacon UDP', d.beacon_udp_port || 8743);
       html += row('LAN IP', d.lan_ip || 'none', !!d.lan_ip);
       html += row('Broadcast', d.broadcast || 'none', !!d.broadcast);
       html += row('RNS ready', d.rns_ready ? 'yes' : 'no', d.rns_ready);
@@ -1559,7 +1568,7 @@ function refreshNetworkStatus() {
         html += row('Beacon received', d.beacon.packets_received ?? 0, (d.beacon.packets_received || 0) > 0);
         html += row('Subnet probes', d.beacon.last_subnet_probes ?? 0);
       }
-      html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);line-height:1.45">Announce is manual only (📡 button). Beacon = UDP discovery ping; RNS announce = mesh identity broadcast.</div>';
+      html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);line-height:1.45">Manual announce only (📡). Beacon (UDP 8743) = discovery ping with name/IP. RNS (UDP 4242) = encrypted chat link — both peers must allow 4242, not just HTTP 8742.</div>';
       if (Array.isArray(d.interfaces) && d.interfaces.length) {
         html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em">Interfaces</div>';
         d.interfaces.forEach(iface => {

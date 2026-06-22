@@ -59,14 +59,15 @@ class ChatMessage:
 
 class MessagingBackend:
     def __init__(self, identity, config_dir, on_message=None, on_file=None,
-                 on_progress=None, display_name="", auto_announce=False,
-                 my_ip=None, my_port=8742, receive_dir=None):
+                 on_progress=None, on_link_established=None, display_name="",
+                 auto_announce=False, my_ip=None, my_port=8742, receive_dir=None):
         self.identity = identity
         self.config_dir = config_dir
         self.receive_dir = receive_dir or os.path.join(config_dir, "received")
         self.on_message = on_message
         self.on_file = on_file
         self.on_progress = on_progress
+        self.on_link_established = on_link_established
         self.display_name = display_name
         self.auto_announce = auto_announce
         self.announce_interval = 30
@@ -75,6 +76,7 @@ class MessagingBackend:
         self.destination = None
         self.links = {}
         self.active_link = None
+        self.active_peer_hash = None
         self.running = False
         self._announce_thread = None
         self._pending_files = {}
@@ -83,6 +85,7 @@ class MessagingBackend:
         self.queue_file = os.path.join(config_dir, "queue.json")
         self.message_queue = self._load_queue()
         self._file_send_lock = threading.Lock()
+        self._connect_lock = threading.Lock()
         self._sent_messages = {}
         self._receipt_callbacks = {}
         self._active_resources = {}
@@ -211,6 +214,31 @@ class MessagingBackend:
             pass
         return "unknown"
 
+    def _peer_destination_hash(self, link, fallback=None):
+        try:
+            ident = link.get_remote_identity()
+            if ident:
+                pub = ident.get_public_key()
+                with RNS.Identity.known_destinations_lock:
+                    for dest_hash, entry in RNS.Identity.known_destinations.items():
+                        if entry[2] == pub:
+                            return normalize_hash(RNS.hexrep(dest_hash))
+        except Exception:
+            pass
+        if fallback:
+            return normalize_hash(fallback)
+        return normalize_hash(self._get_remote_hash(link))
+
+    def _notify_link_established(self, link, peer_hash=None):
+        peer = normalize_hash(peer_hash or self._peer_destination_hash(link))
+        self.active_link = link
+        self.active_peer_hash = peer
+        if self.on_link_established:
+            try:
+                self.on_link_established(peer, link)
+            except Exception as e:
+                print(f"[messaging] on_link_established error: {e}")
+
     def _setup_link(self, link):
         self.links[link.link_id] = link
         link.set_link_closed_callback(self._link_closed(link))
@@ -254,7 +282,9 @@ class MessagingBackend:
     def _link_callback(self, link):
         print(f"[messaging] Incoming link established: {link.link_id.hex()[:12]}")
         remote_hash = self._get_remote_hash(link)
+        peer_hash = self._peer_destination_hash(link)
         self._setup_link(link)
+        self._notify_link_established(link, peer_hash)
         self.drain_queue(link, remote_hash)
 
         if self.on_message:
@@ -265,6 +295,9 @@ class MessagingBackend:
         def callback(link):
             if link.link_id in self.links:
                 del self.links[link.link_id]
+            if self.active_link and self.active_link.link_id == link.link_id:
+                self.active_link = None
+                self.active_peer_hash = None
             if self.on_message:
                 remote_hash = self._get_remote_hash(link)
                 system_msg = ChatMessage("system", f"Link closed with {remote_hash}")
@@ -585,15 +618,51 @@ class MessagingBackend:
             RNS.Transport.request_path(dest_hash, on_interface=iface)
         else:
             RNS.Transport.request_path(dest_hash)
-        if hasattr(RNS.Transport, "await_path"):
-            return RNS.Transport.await_path(dest_hash, timeout=18)
-        for _ in range(36):
-            time.sleep(0.5)
+
+    def _wait_for_path(self, dest_hash, timeout=20):
+        deadline = time.time() + timeout
+        requested = False
+        while time.time() < deadline:
             if RNS.Transport.has_path(dest_hash):
                 return True
+            if not requested:
+                self._request_path(dest_hash)
+                requested = True
+            time.sleep(0.25)
         return RNS.Transport.has_path(dest_hash)
 
+    def _prepare_paths(self, dest_hash, peer=None):
+        self._announce()
+        if peer:
+            self._bootstrap_via_http(dest_hash, peer["ip"], peer["port"])
+        if self._wait_for_path(dest_hash, timeout=18):
+            print(f"[connect] RNS path ready")
+            return True
+        if peer:
+            print(f"[connect] Retrying bootstrap + path...")
+            self._announce()
+            self._bootstrap_via_http(dest_hash, peer["ip"], peer["port"])
+            if self._wait_for_path(dest_hash, timeout=12):
+                print(f"[connect] RNS path ready after retry")
+                return True
+        print(f"[connect] No RNS path (allow UDP port 4242 on both devices — not just TCP 8742)")
+        return False
+
+    def _teardown_active_link(self):
+        if not self.active_link:
+            return
+        try:
+            self.active_link.teardown()
+        except Exception:
+            pass
+        self.active_link = None
+        self.active_peer_hash = None
+
     def connect_to(self, destination_hash_hex):
+        with self._connect_lock:
+            return self._connect_to_locked(destination_hash_hex)
+
+    def _connect_to_locked(self, destination_hash_hex):
         clean = normalize_hash(destination_hash_hex)
         if len(clean) != 32:
             print(f"[connect] Invalid hash length ({len(clean)} chars, expected 32)")
@@ -605,9 +674,9 @@ class MessagingBackend:
             return False
 
         print(f"[connect] Connecting to {RNS.hexrep(dest_hash)[:20]}...")
+        peer = self._lookup_peer_ip(clean)
 
         try:
-            peer = self._lookup_peer_ip(clean)
             if peer:
                 print(f"[connect] Bootstrapping via HTTP {peer['ip']}:{peer['port']}...")
                 dest_hash = self._bootstrap_via_http(dest_hash, peer["ip"], peer["port"])
@@ -618,25 +687,15 @@ class MessagingBackend:
                 known_identity = RNS.Identity.recall(dest_hash, from_identity_hash=True)
 
             if known_identity is None:
-                print(f"[connect] No known identity, requesting path...")
-                if not RNS.Transport.has_path(dest_hash):
-                    if not self._request_path(dest_hash):
-                        if peer:
-                            print(f"[connect] Retrying path after remote announce...")
-                            self._bootstrap_via_http(dest_hash, peer["ip"], peer["port"])
-                            if not self._request_path(dest_hash):
-                                print(f"[connect] No path to destination (is the peer running and on the same LAN?)")
-                                return False
-                        else:
-                            print(f"[connect] No path to destination (no peer IP known — try Announce first)")
-                            return False
-                known_identity = RNS.Identity.recall(dest_hash)
-                if known_identity is None:
-                    print(f"[connect] Could not recall identity after path request")
-                    return False
+                print(f"[connect] No known identity after bootstrap")
+                return False
+
+            if not self._prepare_paths(dest_hash, peer):
+                return False
+
             print(f"[connect] Identity recalled successfully")
         except Exception as e:
-            print(f"[connect] Identity recall failed: {e}")
+            print(f"[connect] Identity/path setup failed: {e}")
             return False
 
         try:
@@ -652,38 +711,44 @@ class MessagingBackend:
             print(f"[connect] Destination creation failed: {e}")
             return False
 
+        self._teardown_active_link()
+
         try:
             link = RNS.Link(destination)
-            link.set_link_established_callback(self._outgoing_link_callback(link))
+            target_peer = clean
+            link.set_link_established_callback(self._outgoing_link_callback(link, target_peer))
             print(f"[connect] Link initiated, waiting for establishment...")
 
-            for _ in range(20):
+            for _ in range(60):
                 time.sleep(0.25)
-                if self.active_link is not None and self.active_link.link_id == link.link_id:
-                    print(f"[connect] Link established successfully")
-                    return True
                 try:
+                    if link.status == RNS.Link.ACTIVE:
+                        if self.active_link is None:
+                            self._setup_link(link)
+                            self._notify_link_established(link, target_peer)
+                        print(f"[connect] Link established successfully")
+                        return True
                     if link.status == RNS.Link.CLOSED:
                         print(f"[connect] Link was closed")
                         return False
-                except:
+                except Exception:
                     pass
+                if self.active_link is not None and self.active_link.link_id == link.link_id:
+                    print(f"[connect] Link established successfully")
+                    return True
 
-            if self.active_link is not None:
-                print(f"[connect] Link established (timeout)")
-                return True
-            print(f"[connect] Link establishment timed out")
+            print(f"[connect] Link establishment timed out (check UDP 4242 firewall on both peers)")
             return False
         except Exception as e:
             print(f"[connect] Link creation failed: {e}")
             return False
 
-    def _outgoing_link_callback(self, link):
+    def _outgoing_link_callback(self, link, peer_hash):
         def callback(link):
             remote_hash = self._get_remote_hash(link)
             print(f"[messaging] Outgoing link established: {link.link_id.hex()[:12]} -> {remote_hash[:16]}...")
             self._setup_link(link)
-            self.active_link = link
+            self._notify_link_established(link, peer_hash)
             self.drain_queue(link, remote_hash)
             if self.on_message:
                 self.on_message(

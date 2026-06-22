@@ -24,7 +24,7 @@ from chatxz.utils.system import get_avg_cpu_temperature, get_cpu_percent
 CONFIG_DIR = get_config_dir()
 DATA_DIR = get_data_dir()
 SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
-APP_VERSION = "0.3.10"
+APP_VERSION = "0.3.11"
 
 def build_desktop_rns_config(broadcast_ip="255.255.255.255"):
     return f"""[reticulum]
@@ -441,6 +441,7 @@ class ChatWebServer:
             self.identity, self.config_dir,
             on_message=self._on_message,
             on_progress=self._on_transfer_progress,
+            on_link_established=self._on_link_established,
             display_name=settings.get("name", ""),
             auto_announce=False,
             my_ip=my_ip,
@@ -498,6 +499,15 @@ class ChatWebServer:
     def _on_peer_discovered(self, peer):
         if self.messaging and peer.get("ip"):
             self.messaging.prepare_connect(peer.get("hash"), peer)
+
+    def _on_link_established(self, peer_hash, link):
+        self.active_peer = self._clean_hash(peer_hash)
+        print(f"[connect] Session active with {self.active_peer[:16]}...")
+        if self.websockets and self._loop:
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast({"type": "connect_ok", "hash": self.active_peer}),
+                self._loop,
+            )
 
     def _on_transfer_progress(self, data):
         if self.websockets and self._loop:
@@ -631,9 +641,12 @@ class ChatWebServer:
                 self.messaging.prepare_connect(resolved_hash, peer_info)
             ok = await asyncio.to_thread(self.messaging.connect_to, resolved_hash)
             if ok:
-                clean = peer_hash.replace("<", "").replace(">", "").replace(":", "").strip()
+                clean = (
+                    self.messaging.active_peer_hash
+                    or self._clean_hash(resolved_hash)
+                )
                 self.active_peer = clean
-                return web.json_response({"status": "ok"})
+                return web.json_response({"status": "ok", "hash": clean})
             return web.json_response({"error": "connection failed"}, status=400)
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
@@ -708,6 +721,8 @@ class ChatWebServer:
             "platform": "android" if is_android() else "desktop",
             "app_version": APP_VERSION,
             "http_bind": f"{self.host}:{self.port}",
+            "rns_udp_port": 4242,
+            "beacon_udp_port": BEACON_PORT,
             "lan_ip": detect_lan_ip(),
             "broadcast": lan_broadcast(),
             "interfaces": list_network_interfaces(),
@@ -726,6 +741,8 @@ class ChatWebServer:
     async def handle_rns_info(self, request):
         if request.query.get("announce") and self.messaging:
             await asyncio.to_thread(self.messaging.announce)
+            if self.lan_beacon:
+                await asyncio.to_thread(self.lan_beacon.send, 1, False)
         dest_hash = self.destination_hash
         pub_key = b""
         if self.identity_mgr and self.identity_mgr.identity:
@@ -1396,7 +1413,10 @@ class ChatWebServer:
                 self.messaging.prepare_connect(resolved_hash, peer_info)
                 ok = await asyncio.to_thread(self.messaging.connect_to, resolved_hash)
                 if ok:
-                    clean = peer_hash.replace("<", "").replace(">", "").replace(":", "").strip()
+                    clean = (
+                        self.messaging.active_peer_hash
+                        or self._clean_hash(resolved_hash)
+                    )
                     self.active_peer = clean
                     await ws.send_str(json.dumps({"type": "connect_ok", "hash": clean}))
                 else:
