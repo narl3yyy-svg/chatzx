@@ -6,6 +6,7 @@ from chatxz.core.discovery import normalize_hash, message_dest_hash_for_identity
 from chatxz.core.lan_rns import (
     build_announce_packet,
     request_path_for_hash,
+    request_paths_for_hash,
     unicast_announce_packet,
 )
 from chatxz.utils.platform import is_android
@@ -114,6 +115,9 @@ class MessagingBackend:
         self._link_peer_hashes = {}
         self._link_handoff = False
         self._last_handoff = False
+        self._failover_last_attempt = 0
+        self._failover_cooldown_s = 6
+        self._failover_in_progress = False
 
     def _is_self_hash(self, h):
         clean = normalize_hash(h)
@@ -194,13 +198,89 @@ class MessagingBackend:
                 aliases.add(ident_hex)
         return sorted(h for h in aliases if h and h != "unknown")
 
+    def _link_attached_interface(self, link):
+        if not link:
+            return None
+        return getattr(link, "attached_interface", None)
+
+    def _interface_healthy(self, iface):
+        if iface is None:
+            return False
+        if hasattr(iface, "online"):
+            return bool(iface.online)
+        return True
+
+    def _link_interface_healthy(self, link):
+        return self._interface_healthy(self._link_attached_interface(link))
+
+    def _peer_has_path(self, dest_hash):
+        clean = normalize_hash(dest_hash)
+        if len(clean) != 32:
+            return False
+        try:
+            return RNS.Transport.has_path(bytes.fromhex(clean))
+        except Exception:
+            return False
+
+    def _peer_path_interface(self, dest_hash):
+        clean = normalize_hash(dest_hash)
+        if len(clean) != 32:
+            return None
+        try:
+            dest_bytes = bytes.fromhex(clean)
+            with RNS.Transport.path_table_lock:
+                entry = RNS.Transport.path_table.get(dest_bytes)
+            if entry and len(entry) > 5:
+                return entry[5]
+        except Exception:
+            pass
+        return None
+
+    def _interfaces_equivalent(self, iface_a, iface_b):
+        if iface_a is None or iface_b is None:
+            return False
+        if iface_a is iface_b:
+            return True
+        return str(iface_a) == str(iface_b)
+
+    def link_needs_failover(self):
+        if not self.active_link or not self.active_peer_hash:
+            return False, ""
+        peer = self.dest_hash_for(self.active_peer_hash)
+        if not peer or peer == "unknown":
+            return False, ""
+
+        attached = self._link_attached_interface(self.active_link)
+        if not self._interface_healthy(attached):
+            return True, f"link interface offline ({type(attached).__name__ if attached else 'none'})"
+
+        path_iface = self._peer_path_interface(peer)
+        if path_iface and attached and not self._interfaces_equivalent(path_iface, attached):
+            if self._interface_healthy(path_iface):
+                return True, f"path available on {type(path_iface).__name__}"
+
+        if not self._peer_has_path(peer) and not self._interface_healthy(attached):
+            return True, "no RNS path to peer"
+
+        try:
+            if getattr(self.active_link, "status", None) == RNS.Link.STALE:
+                inactive = self.active_link.inactive_for()
+                if inactive > 8:
+                    return True, f"link stale ({inactive:.0f}s idle)"
+        except Exception:
+            pass
+
+        return False, ""
+
     def _link_path_score(self, link):
         if not link:
             return 0
+        if not self._link_interface_healthy(link):
+            return 0
         try:
             iface = (
-                getattr(link, "interface", None)
-                or getattr(link, "attached_interface", None)
+                self._link_attached_interface(link)
+                or getattr(link, "interface", None)
                 or getattr(link, "parent_interface", None)
             )
             iname = str(iface or "").lower()
@@ -574,6 +654,10 @@ class MessagingBackend:
 
     def _notify_link_established(self, link, peer_hash=None):
         peer = self.dest_hash_for(peer_hash or self._peer_destination_hash(link))
+        if not peer or peer == "unknown":
+            peer = self.dest_hash_for(self.active_peer_hash or "")
+        if not peer or peer == "unknown":
+            return
         self.active_link = link
         self.active_peer_hash = peer
         if self._send_link is None:
@@ -953,16 +1037,58 @@ class MessagingBackend:
             return False
         return not self.hashes_equivalent(peer_hash, self.active_peer_hash)
 
-    def _teardown_active_link(self):
-        if self.active_link:
-            try:
-                self.active_link.teardown()
-            except Exception:
-                pass
-        self.active_link = None
-        self.active_peer_hash = None
-        self._send_link = None
-        self._link_peer_hashes.clear()
+    def _teardown_active_link(self, preserve_peer=False, handoff=False):
+        self._link_handoff = handoff
+        try:
+            if self.active_link:
+                try:
+                    self.active_link.teardown()
+                except Exception:
+                    pass
+            self.active_link = None
+            self._send_link = None
+            if not preserve_peer:
+                self.active_peer_hash = None
+                self._link_peer_hashes.clear()
+        finally:
+            if handoff:
+                self._link_handoff = False
+
+    def reconnect_active_peer(self, peer_ip=None, peer_port=None, peer_lookup=None,
+                              caller_ip=None, caller_port=8742, reason=""):
+        now = time.time()
+        if self._failover_in_progress:
+            return False
+        if now - self._failover_last_attempt < self._failover_cooldown_s:
+            return False
+        peer = self.dest_hash_for(self.active_peer_hash or "")
+        if not peer or peer == "unknown":
+            return False
+
+        self._failover_last_attempt = now
+        self._failover_in_progress = True
+        try:
+            print(f"[connect] Failover reconnect to {peer[:16]}... ({reason})")
+            request_paths_for_hash(peer)
+            self._teardown_active_link(preserve_peer=True, handoff=True)
+            time.sleep(0.6)
+            if peer_ip:
+                self._request_peer_connect(
+                    peer_ip, int(peer_port or 8742),
+                    normalize_hash(self.my_dest_hash or ""),
+                    caller_ip=caller_ip, caller_port=int(caller_port or 8742),
+                )
+            return self.connect_to(
+                peer,
+                peer_ip,
+                peer_port,
+                peer_lookup,
+                caller_ip,
+                caller_port,
+                replace=False,
+            )
+        finally:
+            self._failover_in_progress = False
 
     def _interrupted(self):
         return self.shutdown_requested or not self.running
@@ -980,13 +1106,19 @@ class MessagingBackend:
 
             old_link = None
             if self.active_link and self.active_peer_hash and self.hashes_equivalent(clean, self.active_peer_hash):
+                link_ok = self._link_interface_healthy(self.active_link) and self._peer_has_path(clean)
                 if not replace:
-                    print(f"[connect] Already connected to {self.active_peer_hash[:16]}...")
+                    if link_ok:
+                        print(f"[connect] Already connected to {self.active_peer_hash[:16]}...")
+                        return True
+                    print(f"[connect] Stale link to {self.active_peer_hash[:16]}... — reconnecting")
+                    self._teardown_active_link(preserve_peer=True, handoff=True)
+                elif self._link_path_score(self.active_link) >= 90 and link_ok:
                     return True
-                if self._link_path_score(self.active_link) >= 90 and not peer_ip:
-                    return True
-                old_link = self.active_link
-                print(f"[connect] Replacing link to {self.active_peer_hash[:16]} for better path...")
+                else:
+                    old_link = self.active_link
+                    self._teardown_active_link(preserve_peer=True, handoff=True)
+                    print(f"[connect] Replacing link to {self.active_peer_hash[:16]} for better path...")
             elif (
                 self.active_link and self.active_peer_hash
                 and not self.hashes_equivalent(clean, self.active_peer_hash)
@@ -1034,7 +1166,7 @@ class MessagingBackend:
                     peer_ip, peer_port, my_hash,
                     caller_ip=caller_ip, caller_port=caller_port,
                 )
-            request_path_for_hash(dest_hex)
+            request_paths_for_hash(dest_hex)
             print(f"[connect] Connecting to {dest_hex[:16]}... (timeout {LINK_CONNECT_TIMEOUT_S}s)")
 
             link = None

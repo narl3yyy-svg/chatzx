@@ -363,9 +363,13 @@ class ChatWebServer:
 
     def _session_chat_peer(self, sender_hash=None):
         if self.messaging and self.messaging.active_peer_hash:
-            return self._peer_dest_hash(self.messaging.active_peer_hash)
+            resolved = self._peer_dest_hash(self.messaging.active_peer_hash)
+            if resolved and resolved != "unknown":
+                return resolved
         if self.active_peer:
-            return self._peer_dest_hash(self.active_peer)
+            resolved = self._peer_dest_hash(self.active_peer)
+            if resolved and resolved != "unknown":
+                return resolved
         if sender_hash:
             return self._peer_dest_hash(sender_hash)
         return ""
@@ -823,7 +827,9 @@ class ChatWebServer:
             )
 
     def _on_link_closed(self, peer_hash, handoff=False):
-        if handoff or (self.messaging and self.messaging.active_link):
+        if handoff or getattr(self.messaging, "_failover_in_progress", False):
+            return
+        if self.messaging and self.messaging.active_link:
             return
         self.active_peer = None
         if self.websockets and self._loop:
@@ -1289,58 +1295,64 @@ class ChatWebServer:
                 return
             settings = self.load_settings()
             interfaces = normalize_interface_list(settings.get("rns_interfaces"))
-            changed = False
+            unplugged = False
             for iface in interfaces:
                 if iface.get("type") != "SerialInterface":
                     continue
                 port = (iface.get("port") or "").strip()
-                if not port or not iface.get("enabled"):
+                if not port:
                     continue
-                if serial_port_status(port) != "missing":
-                    continue
-                iface["enabled"] = False
-                changed = True
-                print(f"[serial] Port {port} unplugged — disabling serial in settings")
-            if changed:
-                settings["rns_interfaces"] = interfaces
-                self.save_settings(settings)
+                if serial_port_status(port) == "missing":
+                    unplugged = True
+            if unplugged:
                 self._disable_rns_serial_interfaces()
 
-    async def _path_preference_loop(self):
+    def _peer_connect_meta(self, peer_hash):
+        peer_ip = None
+        peer_port = 8742
+        for p in (self.discovery.get_peers() if self.discovery else []):
+            if not self._peers_equivalent(p.get("hash"), peer_hash):
+                continue
+            if p.get("ip"):
+                peer_ip = p.get("ip")
+            peer_port = p.get("port") or peer_port
+        return peer_ip, peer_port
+
+    async def _link_failover_loop(self):
+        """Detect dead or migrated RNS paths and reconnect without server restart."""
         while True:
-            await asyncio.sleep(6)
-            if self._shutting_down or not self.messaging or not self.messaging.active_link:
+            await asyncio.sleep(3)
+            if self._shutting_down or not self.messaging:
                 continue
             peer = self.active_peer or self.messaging.active_peer_hash
-            if not peer:
+            if not peer or not self.messaging.active_link:
                 continue
-            if self.messaging._link_path_score(self.messaging.active_link) >= 90:
+
+            needs, reason = self.messaging.link_needs_failover()
+            if not needs:
                 continue
-            peer_ip = None
-            peer_port = 8742
-            for p in (self.discovery.get_peers() if self.discovery else []):
-                if not self._peers_equivalent(p.get("hash"), peer):
-                    continue
-                if p.get("via") == "rns" and p.get("ip"):
-                    peer_ip = p.get("ip")
-                    peer_port = p.get("port") or 8742
-                    break
-            if not peer_ip:
-                continue
-            print(f"[connect] LAN path available for {peer[:16]}... — migrating from slower link")
+
+            peer_ip, peer_port = self._peer_connect_meta(peer)
             try:
-                await self._run_blocking(
-                    self.messaging.connect_to,
-                    peer,
-                    peer_ip,
-                    peer_port,
-                    self._discovery_peer_for_connect,
-                    detect_lan_ip(),
-                    self.port,
-                    True,
-                )
-            except Exception as e:
-                print(f"[connect] LAN migration failed: {e}")
+                await self._run_blocking(self.messaging.announce)
+            except Exception:
+                pass
+
+            result = await self._run_blocking(
+                self.messaging.reconnect_active_peer,
+                peer_ip,
+                peer_port,
+                self._discovery_peer_for_connect,
+                detect_lan_ip(),
+                self.port,
+                reason,
+            )
+            if result:
+                clean = self._peer_dest_hash(self.messaging.active_peer_hash or peer)
+                self.active_peer = clean
+                print(f"[connect] Failover complete with {clean[:16]}...")
+            else:
+                print(f"[connect] Failover attempt failed ({reason})")
 
     async def handle_network_status(self, request):
         rns_interfaces = []
@@ -2113,8 +2125,8 @@ class ChatWebServer:
             self._save_history()
             print("[history] Cleared on restart")
         asyncio.create_task(self._history_maintenance_loop())
+        asyncio.create_task(self._link_failover_loop())
         if not is_android():
-            asyncio.create_task(self._path_preference_loop())
             asyncio.create_task(self._serial_watchdog_loop())
 
     def _register_routes(self, app):

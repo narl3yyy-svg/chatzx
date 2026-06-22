@@ -76,16 +76,49 @@ def build_announce_packet(destination, app_data):
     return destination.announce(app_data=app_data, send=False)
 
 
-def request_path_for_hash(hash_hex):
+def _dest_bytes_for_hash(hash_hex):
     clean = (hash_hex or "").replace(":", "").strip().lower()
     if len(clean) != 32:
-        return False
+        return None
     try:
-        dest_bytes = bytes.fromhex(clean)
+        return bytes.fromhex(clean)
     except ValueError:
+        return None
+
+
+def request_path_for_hash(hash_hex):
+    dest_bytes = _dest_bytes_for_hash(hash_hex)
+    if dest_bytes is None:
         return False
     try:
         RNS.Transport.request_path(dest_bytes)
+        return True
+    except Exception:
+        return False
+
+
+def request_paths_for_hash(hash_hex):
+    """Request a path to peer on all online RNS interfaces."""
+    dest_bytes = _dest_bytes_for_hash(hash_hex)
+    if dest_bytes is None:
+        return False
+    try:
+        RNS.Transport.request_path(dest_bytes)
+        for iface in getattr(RNS.Transport, "interfaces", []) or []:
+            if not getattr(iface, "online", True):
+                continue
+            try:
+                RNS.Transport.request_path(dest_bytes, on_interface=iface)
+            except Exception:
+                pass
+            spawned = getattr(iface, "spawned_interfaces", None)
+            if isinstance(spawned, dict):
+                for child in spawned.values():
+                    if getattr(child, "online", True):
+                        try:
+                            RNS.Transport.request_path(dest_bytes, on_interface=child)
+                        except Exception:
+                            pass
         return True
     except Exception:
         return False
