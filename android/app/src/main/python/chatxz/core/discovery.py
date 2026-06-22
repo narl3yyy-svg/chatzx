@@ -1,13 +1,50 @@
+import base64
 import json
 import time
 import RNS
 
 DISCOVERY_TIMEOUT = 60
 APP_NAME = "chatxz"
+PUBKEY_SIZE = RNS.Identity.KEYSIZE // 8
 
 
 def normalize_hash(h):
     return (h or "").replace("<", "").replace(">", "").replace(":", "").strip().lower()
+
+
+def register_identity_from_beacon(data):
+    """Cache peer identity from beacon pubkey so connect works without RNS announce."""
+    pubkey_b64 = data.get("pubkey")
+    if not pubkey_b64:
+        return False
+    try:
+        pubkey = base64.b64decode(pubkey_b64, validate=True)
+    except Exception:
+        return False
+    if len(pubkey) != PUBKEY_SIZE:
+        return False
+
+    dest_hex = normalize_hash(data.get("hash"))
+    if len(dest_hex) != 32:
+        return False
+    try:
+        dest_bytes = bytes.fromhex(dest_hex)
+    except ValueError:
+        return False
+
+    app_data = None
+    name = (data.get("name") or "").strip()
+    if name:
+        try:
+            app_data = json.dumps({"app": APP_NAME, "name": name}).encode("utf-8")
+        except Exception:
+            app_data = None
+
+    try:
+        RNS.Identity.remember(dest_bytes, dest_bytes, pubkey, app_data)
+        return True
+    except Exception:
+        return False
 
 
 def message_dest_hash_for_identity(ident):
@@ -131,6 +168,14 @@ class PeerDiscovery:
         identity_hex = normalize_hash(data.get("identity_hash"))
         if identity_hex and identity_hex != hash_hex:
             peer["identity_hash"] = identity_hex
+        if data.get("pubkey"):
+            peer["pubkey"] = data.get("pubkey")
+        if register_identity_from_beacon(data):
+            peer["via"] = "rns"
+            self._log_once(
+                f"beacon-id:{hash_hex}",
+                f"[discovery] Beacon identity registered: {name} ({data.get('ip', '?')})",
+            )
         self._store_peer(peer)
         self._log_once(
             f"beacon:{hash_hex}",

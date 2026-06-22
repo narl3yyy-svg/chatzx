@@ -1,6 +1,13 @@
 import threading, RNS, json, time, os, tempfile, uuid
+from urllib import request as urlrequest
+
 from chatxz.utils.helpers import format_speed
 from chatxz.core.discovery import normalize_hash, message_dest_hash_for_identity
+from chatxz.core.lan_rns import (
+    build_announce_packet,
+    request_path_for_hash,
+    unicast_announce_packet,
+)
 from chatxz.utils.platform import is_android
 
 APP_NAME = "chatxz"
@@ -247,14 +254,46 @@ class MessagingBackend:
     def announce(self):
         self._announce()
 
-    def _announce(self):
-        if self.destination:
-            announce_data = json.dumps({
-                "app": APP_NAME,
-                "name": self.display_name or ""
-            }).encode("utf-8")
-            self.destination.announce(app_data=announce_data)
-            print(f"[messaging] Announced on LAN (name={self.display_name or 'none'})")
+    def _announce(self, peer_ip=None, unicast_subnet=None):
+        if not self.destination:
+            return
+        announce_data = json.dumps({
+            "app": APP_NAME,
+            "name": self.display_name or ""
+        }).encode("utf-8")
+        self.destination.announce(app_data=announce_data)
+        if unicast_subnet is None:
+            unicast_subnet = is_android()
+        if peer_ip or unicast_subnet:
+            packet = build_announce_packet(self.destination, announce_data)
+            sent = unicast_announce_packet(
+                packet,
+                peer_ip=peer_ip,
+                subnet_probe=unicast_subnet,
+            )
+            if sent:
+                hint = f" + {sent} unicast" if sent else ""
+                print(f"[messaging] Announced on LAN (name={self.display_name or 'none'}{hint})")
+                return
+        print(f"[messaging] Announced on LAN (name={self.display_name or 'none'})")
+
+    def _poke_peer_announce(self, peer_ip, peer_port=8742):
+        if not peer_ip:
+            return False
+        port = int(peer_port or 8742)
+        url = f"http://{peer_ip}:{port}/api/announce"
+        try:
+            req = urlrequest.Request(
+                url,
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlrequest.urlopen(req, timeout=2.5) as resp:
+                return 200 <= resp.status < 300
+        except Exception as exc:
+            print(f"[connect] Peer wake ({peer_ip}) failed: {exc}")
+            return False
 
     def _announce_loop(self):
         while self.running:
@@ -308,10 +347,11 @@ class MessagingBackend:
                     return dest
         return normalize_hash(peer_info.get("hash"))
 
-    def _wait_for_identity(self, hash_hex, peer_ip=None, peer_lookup=None):
+    def _wait_for_identity(self, hash_hex, peer_ip=None, peer_port=None, peer_lookup=None):
         clean = normalize_hash(hash_hex)
         deadline = time.time() + IDENTITY_WAIT_TIMEOUT_S
         last_log = 0
+        last_poke = 0
         while time.time() < deadline:
             ident = self._identity_for_hash(clean)
             if ident:
@@ -338,9 +378,14 @@ class MessagingBackend:
             now = time.time()
             if now - last_log >= 3:
                 remaining = int(deadline - now)
-                print(f"[connect] Waiting for RNS announce ({remaining}s left)...")
+                print(f"[connect] Waiting for peer identity ({remaining}s left)...")
                 last_log = now
-            self._announce()
+            if peer_ip and now - last_poke >= 3:
+                if self._poke_peer_announce(peer_ip, peer_port):
+                    print(f"[connect] Woke peer at {peer_ip} for RNS announce")
+                request_path_for_hash(clean)
+                last_poke = now
+            self._announce(peer_ip=peer_ip, unicast_subnet=True)
             time.sleep(0.5)
 
         return None, clean
@@ -700,7 +745,7 @@ class MessagingBackend:
     def _interrupted(self):
         return self.shutdown_requested or not self.running
 
-    def connect_to(self, destination_hash_hex, peer_ip=None, peer_lookup=None):
+    def connect_to(self, destination_hash_hex, peer_ip=None, peer_port=None, peer_lookup=None):
         with self._connect_lock:
             if self._interrupted():
                 return False
@@ -722,12 +767,18 @@ class MessagingBackend:
             known_identity = self._identity_for_hash(clean)
             if known_identity is None:
                 known_identity, clean = self._wait_for_identity(
-                    clean, peer_ip=peer_ip, peer_lookup=peer_lookup
+                    clean,
+                    peer_ip=peer_ip,
+                    peer_port=peer_port,
+                    peer_lookup=peer_lookup,
                 )
             if known_identity is None:
                 print(f"[connect] No known identity for {clean[:16]}...")
-                print("[connect] Peer must send an RNS announce (beacon alone is not enough).")
-                print("[connect] On the peer device: open chatxz, wait ~15s, or tap Announce.")
+                print("[connect] Peer identity not learned yet (beacon pubkey or RNS announce).")
+                if peer_ip:
+                    print(f"[connect] Ensure chatxz is open on {peer_ip} and try Announce in the UI.")
+                else:
+                    print("[connect] On the peer device: open chatxz, wait ~15s, or tap Announce.")
                 return False
 
             ident_hex = normalize_hash(RNS.hexrep(known_identity.hash))
@@ -746,7 +797,8 @@ class MessagingBackend:
             dest_hex = normalize_hash(RNS.hexrep(destination.hash))
             self.register_peer_mapping(dest_hex, ident_hex)
 
-            self._announce()
+            self._announce(peer_ip=peer_ip, unicast_subnet=True)
+            request_path_for_hash(dest_hex)
             print(f"[connect] Connecting to {dest_hex[:16]}... (timeout {LINK_CONNECT_TIMEOUT_S}s)")
 
             link = None

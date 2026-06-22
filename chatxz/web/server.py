@@ -657,6 +657,12 @@ class ChatWebServer:
         self.destination_hash = my_hash
         self.discovery = PeerDiscovery(on_peer_seen=self._on_peer_discovered)
         self.discovery.start()
+        identity_pubkey = None
+        if self.identity:
+            try:
+                identity_pubkey = self.identity.get_public_key()
+            except Exception:
+                identity_pubkey = None
         self.lan_beacon = LanBeacon(
             self.discovery,
             my_dest_clean,
@@ -665,6 +671,7 @@ class ChatWebServer:
             port=self.port,
             periodic=is_android(),
             identity_hash=self.identity_mgr.get_hex_hash(),
+            identity_pubkey=identity_pubkey,
             on_periodic=self.messaging.announce if is_android() else None,
         )
         self.lan_beacon.start()
@@ -907,11 +914,13 @@ class ChatWebServer:
             if not peer_hash:
                 return web.json_response({"error": "hash required"}, status=400)
             peer_ip = (data.get("ip") or "").strip() or None
+            peer_port = data.get("port") or 8742
             resolved_hash = self._resolve_connect_target(peer_hash, peer_ip)
             ok = await self._run_blocking(
                 self.messaging.connect_to,
                 resolved_hash,
                 peer_ip,
+                peer_port,
                 self._discovery_peer_for_connect,
             )
             if self._shutting_down or ok is None:
@@ -941,6 +950,14 @@ class ChatWebServer:
         }
         if ident and ident != payload["hash"]:
             payload["identity_hash"] = ident
+        if self.identity:
+            try:
+                import base64
+                payload["pubkey"] = base64.b64encode(
+                    self.identity.get_public_key()
+                ).decode("ascii")
+            except Exception:
+                pass
         return payload
 
     def _reset_network_state(self, update_settings=True):
@@ -1643,11 +1660,13 @@ class ChatWebServer:
             peer_hash = data.get("hash", "")
             if peer_hash and self.messaging:
                 peer_ip = (data.get("ip") or "").strip() or None
+                peer_port = data.get("port") or 8742
                 resolved_hash = self._resolve_connect_target(peer_hash, peer_ip)
                 ok = await self._run_blocking(
                     self.messaging.connect_to,
                     resolved_hash,
                     peer_ip,
+                    peer_port,
                     self._discovery_peer_for_connect,
                 )
                 if self._shutting_down or ok is None:

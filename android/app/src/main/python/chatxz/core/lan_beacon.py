@@ -1,5 +1,6 @@
 """UDP LAN beacon for peer discovery (supplements RNS announces)."""
 
+import base64
 import json
 import socket
 import threading
@@ -15,10 +16,12 @@ MAGIC = b"CHATXZ1"
 
 class LanBeacon:
     def __init__(self, discovery, dest_hash, display_name="", ip=None, port=8742,
-                 periodic=False, identity_hash=None, on_periodic=None):
+                 periodic=False, identity_hash=None, identity_pubkey=None,
+                 on_periodic=None):
         self.discovery = discovery
         self.dest_hash = (dest_hash or "").replace(":", "")
         self.identity_hash = (identity_hash or "").replace(":", "")
+        self.identity_pubkey = identity_pubkey
         self.on_periodic = on_periodic
         self.display_name = display_name or ""
         self.ip = ip
@@ -92,6 +95,11 @@ class LanBeacon:
         }
         if self.identity_hash and self.identity_hash != self.dest_hash:
             payload["identity_hash"] = self.identity_hash
+        if self.identity_pubkey:
+            try:
+                payload["pubkey"] = base64.b64encode(self.identity_pubkey).decode("ascii")
+            except Exception:
+                pass
         return json.dumps(payload).encode("utf-8")
 
     def _broadcast_targets(self):

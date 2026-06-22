@@ -185,6 +185,11 @@ chatxz --daemon
 
 ## Changelog (recent)
 
+### v0.3.30
+- Android↔desktop connect: beacon carries identity pubkey (no RNS announce required to learn peer)
+- Unicast RNS announces to peer IP + subnet (UDP 4242 broadcast often blocked on Wi-Fi)
+- Connect wakes peer via HTTP `/api/announce` and `request_path` while waiting for identity
+
 ### v0.3.29
 - Single version source: `version.properties` drives Gradle + `APP_VERSION` (via `chatxz/_version.py`)
 - Release bump: `./scripts/bump-version.sh 0.3.29` then tag `v0.3.29`
