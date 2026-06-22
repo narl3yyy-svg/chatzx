@@ -367,6 +367,80 @@ def update_interface(items, iface_id, updates):
     return out
 
 
+def configured_serial_port(settings_interfaces=None):
+    for iface in normalize_interface_list(settings_interfaces):
+        if iface.get("type") != "SerialInterface":
+            continue
+        port = (iface.get("port") or "").strip()
+        if port:
+            return port, int(iface.get("speed") or SERIAL_DEFAULT_BAUD)
+    return "", SERIAL_DEFAULT_BAUD
+
+
+def hot_add_serial_interface(port, speed=SERIAL_DEFAULT_BAUD, ifac_size=16):
+    """Attach SerialInterface to a running RNS instance when USB is plugged in later."""
+    port = (port or "").strip()
+    if not port or not serial_port_accessible(port):
+        return None
+    try:
+        import RNS
+        from RNS.Interfaces.SerialInterface import SerialInterface
+    except Exception as exc:
+        print(f"[serial] Hot-add unavailable: {exc}")
+        return None
+
+    for iface in getattr(RNS.Transport, "interfaces", []) or []:
+        if type(iface).__name__ != "SerialInterface":
+            continue
+        if getattr(iface, "port", None) == port:
+            if getattr(iface, "online", False):
+                return iface
+            try:
+                RNS.Transport.remove_interface(iface)
+            except Exception:
+                pass
+            break
+
+    name = f"Serial {port}"
+    try:
+        iface = SerialInterface(RNS.Transport, {
+            "name": name,
+            "port": port,
+            "speed": int(speed),
+            "ifac_size": ifac_size,
+        })
+        iface.OUT = True
+        iface.IN = True
+        if hasattr(iface, "optimise_mtu"):
+            iface.optimise_mtu()
+        RNS.Transport.add_interface(iface)
+        print(f"[serial] Hot-added RNS SerialInterface on {port}")
+        return iface
+    except Exception as exc:
+        print(f"[serial] Hot-add failed for {port}: {exc}")
+        return None
+
+
+def ensure_runtime_serial(settings_interfaces=None):
+    port, speed = configured_serial_port(settings_interfaces)
+    if not port:
+        return None
+    existing = None
+    try:
+        import RNS
+        for iface in getattr(RNS.Transport, "interfaces", []) or []:
+            if type(iface).__name__ == "SerialInterface" and getattr(iface, "port", None) == port:
+                existing = iface
+                break
+    except Exception:
+        existing = None
+    if existing and getattr(existing, "online", False):
+        return existing
+    if serial_port_accessible(port):
+        return hot_add_serial_interface(port, speed=speed)
+    return None
+
+
 def render_rns_config(interfaces, broadcast_ip=None, android=False, log=print):
     lines = [
         "[reticulum]",

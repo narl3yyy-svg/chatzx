@@ -10,6 +10,7 @@ from chatxz.core.messaging import MessagingBackend
 from chatxz.core.voice import VoiceRecorder, VoicePlayer
 from chatxz.core.discovery import PeerDiscovery
 from chatxz.core.lan_beacon import LanBeacon, BEACON_PORT
+from chatxz.core.lan_rns import serial_interface_online
 from chatxz.core.rns_interfaces import (
     INTERFACE_PRESETS,
     SERIAL_BAUD_RATES,
@@ -18,7 +19,9 @@ from chatxz.core.rns_interfaces import (
     SERIAL_PERMISSION_HINT,
     serial_permission_hint_for_process,
     add_interface,
+    configured_serial_port,
     delete_interface,
+    ensure_runtime_serial,
     list_serial_ports,
     normalize_interface_list,
     render_rns_config,
@@ -831,7 +834,6 @@ class ChatWebServer:
             return
         if self.messaging and self.messaging.active_link:
             return
-        self.active_peer = None
         if self.websockets and self._loop:
             asyncio.run_coroutine_threadsafe(
                 self._broadcast({"type": "link_closed", "data": {}}),
@@ -1291,26 +1293,21 @@ class ChatWebServer:
     async def _serial_watchdog_loop(self):
         serial_detach_sent = False
         while True:
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
             if self._shutting_down:
                 return
             settings = self.load_settings()
             interfaces = normalize_interface_list(settings.get("rns_interfaces"))
-            unplugged = False
-            for iface in interfaces:
-                if iface.get("type") != "SerialInterface":
-                    continue
-                port = (iface.get("port") or "").strip()
-                if not port:
-                    continue
-                if serial_port_status(port) == "missing":
-                    unplugged = True
-            if unplugged:
+            port, _ = configured_serial_port(interfaces)
+            if not port:
+                continue
+            if serial_port_status(port) == "missing":
                 if not serial_detach_sent:
                     self._disable_rns_serial_interfaces()
                     serial_detach_sent = True
             else:
                 serial_detach_sent = False
+                await self._run_blocking(ensure_runtime_serial, interfaces)
 
     def _peer_connect_meta(self, peer_hash):
         peer_ip = None
@@ -1329,15 +1326,24 @@ class ChatWebServer:
             await asyncio.sleep(3)
             if self._shutting_down or not self.messaging:
                 continue
-            peer = self.active_peer or self.messaging.active_peer_hash
-            if not peer or not self.messaging.active_link:
+            peer = self._peer_dest_hash(
+                self.messaging.active_peer_hash
+                or getattr(self.messaging, "_session_peer_hash", None)
+                or self.active_peer
+            )
+            if not peer:
                 continue
 
-            needs, reason = self.messaging.link_needs_failover()
+            needs, reason = self.messaging.session_needs_reconnect()
             if not needs:
                 continue
 
+            settings = self.load_settings()
+            interfaces = normalize_interface_list(settings.get("rns_interfaces"))
+            await self._run_blocking(ensure_runtime_serial, interfaces)
+
             peer_ip, peer_port = self._peer_connect_meta(peer)
+            print(f"[connect] Failover triggered: {reason}")
 
             result = await self._run_blocking(
                 self.messaging.reconnect_active_peer,
@@ -1369,10 +1375,18 @@ class ChatWebServer:
         peers = self.discovery.get_peers() if self.discovery else []
         link_active = bool(self.messaging and self.messaging.active_link)
         active_peer = None
+        link_rns_interface = None
         if link_active:
             active_peer = self.active_peer or (
                 self.messaging.active_peer_hash if self.messaging else None
             )
+            try:
+                iface = self.messaging._link_attached_interface(self.messaging.active_link)
+                if iface:
+                    link_rns_interface = type(iface).__name__
+            except Exception:
+                pass
+        port, _ = configured_serial_port(self.load_settings().get("rns_interfaces"))
         return web.json_response({
             "platform": "android" if is_android() else "desktop",
             "app_version": APP_VERSION,
@@ -1401,6 +1415,13 @@ class ChatWebServer:
             "ws_clients": len(self.websockets),
             "link_active": link_active,
             "active_peer": active_peer,
+            "link_rns_interface": link_rns_interface,
+            "serial_configured_port": port or None,
+            "serial_in_rns": bool(port and serial_interface_online(port)),
+            "session_peer": (
+                getattr(self.messaging, "_session_peer_hash", None)
+                if self.messaging else None
+            ),
             "queue_size": self.messaging.queue_size() if self.messaging else 0,
         })
 
@@ -1428,7 +1449,7 @@ class ChatWebServer:
 
     async def handle_disconnect(self, request):
         if self.messaging:
-            self.messaging._teardown_active_link()
+            self.messaging._teardown_active_link(clear_session=True)
         self.active_peer = None
         return web.json_response({"status": "ok"})
 

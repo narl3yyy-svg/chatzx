@@ -129,7 +129,33 @@ def interface_is_healthy(iface):
         addr = getattr(iface, "addr", None)
         if isinstance(spawned, dict) and addr is not None and addr not in spawned:
             return False
+        ifname = getattr(iface, "ifname", None)
+        if ifname:
+            timed_out = getattr(owner, "timed_out_interfaces", None)
+            if isinstance(timed_out, dict) and timed_out.get(ifname) is True:
+                return False
     return True
+
+
+def lan_mesh_has_peer():
+    """True when at least one healthy AutoInterfacePeer exists (real LAN mesh path)."""
+    for iface in iter_transport_interfaces():
+        if type(iface).__name__ != "AutoInterfacePeer":
+            continue
+        if interface_is_healthy(iface):
+            return True
+    return False
+
+
+def serial_interface_online(port=None):
+    for iface in iter_transport_interfaces():
+        if type(iface).__name__ != "SerialInterface":
+            continue
+        if port and getattr(iface, "port", None) != port:
+            continue
+        if interface_is_healthy(iface):
+            return iface
+    return None
 
 
 def iter_transport_interfaces():

@@ -9,11 +9,13 @@ from chatxz.core.lan_rns import (
     detach_unhealthy_interfaces,
     interface_family,
     interface_is_healthy,
+    lan_mesh_has_peer,
     online_interfaces,
     peer_path_entry,
     request_path_for_hash,
     request_paths_for_hash,
     scrub_peer_path,
+    serial_interface_online,
     unicast_announce_packet,
     wait_for_peer_path,
 )
@@ -26,6 +28,7 @@ LINK_CONNECT_POLL_S = 0.1
 IDENTITY_WAIT_TIMEOUT_S = 18
 REVERSE_CONNECT_WAIT_S = 15
 LINK_FAILOVER_GRACE_S = 12
+RECEIPT_FAILOVER_TIMEOUT_S = 10
 
 MESSAGE_TYPE_TEXT = "text"
 MESSAGE_TYPE_FILE = "file"
@@ -129,6 +132,8 @@ class MessagingBackend:
         self._failover_cooldown_s = 4
         self._failover_in_progress = False
         self._last_link_established_at = 0
+        self._session_peer_hash = None
+        self._pending_sends = {}
 
     def _is_self_hash(self, h):
         clean = normalize_hash(h)
@@ -253,31 +258,28 @@ class MessagingBackend:
         return str(iface_a) == str(iface_b)
 
     def _has_online_family(self, family):
-        ifaces = online_interfaces(family=family)
-        if not ifaces:
-            return False
-        if family != "lan":
-            return True
-        for iface in ifaces:
-            if type(iface).__name__ == "AutoInterfacePeer":
-                return True
-        for iface in ifaces:
-            spawned = getattr(iface, "spawned_interfaces", None)
-            if isinstance(spawned, dict) and spawned:
-                return True
-        try:
-            from chatxz.utils.platform import lan_ip as _lan_ip
-            return bool(_lan_ip())
-        except Exception:
-            return False
+        if family == "serial":
+            return serial_interface_online() is not None
+        if family == "lan":
+            return lan_mesh_has_peer() or bool(online_interfaces(family="udp"))
+        return bool(online_interfaces(family=family))
 
     def _preferred_failover_family(self, peer, attached=None):
         attached = attached or self._link_attached_interface(self.active_link)
         att_fam = interface_family(attached)
         if att_fam == "serial" and self._has_online_family("lan"):
             return "lan"
+        if att_fam == "lan" and not lan_mesh_has_peer():
+            if bool(online_interfaces(family="udp")):
+                return "udp"
+            if self._has_online_family("serial"):
+                return "serial"
         if att_fam == "lan" and self._has_online_family("serial"):
             return "serial"
+        if att_fam == "udp" and self._has_online_family("serial"):
+            return "serial"
+        if att_fam == "udp" and lan_mesh_has_peer():
+            return "lan"
         path_iface = self._peer_path_interface(peer)
         if path_iface and self._interface_healthy(path_iface):
             fam = interface_family(path_iface)
@@ -336,16 +338,32 @@ class MessagingBackend:
                 elif new_score > old_score + 15:
                     return True, f"better path on {type(path_iface).__name__}"
 
-        if att_fam == "lan" and not self._has_online_family("lan") and self._has_online_family("serial"):
-            return True, "LAN down, serial available"
+        if att_fam == "lan" and not lan_mesh_has_peer():
+            if bool(online_interfaces(family="udp")):
+                return True, "AutoInterface down, UDP available"
+            if self._has_online_family("serial"):
+                return True, "LAN down, serial available"
+
+        if att_fam == "udp" and not bool(online_interfaces(family="udp")):
+            if lan_mesh_has_peer():
+                return True, "UDP down, AutoInterface available"
+            if self._has_online_family("serial"):
+                return True, "UDP down, serial available"
 
         if att_fam == "serial" and not self._has_online_family("serial") and self._has_online_family("lan"):
             return True, "serial down, LAN available"
 
-        if not self._peer_has_path(peer):
+        if self._pending_sends:
+            oldest = min(self._pending_sends.values())
+            if (time.time() - oldest) > RECEIPT_FAILOVER_TIMEOUT_S:
+                return True, "send receipt timeout (link may be dead)"
+
+        if not self._peer_has_path(peer) and not in_grace:
             alt = self._preferred_failover_family(peer, attached)
             if alt and self._has_online_family(alt):
                 return True, f"path lost, trying {alt}"
+            if not self._link_interface_healthy(self.active_link):
+                return True, "no path to peer (link interface dead)"
 
         try:
             if getattr(self.active_link, "status", None) == RNS.Link.STALE:
@@ -356,6 +374,23 @@ class MessagingBackend:
             pass
 
         return False, ""
+
+    def session_needs_reconnect(self):
+        """True when a chat session peer exists but the RNS link is missing or unhealthy."""
+        peer = self.dest_hash_for(self.active_peer_hash or self._session_peer_hash or "")
+        if not peer or peer == "unknown":
+            return False, ""
+        if self._failover_in_progress:
+            return False, ""
+        if self.active_link:
+            return self.link_needs_failover()
+        if time.time() - self._failover_last_attempt < self._failover_cooldown_s:
+            return False, ""
+        return True, "link dropped — reconnecting"
+
+    def clear_session_peer(self):
+        self._session_peer_hash = None
+        self._pending_sends.clear()
 
     def _link_path_score(self, link):
         if not link:
@@ -747,7 +782,9 @@ class MessagingBackend:
             return
         self.active_link = link
         self.active_peer_hash = peer
+        self._session_peer_hash = peer
         self._last_link_established_at = time.time()
+        self._pending_sends.clear()
         if self._send_link is None:
             self._send_link = link
         if self.on_link_established:
@@ -846,6 +883,8 @@ class MessagingBackend:
                 if self._link_handoff:
                     pass
                 else:
+                    if self.active_peer_hash:
+                        self._session_peer_hash = self.active_peer_hash
                     self.active_link = None
                     self.active_peer_hash = None
             if self._send_link and self._send_link.link_id == link.link_id:
@@ -874,6 +913,7 @@ class MessagingBackend:
                         receipt = json.loads(chat_msg.content)
                         msg_id = receipt.get("msg_id")
                         status = receipt.get("status", "received")
+                        self._pending_sends.pop(msg_id, None)
                         cb = self._receipt_callbacks.pop(msg_id, None)
                         if cb:
                             cb(status, receipt)
@@ -1125,7 +1165,7 @@ class MessagingBackend:
             return False
         return not self.hashes_equivalent(peer_hash, self.active_peer_hash)
 
-    def _teardown_active_link(self, preserve_peer=False, handoff=False):
+    def _teardown_active_link(self, preserve_peer=False, handoff=False, clear_session=False):
         self._link_handoff = handoff
         try:
             if self.active_link:
@@ -1138,6 +1178,8 @@ class MessagingBackend:
             if not preserve_peer:
                 self.active_peer_hash = None
                 self._link_peer_hashes.clear()
+            if clear_session:
+                self.clear_session_peer()
         finally:
             if handoff:
                 self._link_handoff = False
@@ -1149,9 +1191,11 @@ class MessagingBackend:
             return False
         if now - self._failover_last_attempt < self._failover_cooldown_s:
             return False
-        peer = self.dest_hash_for(self.active_peer_hash or "")
+        peer = self.dest_hash_for(self.active_peer_hash or self._session_peer_hash or "")
         if not peer or peer == "unknown":
             return False
+        if not self.active_peer_hash:
+            self.active_peer_hash = peer
 
         self._failover_last_attempt = now
         self._failover_in_progress = True
@@ -1161,8 +1205,18 @@ class MessagingBackend:
             self._teardown_active_link(preserve_peer=True, handoff=True)
             time.sleep(0.3)
             if not self._prepare_failover_path(peer, prefer_family=prefer):
+                if prefer == "serial":
+                    print("[connect] Serial failover blocked — plug in USB serial and ensure port is configured")
                 return False
-            if peer_ip:
+            use_reverse = bool(
+                peer_ip
+                and prefer != "serial"
+                and (
+                    (prefer == "lan" and lan_mesh_has_peer())
+                    or (prefer == "udp" and bool(online_interfaces(family="udp")))
+                )
+            )
+            if use_reverse:
                 self._request_peer_connect(
                     peer_ip, int(peer_port or 8742),
                     normalize_hash(self.my_dest_hash or ""),
@@ -1344,6 +1398,7 @@ class MessagingBackend:
             packet.send()
             print(f"[messaging] Sent text message: {text[:50]}...")
             self._sent_messages[msg.msg_id] = msg
+            self._pending_sends[msg.msg_id] = time.time()
             if receipt_callback:
                 self._receipt_callbacks[msg.msg_id] = receipt_callback
             return msg
