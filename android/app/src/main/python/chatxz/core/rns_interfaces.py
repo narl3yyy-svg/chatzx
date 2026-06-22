@@ -43,6 +43,13 @@ SERIAL_BAUD_RATES = [
     1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600,
 ]
 
+SERIAL_ACCESS_GROUPS = ("dialout", "uucp")
+
+SERIAL_PERMISSION_HINT = (
+    "Serial port permission denied. Add your user to dialout (Ubuntu/Debian) "
+    "or uucp (Arch): sudo usermod -aG dialout,uucp $USER — then log out and back in."
+)
+
 DEFAULT_INTERFACE_LIST = [
     {
         "id": "udp-lan",
@@ -62,27 +69,70 @@ def _new_id():
     return uuid.uuid4().hex[:8]
 
 
-def serial_port_available(port):
+def user_has_serial_group_access():
+    """True if the current user belongs to a group that can access serial ports."""
+    try:
+        import grp
+        groups = set(os.getgroups())
+        for name in SERIAL_ACCESS_GROUPS:
+            try:
+                if grp.getgrnam(name).gr_gid in groups:
+                    return True
+            except KeyError:
+                continue
+    except Exception:
+        pass
+    return False
+
+
+def serial_port_status(port):
+    """Return none, missing, permission_denied, or ok."""
     path = (port or "").strip()
-    return bool(path) and os.path.exists(path)
+    if not path:
+        return "none"
+    if not os.path.exists(path):
+        return "missing"
+    if not os.access(path, os.R_OK | os.W_OK):
+        return "permission_denied"
+    return "ok"
+
+
+def serial_port_accessible(port):
+    return serial_port_status(port) == "ok"
+
+
+def serial_port_available(port):
+    """Backward-compatible alias for serial_port_accessible."""
+    return serial_port_accessible(port)
 
 
 def serial_runtime_active(iface):
-    """True only when user enabled serial and the port device node exists."""
+    """True only when user enabled serial and the port exists with read/write access."""
     if iface.get("preset") != "serial" and iface.get("type") != "SerialInterface":
         return False
     if not iface.get("enabled", False):
         return False
-    return serial_port_available(iface.get("port"))
+    return serial_port_accessible(iface.get("port"))
 
 
 def _sync_serial_enabled(iface):
     if iface.get("preset") != "serial" and iface.get("type") != "SerialInterface":
         return iface
-    port = (iface.get("port") or "").strip()
-    if not port or not serial_port_available(port):
+    if serial_port_status(iface.get("port")) != "ok":
         iface["enabled"] = False
     return iface
+
+
+def serial_skip_reason(port):
+    status = serial_port_status(port)
+    path = (port or "").strip() or "(none)"
+    if status == "permission_denied":
+        return path, "permission denied — " + SERIAL_PERMISSION_HINT
+    if status == "missing":
+        return path, "not connected"
+    if status == "none":
+        return path, "no port selected"
+    return path, "inactive"
 
 
 def normalize_interface_list(items):
@@ -152,10 +202,13 @@ def list_serial_ports():
         for entry in sorted(list_ports.comports(), key=lambda p: p.device):
             if not _is_useful_serial_port(entry):
                 continue
+            status = serial_port_status(entry.device)
             ports.append({
                 "device": entry.device,
                 "description": entry.description or "",
                 "hwid": entry.hwid or "",
+                "accessible": status == "ok",
+                "status": status,
             })
     except Exception:
         return []
@@ -184,7 +237,7 @@ def update_interface(items, iface_id, updates):
             if "enabled" in updates:
                 updated["enabled"] = bool(updates["enabled"])
             updated = _sync_serial_enabled(updated)
-            if updated.get("port") and serial_port_available(updated["port"]):
+            if serial_port_accessible(updated.get("port")):
                 updated["enabled"] = True
         elif preset == "tcp_client" or itype == "TCPClientInterface":
             if "target_host" in updates and updates["target_host"]:
@@ -217,8 +270,8 @@ def render_rns_config(interfaces, broadcast_ip=None, android=False, log=print):
         itype = iface.get("type", "")
         if itype == "SerialInterface":
             if not serial_runtime_active(iface):
-                port = (iface.get("port") or "").strip() or "(none)"
-                skipped_serial.append((iface.get("name") or "Serial", port))
+                port, reason = serial_skip_reason(iface.get("port"))
+                skipped_serial.append((iface.get("name") or "Serial", port, reason))
                 continue
         elif not iface.get("enabled", True):
             continue
@@ -253,7 +306,7 @@ def render_rns_config(interfaces, broadcast_ip=None, android=False, log=print):
             "    enabled = Yes",
             "",
         ])
-    for name, port in skipped_serial:
+    for name, port, reason in skipped_serial:
         if log:
-            log(f"[config] Serial '{name}' skipped — port {port} not connected")
+            log(f"[config] Serial '{name}' skipped — {port}: {reason}")
     return "\n".join(lines).rstrip() + "\n"

@@ -36,6 +36,10 @@ if [[ "$sys_opt" =~ ^[Yy]$ ]]; then
 fi
 
 echo ""
+echo "Setting up serial port permissions (dialout group)..."
+bash "$(dirname "$0")/setup-serial-perms.sh" || true
+
+echo ""
 echo "chatxz installed successfully!"
 echo "Run 'chatxz --help' to get started."
 echo "Your config will be stored in ~/.config/chatxz/"

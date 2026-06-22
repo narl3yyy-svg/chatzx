@@ -13,14 +13,17 @@ from chatxz.core.lan_beacon import LanBeacon, BEACON_PORT
 from chatxz.core.rns_interfaces import (
     INTERFACE_PRESETS,
     SERIAL_BAUD_RATES,
+    SERIAL_PERMISSION_HINT,
     add_interface,
     delete_interface,
     list_serial_ports,
     normalize_interface_list,
     render_rns_config,
-    serial_port_available,
+    serial_port_accessible,
+    serial_port_status,
     serial_runtime_active,
     update_interface,
+    user_has_serial_group_access,
 )
 from chatxz.utils.helpers import get_config_dir, get_data_dir, format_speed, media_type_for_filename
 from chatxz.utils.platform import (
@@ -564,7 +567,8 @@ class ChatWebServer:
         for iface in normalize_interface_list(interfaces):
             row = dict(iface)
             if iface.get("preset") == "serial" or iface.get("type") == "SerialInterface":
-                row["port_available"] = serial_port_available(iface.get("port"))
+                row["port_status"] = serial_port_status(iface.get("port"))
+                row["port_accessible"] = serial_port_accessible(iface.get("port"))
                 row["serial_active"] = serial_runtime_active(iface)
             rows.append(row)
         return rows
@@ -1026,6 +1030,8 @@ class ChatWebServer:
         return web.json_response({
             "ports": ports,
             "baud_rates": SERIAL_BAUD_RATES,
+            "permission_hint": SERIAL_PERMISSION_HINT,
+            "has_group_access": user_has_serial_group_access(),
         })
 
     async def handle_rns_interfaces_update(self, request):

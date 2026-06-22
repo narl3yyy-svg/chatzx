@@ -919,7 +919,8 @@ body.sidebar-open #sidebar-backdrop { display: block; }
               <button class="btn-block" style="flex:1;min-width:90px" onclick="addRnsInterface('serial')">+ Serial</button>
             </div>
             <div id="rns-interfaces-list" style="font-size:11px;color:var(--text2)">Loading...</div>
-            <div style="margin-top:6px;font-size:10px;color:var(--text3)">Serial stays inactive until a real port is selected and plugged in. Restart chatxz after changes.</div>
+            <div id="serial-permission-hint" style="display:none;margin-top:6px;font-size:10px;color:var(--warn,#e8a838);line-height:1.45"></div>
+            <div style="margin-top:6px;font-size:10px;color:var(--text3)">Serial stays inactive until a port is selected, plugged in, and accessible. Restart chatxz after changes.</div>
           </div>
         </div>
         <div class="settings-card">
@@ -1810,8 +1811,10 @@ function serialPortOptions(ports, selected) {
   const devices = (ports || []).map(p => p.device);
   const opts = (ports || []).map(p => {
     const desc = p.description ? ` — ${p.description}` : '';
+    const denied = p.status === 'permission_denied' ? ' — permission denied' : '';
     const sel = p.device === selected ? ' selected' : '';
-    return `<option value="${escapeHtml(p.device)}"${sel}>${escapeHtml(p.device + desc)}</option>`;
+    const disabled = p.status === 'permission_denied' ? ' disabled' : '';
+    return `<option value="${escapeHtml(p.device)}"${sel}${disabled}>${escapeHtml(p.device + desc + denied)}</option>`;
   }).join('');
   const customSel = selected && !devices.includes(selected)
     ? `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)} (saved)</option>` : '';
@@ -1838,7 +1841,10 @@ function renderRnsInterfaceRow(iface, serialPorts, baudRates) {
   const isSerial = iface.preset === 'serial' || iface.type === 'SerialInterface';
   let metaBits = iface.type || '';
   if (isSerial) {
-    metaBits += iface.serial_active ? ' · active' : ' · inactive (device not connected)';
+    if (iface.serial_active) metaBits += ' · active';
+    else if (iface.port_status === 'permission_denied') metaBits += ' · permission denied';
+    else if (iface.port_status === 'missing') metaBits += ' · inactive (device not connected)';
+    else metaBits += ' · inactive (select a port)';
   } else if (iface.enabled === false) {
     metaBits += ' · disabled';
   }
@@ -1863,7 +1869,20 @@ function loadRnsInterfaces() {
   ]).then(([ifaceData, portData]) => {
     const items = ifaceData.interfaces || [];
     window._serialPorts = portData.ports || [];
+    window._serialPermissionHint = portData.permission_hint || '';
     const baudRates = portData.baud_rates || SERIAL_BAUD_RATES;
+    const hintEl = document.getElementById('serial-permission-hint');
+    const needsPerm = (portData.ports || []).some(p => p.status === 'permission_denied')
+      || items.some(i => i.port_status === 'permission_denied');
+    if (hintEl) {
+      if (needsPerm && window._serialPermissionHint) {
+        hintEl.style.display = 'block';
+        hintEl.textContent = window._serialPermissionHint;
+      } else {
+        hintEl.style.display = 'none';
+        hintEl.textContent = '';
+      }
+    }
     if (!items.length) {
       list.innerHTML = '<div style="color:var(--text3)">No interfaces configured.</div>';
       return;
@@ -1899,6 +1918,11 @@ function saveSerialInterface(id) {
   const port = portEl.value;
   if (!port) {
     toast('Select a serial port first');
+    return;
+  }
+  const portInfo = (window._serialPorts || []).find(p => p.device === port);
+  if (portInfo && portInfo.status === 'permission_denied') {
+    toast('Permission denied for ' + port + ' — add your user to dialout/uucp and log out/in');
     return;
   }
   fetch('/api/rns-interfaces/update', {

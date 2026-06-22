@@ -70,5 +70,9 @@ else
 fi
 
 echo ""
+echo "Setting up serial port permissions (uucp/dialout groups)..."
+bash "$(dirname "$0")/setup-serial-perms.sh" || true
+
+echo ""
 echo "chatxz installed!"
 echo "Run 'chatxz --help' to get started."
