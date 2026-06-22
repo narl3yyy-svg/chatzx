@@ -197,12 +197,24 @@ class MessagingBackend:
                 pass
 
     def _get_remote_hash(self, link):
-        try:
-            ident = link.get_remote_identity()
-            if ident and hasattr(ident, 'hash'):
-                return RNS.hexrep(ident.hash)
-        except:
-            pass
+        ident = link.get_remote_identity()
+        if ident and hasattr(ident, 'hash') and ident.hash:
+            try:
+                hash_input = ident.hash + APP_NAME.encode("utf-8") + b"messages"
+                dest_hash = RNS.Identity.truncated_hash(hash_input)
+                return RNS.hexrep(dest_hash)
+            except Exception:
+                pass
+            try:
+                pub = ident.get_public_key()
+                if pub:
+                    with RNS.Identity.known_destinations_lock:
+                        for dest_hash_bytes, entry in RNS.Identity.known_destinations.items():
+                            if len(entry) > 2 and entry[2] == pub:
+                                return RNS.hexrep(dest_hash_bytes)
+            except Exception:
+                pass
+            return RNS.hexrep(ident.hash)
         try:
             if hasattr(link, 'destination') and link.destination:
                 return RNS.hexrep(link.destination.hash)
