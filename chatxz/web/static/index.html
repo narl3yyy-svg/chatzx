@@ -1100,7 +1100,32 @@ function setWsStatus(state, label) {
 function setLinkStatus(state, label) {
   const el = document.getElementById('link-status');
   if (!el) return;
-  el.innerHTML = `<span class="status-pill ${state}"><span id="link-dot" class="${state}"></span><span id="link-label">${label}</span></span>`;
+  const title = state === 'connected'
+    ? 'Encrypted RNS chat session is active'
+    : 'No peer connected — select a contact and connect';
+  el.innerHTML = `<span class="status-pill ${state}" title="${title}"><span id="link-dot" class="${state}"></span><span id="link-label">Link: ${label}</span></span>`;
+}
+
+function pollLinkStatus() {
+  fetch('/api/network-status')
+    .then(r => r.json())
+    .then(d => {
+      if (d.link_active && d.active_peer) {
+        if (!linkPeer || peerKey(linkPeer) !== peerKey(d.active_peer)) {
+          setLinkPeer(d.active_peer);
+          if (!viewingPeer) openChat(d.active_peer, false);
+        }
+        updatePeerHeader();
+        setLinkStatus('connected', 'Active');
+      } else {
+        if (linkPeer) {
+          linkPeer = null;
+          updatePeerHeader();
+        }
+        setLinkStatus('disconnected', 'Inactive');
+      }
+    })
+    .catch(() => {});
 }
 
 function toggleSidebar() {
@@ -1353,6 +1378,7 @@ function startPeerPolling() {
     pollTemperature();
     pollCpu();
     pollQueue();
+    pollLinkStatus();
   }, 5000);
 }
 
@@ -1533,6 +1559,11 @@ function connectTo(hash, ip, port) {
     toast('Connection already in progress...');
     return;
   }
+  if (linkPeer && peerKey(linkPeer) === peerKey(hash)) {
+    openChat(hash, false);
+    toast('Already connected');
+    return;
+  }
   connectInFlight = true;
   toast('Connecting...');
   const body = {hash};
@@ -1619,7 +1650,8 @@ function refreshNetworkStatus() {
       html += row('Broadcast', d.broadcast || 'none', !!d.broadcast);
       html += row('RNS ready', d.rns_ready ? 'yes' : 'no', d.rns_ready);
       if (d.rns_error) html += row('RNS error', d.rns_error, false);
-      html += row('Link active', d.link_active ? 'yes' : 'no', d.link_active);
+      html += row('Link active', d.link_active ? 'yes — encrypted chat session' : 'no — not connected to a peer', d.link_active);
+      if (d.active_peer) html += row('Active peer', truncateHash(d.active_peer), true);
       html += row('Discovered peers', d.discovered_count ?? 0, (d.discovered_count || 0) > 0);
       html += row('WS clients', d.ws_clients ?? 0);
       if (d.beacon) {
@@ -1628,7 +1660,8 @@ function refreshNetworkStatus() {
         html += row('Beacon received', d.beacon.packets_received ?? 0, (d.beacon.packets_received || 0) > 0);
         html += row('Subnet probes', d.beacon.last_subnet_probes ?? 0);
       }
-      html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);line-height:1.45">Manual announce only (📡). Beacon (UDP 8743) = discovery ping with name/IP. RNS (UDP 4242) = encrypted chat link — both peers must allow 4242, not just HTTP 8742.</div>';
+      html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);line-height:1.45"><strong>Link active</strong> = an encrypted RNS session is open with a peer (you can send messages). <strong>Inactive</strong> in the bottom dock means no session — click a peer to connect, or wait for an incoming connection. Discovery (beacon/RNS announce) is separate from link status.</div>';
+      html += '<div style="margin-top:6px;font-size:10px;color:var(--text3);line-height:1.45">Beacon UDP 8743 = LAN discovery. RNS UDP 4242 = encrypted chat. HTTP 8742 = this web UI only.</div>';
       if (Array.isArray(d.interfaces) && d.interfaces.length) {
         html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em">Interfaces</div>';
         d.interfaces.forEach(iface => {

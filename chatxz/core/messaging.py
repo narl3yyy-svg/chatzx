@@ -234,36 +234,49 @@ class MessagingBackend:
             except:
                 pass
 
+    def _dest_hash_from_identity(self, ident):
+        if not ident or not getattr(ident, "hash", None):
+            return ""
+        try:
+            hash_input = ident.hash + APP_NAME.encode("utf-8") + b"messages"
+            dest_hash = RNS.Identity.full_hash(hash_input)
+            dest = normalize_hash(RNS.hexrep(dest_hash))
+            ident_hex = normalize_hash(RNS.hexrep(ident.hash))
+            if dest and ident_hex and dest != ident_hex:
+                self.register_peer_mapping(dest, ident_hex)
+            return dest
+        except Exception:
+            return ""
+
     def _get_remote_hash(self, link):
         ident = link.get_remote_identity()
+        dest = self._dest_hash_from_identity(ident)
+        if dest:
+            return dest
         if ident and hasattr(ident, 'hash') and ident.hash:
-            try:
-                hash_input = ident.hash + APP_NAME.encode("utf-8") + b"messages"
-                dest_hash = RNS.Identity.truncated_hash(hash_input)
-                return RNS.hexrep(dest_hash)
-            except Exception:
-                pass
             try:
                 pub = ident.get_public_key()
                 if pub:
                     with RNS.Identity.known_destinations_lock:
                         for dest_hash_bytes, entry in RNS.Identity.known_destinations.items():
                             if len(entry) > 2 and entry[2] == pub:
-                                return RNS.hexrep(dest_hash_bytes)
+                                return normalize_hash(RNS.hexrep(dest_hash_bytes))
             except Exception:
                 pass
-            return RNS.hexrep(ident.hash)
+            return normalize_hash(RNS.hexrep(ident.hash))
         try:
             if hasattr(link, 'destination') and link.destination:
-                return RNS.hexrep(link.destination.hash)
-        except:
+                return normalize_hash(RNS.hexrep(link.destination.hash))
+        except Exception:
             pass
         return "unknown"
 
     def _peer_destination_hash(self, link, fallback=None):
-        ident_hex = ""
         try:
             ident = link.get_remote_identity()
+            dest = self._dest_hash_from_identity(ident)
+            if dest:
+                return dest
             if ident:
                 ident_hex = normalize_hash(RNS.hexrep(ident.hash))
                 pub = ident.get_public_key()
@@ -586,14 +599,21 @@ class MessagingBackend:
             if len(clean) != 32:
                 print(f"[connect] Invalid hash length ({len(clean)} chars, expected 32)")
                 return False
+
+            if self.active_link and self.active_peer_hash and self.hashes_equivalent(clean, self.active_peer_hash):
+                print(f"[connect] Already connected to {self.active_peer_hash[:16]}...")
+                return True
+
             try:
                 dest_hash = bytes.fromhex(clean)
             except Exception as e:
                 print(f"[connect] Invalid hash: {e}")
                 return False
 
-            if self.active_link and self.active_peer_hash and normalize_hash(clean) != normalize_hash(self.active_peer_hash):
-                self._teardown_active_link()
+            old_link = self.active_link if (
+                self.active_link and self.active_peer_hash
+                and not self.hashes_equivalent(clean, self.active_peer_hash)
+            ) else None
 
             known_identity = RNS.Identity.recall(dest_hash)
             if known_identity is None:
@@ -616,7 +636,6 @@ class MessagingBackend:
                 return False
 
             self._announce()
-            self._teardown_active_link()
             print(f"[connect] Connecting to {RNS.hexrep(dest_hash)[:20]}...")
 
             deadline = time.time() + 60
@@ -639,6 +658,11 @@ class MessagingBackend:
                         time.sleep(0.25)
                         try:
                             if link.status == RNS.Link.ACTIVE:
+                                if old_link and old_link.link_id != link.link_id:
+                                    try:
+                                        old_link.teardown()
+                                    except Exception:
+                                        pass
                                 self._setup_link(link)
                                 self._notify_link_established(link, clean)
                                 self._send_link = link

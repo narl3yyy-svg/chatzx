@@ -24,7 +24,7 @@ from chatxz.utils.system import get_avg_cpu_temperature, get_cpu_percent
 CONFIG_DIR = get_config_dir()
 DATA_DIR = get_data_dir()
 SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
-APP_VERSION = "0.3.22"
+APP_VERSION = "0.3.23"
 
 def build_desktop_rns_config(broadcast_ip="255.255.255.255"):
     return f"""[reticulum]
@@ -319,6 +319,22 @@ class ChatWebServer:
 
     def _my_sender_hash(self):
         return self._clean_hash(self.destination_hash or self.identity_mgr.get_hex_hash())
+
+    def _resolve_peer_hash(self, peer_hash):
+        clean = self._clean_hash(peer_hash).lower()
+        if not clean:
+            return clean
+        if self.messaging:
+            mapped = self.messaging.dest_hash_for(clean)
+            if mapped and len(mapped) == 32:
+                return mapped
+        if self.discovery:
+            for p in self.discovery.get_peers():
+                ph = self._clean_hash(p.get("hash")).lower()
+                ih = self._clean_hash(p.get("identity_hash")).lower()
+                if clean == ph or clean == ih:
+                    return ph or clean
+        return clean
 
     def _received_dir(self):
         settings = self.load_settings()
@@ -622,7 +638,7 @@ class ChatWebServer:
 
     def _on_link_established(self, peer_hash, link):
         self.active_peer = self._peer_dest_hash(peer_hash)
-        print(f"[connect] Session active with {self.active_peer[:16]}")
+        print(f"[connect] Session active with {self.active_peer}")
         if self.websockets and self._loop:
             asyncio.run_coroutine_threadsafe(
                 self._broadcast({"type": "link_established", "data": {"hash": self.active_peer}}),
@@ -758,13 +774,7 @@ class ChatWebServer:
             peer_hash = data.get("hash", "").strip()
             if not peer_hash:
                 return web.json_response({"error": "hash required"}, status=400)
-            resolved_hash = peer_hash
-            if self.discovery:
-                target = self._clean_hash(peer_hash)
-                for p in self.discovery.get_peers():
-                    if self._clean_hash(p.get("hash")) == target:
-                        resolved_hash = p.get("hash", peer_hash)
-                        break
+            resolved_hash = self._resolve_peer_hash(peer_hash)
             ok = await self._run_blocking(self.messaging.connect_to, resolved_hash)
             if self._shutting_down or ok is None:
                 return web.json_response({"error": "server shutting down"}, status=503)
@@ -803,6 +813,7 @@ class ChatWebServer:
             pass
         peers = self.discovery.get_peers() if self.discovery else []
         link_active = bool(self.messaging and self.messaging.active_link)
+        active_peer = self.active_peer if link_active else None
         return web.json_response({
             "platform": "android" if is_android() else "desktop",
             "app_version": APP_VERSION,
@@ -820,7 +831,7 @@ class ChatWebServer:
             "discovered_count": len(peers),
             "ws_clients": len(self.websockets),
             "link_active": link_active,
-            "active_peer": self.active_peer,
+            "active_peer": active_peer,
             "queue_size": self.messaging.queue_size() if self.messaging else 0,
         })
 
@@ -1424,13 +1435,7 @@ class ChatWebServer:
         elif msg_type == "connect":
             peer_hash = data.get("hash", "")
             if peer_hash and self.messaging:
-                resolved_hash = peer_hash
-                if self.discovery:
-                    target = self._clean_hash(peer_hash)
-                    for p in self.discovery.get_peers():
-                        if self._clean_hash(p.get("hash")) == target:
-                            resolved_hash = p.get("hash", peer_hash)
-                            break
+                resolved_hash = self._resolve_peer_hash(peer_hash)
                 ok = await self._run_blocking(self.messaging.connect_to, resolved_hash)
                 if self._shutting_down or ok is None:
                     await ws.send_str(json.dumps({"type": "connect_fail", "error": "server shutting down"}))

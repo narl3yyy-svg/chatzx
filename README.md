@@ -181,6 +181,11 @@ chatxz --daemon
 
 ## Changelog (recent)
 
+### v0.3.23
+- Fix peer destination hash (full_hash) so incoming links identify the correct peer
+- Do not drop active chat when a new connect attempt fails
+- Link status polls from server; clearer Network settings labels for Link active / Inactive
+
 ### v0.3.22
 - Receiver-side inline video playback (URL encoding, metadata race fix, Accept-Ranges)
 - Android LAN discovery: periodic beacon, subnet unicast probes on all announces, instant peer WS push
