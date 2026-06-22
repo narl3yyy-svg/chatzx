@@ -1,10 +1,16 @@
-import threading, RNS, json, time, os, tempfile, uuid, base64
+import threading, RNS, json, time, os, tempfile, uuid, base64, secrets
 import urllib.request
 from chatxz.utils.helpers import format_speed
 from chatxz.core.discovery import normalize_hash
 
 APP_NAME = "chatxz"
 DIRECT_TRANSFER_THRESHOLD = 256 * 1024
+
+
+class _HttpLink:
+    """Placeholder when chat uses HTTP LAN transport instead of RNS."""
+    link_id = b"httplanlink01"
+    mtu = 65536
 
 MESSAGE_TYPE_TEXT = "text"
 MESSAGE_TYPE_FILE = "file"
@@ -59,8 +65,9 @@ class ChatMessage:
 
 class MessagingBackend:
     def __init__(self, identity, config_dir, on_message=None, on_file=None,
-                 on_progress=None, on_link_established=None, display_name="",
-                 auto_announce=False, my_ip=None, my_port=8742, receive_dir=None):
+                 on_progress=None, on_link_established=None, on_http_session=None,
+                 display_name="", auto_announce=False, my_ip=None, my_port=8742,
+                 receive_dir=None):
         self.identity = identity
         self.config_dir = config_dir
         self.receive_dir = receive_dir or os.path.join(config_dir, "received")
@@ -68,12 +75,16 @@ class MessagingBackend:
         self.on_file = on_file
         self.on_progress = on_progress
         self.on_link_established = on_link_established
+        self.on_http_session = on_http_session
         self.display_name = display_name
         self.auto_announce = auto_announce
         self.announce_interval = 30
         self.my_ip = my_ip
         self.my_port = my_port
+        self.my_dest_hash = None
         self.destination = None
+        self.lan_transport = "rns"
+        self.http_peer = None
         self.links = {}
         self.active_link = None
         self.active_peer_hash = None
@@ -645,18 +656,128 @@ class MessagingBackend:
             if self._wait_for_path(dest_hash, timeout=12):
                 print(f"[connect] RNS path ready after retry")
                 return True
-        print(f"[connect] No RNS path (allow UDP port 4242 on both devices — not just TCP 8742)")
+        print(f"[connect] No RNS UDP path — will try HTTP LAN fallback if peer IP is known")
         return False
 
     def _teardown_active_link(self):
-        if not self.active_link:
-            return
-        try:
-            self.active_link.teardown()
-        except Exception:
-            pass
+        if self.active_link and self.active_link is not _HTTP_LINK:
+            try:
+                self.active_link.teardown()
+            except Exception:
+                pass
         self.active_link = None
         self.active_peer_hash = None
+        self.lan_transport = "rns"
+        self.http_peer = None
+
+    def accept_http_peer(self, ip, port, peer_hash, token, name=""):
+        self.lan_transport = "http"
+        self.http_peer = {
+            "ip": ip,
+            "port": port or 8742,
+            "hash": normalize_hash(peer_hash),
+            "token": token,
+            "name": name,
+        }
+        self._register_peer_ip(peer_hash, ip, port or 8742)
+        self.active_link = _HTTP_LINK
+        self._notify_link_established(_HTTP_LINK, peer_hash)
+        print(f"[connect] Incoming HTTP LAN link from {ip}:{port}")
+
+    def deliver_http_message(self, msg_dict, sender_hash, sender_ip, sender_port=8742):
+        self._register_peer_ip(sender_hash, sender_ip, sender_port)
+        try:
+            chat_msg = ChatMessage.from_dict(msg_dict)
+        except Exception as e:
+            print(f"[http-lan] Bad message payload: {e}")
+            return
+        sender = normalize_hash(sender_hash)
+        if chat_msg.msg_type == "__direct_offer":
+            try:
+                offer = json.loads(chat_msg.content)
+                fake_link = _HttpOfferLink(sender_ip, sender_port)
+                self._handle_direct_offer(offer, fake_link, sender)
+            except Exception as e:
+                print(f"[http-lan] Direct offer error: {e}")
+            return
+        if self.on_message:
+            self.on_message(chat_msg, sender)
+
+    def _send_lan_http(self, chat_msg):
+        if not self.http_peer:
+            return False
+        peer = self.http_peer
+        url = f"http://{peer['ip']}:{peer['port']}/api/lan-message"
+        body = json.dumps({
+            "token": peer.get("token", ""),
+            "from_hash": self.my_dest_hash or "",
+            "from_name": self.display_name or "",
+            "from_port": self.my_port,
+            "message": chat_msg.to_dict(),
+        }).encode("utf-8")
+        try:
+            req = urllib.request.Request(
+                url, data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                if resp.status != 200:
+                    return False
+            return True
+        except Exception as e:
+            print(f"[http-lan] Send failed: {e}")
+            return False
+
+    def _connect_via_http(self, peer, peer_hash):
+        session_token = secrets.token_urlsafe(16)
+        url = f"http://{peer['ip']}:{peer['port']}/api/lan-handshake"
+        body = json.dumps({
+            "hash": self.my_dest_hash or "",
+            "name": self.display_name or "",
+            "port": self.my_port,
+            "session_token": session_token,
+        }).encode("utf-8")
+        try:
+            req = urllib.request.Request(
+                url, data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                info = json.loads(resp.read().decode("utf-8"))
+        except Exception as e:
+            print(f"[connect] HTTP LAN handshake failed: {e}")
+            return False
+        token = info.get("token") or session_token
+        if info.get("status") != "ok" or not token:
+            print(f"[connect] HTTP LAN handshake rejected")
+            return False
+        self._teardown_active_link()
+        self.lan_transport = "http"
+        self.http_peer = {
+            "ip": peer["ip"],
+            "port": peer.get("port", 8742),
+            "hash": peer_hash,
+            "token": token,
+            "name": info.get("name", ""),
+        }
+        if self.on_http_session:
+            try:
+                self.on_http_session(peer["ip"], token, peer_hash, peer.get("port", 8742))
+            except Exception as e:
+                print(f"[http-lan] session register error: {e}")
+        self._register_peer_ip(peer_hash, peer["ip"], peer.get("port", 8742))
+        self.active_link = _HTTP_LINK
+        self._notify_link_established(_HTTP_LINK, peer_hash)
+        print(f"[connect] HTTP LAN link established with {peer['ip']}:{peer['port']}")
+        if self.on_message:
+            self.on_message(
+                ChatMessage("system", f"Connected via HTTP LAN (UDP 4242 blocked on WiFi)"),
+                peer_hash,
+            )
+        self.drain_queue(_HTTP_LINK, peer_hash)
+        return True
 
     def connect_to(self, destination_hash_hex):
         with self._connect_lock:
@@ -688,14 +809,20 @@ class MessagingBackend:
 
             if known_identity is None:
                 print(f"[connect] No known identity after bootstrap")
+                if peer and self._connect_via_http(peer, clean):
+                    return True
                 return False
 
             if not self._prepare_paths(dest_hash, peer):
+                if peer and self._connect_via_http(peer, clean):
+                    return True
                 return False
 
             print(f"[connect] Identity recalled successfully")
         except Exception as e:
             print(f"[connect] Identity/path setup failed: {e}")
+            if peer and self._connect_via_http(peer, clean):
+                return True
             return False
 
         try:
@@ -737,10 +864,14 @@ class MessagingBackend:
                     print(f"[connect] Link established successfully")
                     return True
 
+            if peer and self._connect_via_http(peer, clean):
+                return True
             print(f"[connect] Link establishment timed out (check UDP 4242 firewall on both peers)")
             return False
         except Exception as e:
             print(f"[connect] Link creation failed: {e}")
+            if peer and self._connect_via_http(peer, clean):
+                return True
             return False
 
     def _outgoing_link_callback(self, link, peer_hash):
@@ -762,6 +893,14 @@ class MessagingBackend:
             print("[messaging] send_message: no active link")
             return False
         msg = ChatMessage(MESSAGE_TYPE_TEXT, text)
+        if self.lan_transport == "http":
+            if self._send_lan_http(msg):
+                print(f"[http-lan] Sent text: {text[:50]}...")
+                self._sent_messages[msg.msg_id] = msg
+                if receipt_callback:
+                    receipt_callback("sent")
+                return msg
+            return False
         data = msg.to_json().encode("utf-8")
         mtu = getattr(self.active_link, 'mtu', 500)
         try:
@@ -873,8 +1012,13 @@ class MessagingBackend:
             "msg_type": msg_type,
         })
         try:
-            packet = RNS.Packet(self.active_link, ChatMessage("__direct_offer", offer).to_json().encode("utf-8"))
-            packet.send()
+            offer_msg = ChatMessage("__direct_offer", offer)
+            if self.lan_transport == "http":
+                if not self._send_lan_http(offer_msg):
+                    raise RuntimeError("HTTP LAN offer failed")
+            else:
+                packet = RNS.Packet(self.active_link, offer_msg.to_json().encode("utf-8"))
+                packet.send()
             print(f"[direct] Sent file offer: {fname} ({fsize} bytes)")
             self._emit_progress(fname, 0, fsize, direction="send", transfer_id=transfer_id, status="direct")
             return ChatMessage(msg_type, file_path, file_name=fname, file_size=fsize, msg_id=transfer_id)
@@ -916,3 +1060,8 @@ class MessagingBackend:
             if self._current_transfer_id == transfer_id:
                 self._current_transfer_id = None
         return callback
+
+
+class _HttpOfferLink:
+    def __init__(self, ip, port):
+        self.link_id = f"http:{ip}:{port}".encode()

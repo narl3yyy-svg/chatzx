@@ -1,4 +1,4 @@
-import os, json, time, base64, mimetypes, asyncio, socket, zipfile, shutil, subprocess, tempfile, signal, re, sys, threading
+import os, json, time, base64, mimetypes, asyncio, socket, zipfile, shutil, subprocess, tempfile, signal, re, sys, threading, secrets
 from pathlib import Path
 
 import aiohttp
@@ -24,7 +24,8 @@ from chatxz.utils.system import get_avg_cpu_temperature, get_cpu_percent
 CONFIG_DIR = get_config_dir()
 DATA_DIR = get_data_dir()
 SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
-APP_VERSION = "0.3.11"
+APP_VERSION = "0.3.12"
+LAN_SESSION_TTL = 600
 
 def build_desktop_rns_config(broadcast_ip="255.255.255.255"):
     return f"""[reticulum]
@@ -35,10 +36,6 @@ share_instance = No
 loglevel = 3
 
 [interfaces]
-  [[Default Interface]]
-    type = AutoInterface
-    enabled = Yes
-
   [[UDP Interface]]
     type = UDPInterface
     enabled = Yes
@@ -253,6 +250,7 @@ class ChatWebServer:
         self._loop = None
         self.rns_init_error = None
         self._announce_lock = threading.Lock()
+        self.lan_sessions = {}
 
     @staticmethod
     def _clean_hash(h):
@@ -366,10 +364,12 @@ class ChatWebServer:
             if "enable_transport = False" in existing:
                 existing = existing.replace("enable_transport = False", "enable_transport = Yes")
                 modified = True
-            if "AutoInterface" not in existing:
-                existing += "\n\n  [[Default Interface]]\n"
-                existing += "    type = AutoInterface\n"
-                existing += "    enabled = Yes\n"
+            if "AutoInterface" in existing:
+                existing = re.sub(
+                    r"\n\s*\[\[Default Interface\]\]\s*\n\s*type\s*=\s*AutoInterface\s*\n\s*enabled\s*=\s*Yes\s*\n",
+                    "\n",
+                    existing,
+                )
                 modified = True
             if "UDPInterface" not in existing:
                 existing += "\n  [[UDP Interface]]\n"
@@ -442,6 +442,7 @@ class ChatWebServer:
             on_message=self._on_message,
             on_progress=self._on_transfer_progress,
             on_link_established=self._on_link_established,
+            on_http_session=self._on_http_session,
             display_name=settings.get("name", ""),
             auto_announce=False,
             my_ip=my_ip,
@@ -452,6 +453,7 @@ class ChatWebServer:
         dest = self.messaging.start()
 
         my_hash = RNS.hexrep(dest.hash)
+        self.messaging.my_dest_hash = my_hash.replace(":", "")
         self.destination_hash = my_hash
         self.discovery = PeerDiscovery(on_peer_seen=self._on_peer_discovered)
         self.discovery.start()
@@ -499,6 +501,15 @@ class ChatWebServer:
     def _on_peer_discovered(self, peer):
         if self.messaging and peer.get("ip"):
             self.messaging.prepare_connect(peer.get("hash"), peer)
+
+    def _on_http_session(self, peer_ip, token, peer_hash, peer_port=8742):
+        self._clean_lan_sessions()
+        self.lan_sessions[peer_ip] = {
+            "hash": self._clean_hash(peer_hash),
+            "name": "",
+            "token": token,
+            "expires": time.time() + LAN_SESSION_TTL,
+        }
 
     def _on_link_established(self, peer_hash, link):
         self.active_peer = self._clean_hash(peer_hash)
@@ -734,9 +745,64 @@ class ChatWebServer:
             "discovered_count": len(peers),
             "ws_clients": len(self.websockets),
             "link_active": link_active,
+            "lan_transport": getattr(self.messaging, "lan_transport", "rns") if self.messaging else "rns",
             "active_peer": self.active_peer,
             "queue_size": self.messaging.queue_size() if self.messaging else 0,
         })
+
+    def _clean_lan_sessions(self):
+        now = time.time()
+        for ip in [k for k, s in self.lan_sessions.items() if s.get("expires", 0) < now]:
+            del self.lan_sessions[ip]
+
+    async def handle_lan_handshake(self, request):
+        try:
+            data = await request.json()
+            remote = request.remote or ""
+            token = data.get("session_token") or secrets.token_urlsafe(16)
+            peer_hash = self._clean_hash(data.get("hash", ""))
+            name = data.get("name", "")
+            peer_port = int(data.get("port", 8742))
+            self._clean_lan_sessions()
+            self.lan_sessions[remote] = {
+                "hash": peer_hash,
+                "name": name,
+                "token": token,
+                "expires": time.time() + LAN_SESSION_TTL,
+            }
+            if self.messaging and peer_hash:
+                await asyncio.to_thread(
+                    self.messaging.accept_http_peer,
+                    remote, peer_port, peer_hash, token, name,
+                )
+            return web.json_response({
+                "status": "ok",
+                "token": token,
+                "destination_hash": self.destination_hash,
+                "name": self.load_settings().get("name", ""),
+            })
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def handle_lan_message(self, request):
+        try:
+            data = await request.json()
+            remote = request.remote or ""
+            self._clean_lan_sessions()
+            session = self.lan_sessions.get(remote)
+            if not session or session.get("token") != data.get("token"):
+                return web.json_response({"error": "unauthorized"}, status=401)
+            if self.messaging:
+                await asyncio.to_thread(
+                    self.messaging.deliver_http_message,
+                    data.get("message", {}),
+                    data.get("from_hash", session.get("hash", "")),
+                    remote,
+                    int(data.get("from_port", 8742)),
+                )
+            return web.json_response({"status": "ok"})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
 
     async def handle_rns_info(self, request):
         if request.query.get("announce") and self.messaging:
@@ -1456,6 +1522,8 @@ class ChatWebServer:
         app.router.add_post("/api/connect", self.handle_connect)
         app.router.add_post("/api/announce", self.handle_announce)
         app.router.add_get("/api/rns-info", self.handle_rns_info)
+        app.router.add_post("/api/lan-handshake", self.handle_lan_handshake)
+        app.router.add_post("/api/lan-message", self.handle_lan_message)
         app.router.add_post("/api/beacon-ingest", self.handle_beacon_ingest)
         app.router.add_get("/api/network-status", self.handle_network_status)
         app.router.add_post("/api/disconnect", self.handle_disconnect)
