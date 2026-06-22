@@ -1,6 +1,7 @@
 """RNS interface preset management for chatxz config generation."""
 
 import copy
+import glob
 import os
 import uuid
 
@@ -46,9 +47,19 @@ SERIAL_BAUD_RATES = [
 SERIAL_ACCESS_GROUPS = ("dialout", "uucp")
 
 SERIAL_PERMISSION_HINT = (
-    "Serial port permission denied. Add your user to dialout (Ubuntu/Debian) "
-    "or uucp (Arch): sudo usermod -aG dialout,uucp $USER — then log out and back in."
+    "Serial port access denied for this chatxz process. "
+    "Ubuntu: sudo usermod -aG dialout $USER — then fully log out of Ubuntu and log back in "
+    "(a new terminal is not enough). Stop chatxz, start it again, then refresh serial ports."
 )
+
+
+def serial_permission_hint_for_process():
+    if user_has_serial_group_access():
+        return (
+            "Port exists but this chatxz process still cannot open it. "
+            "Stop chatxz completely and start it again after logging out/in."
+        )
+    return SERIAL_PERMISSION_HINT
 
 DEFAULT_INTERFACE_LIST = [
     {
@@ -191,28 +202,41 @@ def _is_useful_serial_port(entry):
     return bool(device)
 
 
+def _glob_serial_devices():
+    devices = set()
+    for pattern in ("/dev/ttyUSB*", "/dev/ttyACM*", "/dev/ttyAMA*", "/dev/rfcomm*"):
+        devices.update(glob.glob(pattern))
+    return sorted(devices)
+
+
+def _serial_port_entry(device, description="", hwid=""):
+    status = serial_port_status(device)
+    return {
+        "device": device,
+        "description": description or "",
+        "hwid": hwid or "",
+        "accessible": status == "ok",
+        "status": status,
+    }
+
+
 def list_serial_ports():
-    """Return serial devices visible to pyserial (USB/ACM adapters, etc.)."""
+    """Return serial devices from pyserial and /dev/ttyUSB* /dev/ttyACM* globs."""
+    by_device = {}
     try:
         from serial.tools import list_ports
-    except ImportError:
-        return []
-    ports = []
-    try:
         for entry in sorted(list_ports.comports(), key=lambda p: p.device):
             if not _is_useful_serial_port(entry):
                 continue
-            status = serial_port_status(entry.device)
-            ports.append({
-                "device": entry.device,
-                "description": entry.description or "",
-                "hwid": entry.hwid or "",
-                "accessible": status == "ok",
-                "status": status,
-            })
+            by_device[entry.device] = _serial_port_entry(
+                entry.device, entry.description or "", entry.hwid or ""
+            )
     except Exception:
-        return []
-    return ports
+        pass
+    for device in _glob_serial_devices():
+        if device not in by_device:
+            by_device[device] = _serial_port_entry(device)
+    return [by_device[k] for k in sorted(by_device)]
 
 
 def update_interface(items, iface_id, updates):

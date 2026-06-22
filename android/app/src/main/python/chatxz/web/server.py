@@ -14,6 +14,7 @@ from chatxz.core.rns_interfaces import (
     INTERFACE_PRESETS,
     SERIAL_BAUD_RATES,
     SERIAL_PERMISSION_HINT,
+    serial_permission_hint_for_process,
     add_interface,
     delete_interface,
     list_serial_ports,
@@ -1027,11 +1028,17 @@ class ChatWebServer:
 
     async def handle_serial_ports_get(self, request):
         ports = await asyncio.to_thread(list_serial_ports)
+        has_groups = user_has_serial_group_access()
+        denied = [p for p in ports if p.get("status") == "permission_denied"]
+        hint = SERIAL_PERMISSION_HINT
+        if denied:
+            hint = serial_permission_hint_for_process()
         return web.json_response({
             "ports": ports,
             "baud_rates": SERIAL_BAUD_RATES,
-            "permission_hint": SERIAL_PERMISSION_HINT,
-            "has_group_access": user_has_serial_group_access(),
+            "permission_hint": hint,
+            "has_group_access": has_groups,
+            "process_needs_restart": bool(denied and has_groups),
         })
 
     async def handle_rns_interfaces_update(self, request):

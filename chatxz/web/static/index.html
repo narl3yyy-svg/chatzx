@@ -352,7 +352,8 @@ body::before {
   color: var(--text3);
   margin-bottom: 4px;
 }
-.rns-iface-serial-fields select {
+.rns-iface-serial-fields select,
+.rns-iface-serial-fields input {
   width: 100%;
   font-size: 11px;
 }
@@ -920,7 +921,7 @@ body.sidebar-open #sidebar-backdrop { display: block; }
             </div>
             <div id="rns-interfaces-list" style="font-size:11px;color:var(--text2)">Loading...</div>
             <div id="serial-permission-hint" style="display:none;margin-top:6px;font-size:10px;color:var(--warn,#e8a838);line-height:1.45"></div>
-            <div style="margin-top:6px;font-size:10px;color:var(--text3)">Serial stays inactive until a port is selected, plugged in, and accessible. Restart chatxz after changes.</div>
+            <div style="margin-top:6px;font-size:10px;color:var(--text3)">Type or pick a port (e.g. /dev/ttyUSB0). Stays inactive until accessible. After usermod: log out of Ubuntu fully, restart chatxz, then refresh ports.</div>
           </div>
         </div>
         <div class="settings-card">
@@ -1807,20 +1808,12 @@ function netClass(ok) {
 
 const SERIAL_BAUD_RATES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
 
-function serialPortOptions(ports, selected) {
-  const devices = (ports || []).map(p => p.device);
-  const opts = (ports || []).map(p => {
+function serialPortDatalistOptions(ports) {
+  return (ports || []).map(p => {
     const desc = p.description ? ` — ${p.description}` : '';
-    const denied = p.status === 'permission_denied' ? ' — permission denied' : '';
-    const sel = p.device === selected ? ' selected' : '';
-    const disabled = p.status === 'permission_denied' ? ' disabled' : '';
-    return `<option value="${escapeHtml(p.device)}"${sel}${disabled}>${escapeHtml(p.device + desc + denied)}</option>`;
+    const denied = p.status === 'permission_denied' ? ' (permission denied)' : '';
+    return `<option value="${escapeHtml(p.device)}">${escapeHtml(p.device + desc + denied)}</option>`;
   }).join('');
-  const customSel = selected && !devices.includes(selected)
-    ? `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)} (saved)</option>` : '';
-  const empty = !ports || !ports.length
-    ? `<option value="" disabled${!selected ? ' selected' : ''}>No ports detected — plug in device &amp; refresh</option>` : '';
-  return customSel + opts + empty;
 }
 
 function baudOptions(rates, selected) {
@@ -1851,8 +1844,12 @@ function renderRnsInterfaceRow(iface, serialPorts, baudRates) {
   const meta = escapeHtml(metaBits);
   let body = `<div class="iface-head"><span class="net-label">${label}<div style="font-size:10px;color:var(--text3)">${meta}</div></span><button class="btn-block danger" style="width:auto;padding:4px 8px;font-size:11px" onclick="deleteRnsInterface('${id}')">Delete</button></div>`;
   if (isSerial) {
+    const portVal = escapeHtml(iface.port || '');
     body += `<div class="rns-iface-serial-fields">
-      <div><label>Serial port</label><select data-serial-port="${id}" onchange="saveSerialInterface('${id}')">${serialPortOptions(serialPorts, iface.port)}</select></div>
+      <div><label>Serial port</label>
+        <input type="text" data-serial-port="${id}" list="serial-ports-${id}" value="${portVal}" placeholder="/dev/ttyUSB0" onchange="saveSerialInterface('${id}')">
+        <datalist id="serial-ports-${id}">${serialPortDatalistOptions(serialPorts)}</datalist>
+      </div>
       <div><label>Baud rate</label><select data-serial-baud="${id}" onchange="saveSerialInterface('${id}')">${baudOptions(baudRates, iface.speed)}</select></div>
     </div>`;
   }
@@ -1876,8 +1873,12 @@ function loadRnsInterfaces() {
       || items.some(i => i.port_status === 'permission_denied');
     if (hintEl) {
       if (needsPerm && window._serialPermissionHint) {
+        let text = window._serialPermissionHint;
+        if (portData.process_needs_restart) {
+          text += ' You are in dialout but this server was started too early — stop and restart chatxz.';
+        }
         hintEl.style.display = 'block';
-        hintEl.textContent = window._serialPermissionHint;
+        hintEl.textContent = text;
       } else {
         hintEl.style.display = 'none';
         hintEl.textContent = '';
@@ -1901,10 +1902,8 @@ function refreshSerialPorts() {
     .then(r => r.json())
     .then(d => {
       window._serialPorts = d.ports || [];
-      document.querySelectorAll('select[data-serial-port]').forEach(sel => {
-        const id = sel.getAttribute('data-serial-port');
-        const current = sel.value;
-        sel.innerHTML = serialPortOptions(window._serialPorts, current);
+      document.querySelectorAll('datalist[id^="serial-ports-"]').forEach(list => {
+        list.innerHTML = serialPortDatalistOptions(window._serialPorts);
       });
       toast(window._serialPorts.length ? `Found ${window._serialPorts.length} serial port(s)` : 'No serial ports detected');
     })
@@ -1920,11 +1919,6 @@ function saveSerialInterface(id) {
     toast('Select a serial port first');
     return;
   }
-  const portInfo = (window._serialPorts || []).find(p => p.device === port);
-  if (portInfo && portInfo.status === 'permission_denied') {
-    toast('Permission denied for ' + port + ' — add your user to dialout/uucp and log out/in');
-    return;
-  }
   fetch('/api/rns-interfaces/update', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -1932,7 +1926,14 @@ function saveSerialInterface(id) {
   }).then(r => r.json()).then(d => {
     if (d.status === 'ok') {
       loadRnsInterfaces();
-      toast('Serial settings saved — restart chatxz to apply');
+      const saved = (d.interfaces || []).find(i => i.id === id);
+      if (saved && saved.port_status === 'permission_denied') {
+        toast('Saved ' + port + ' — inactive until permissions OK (log out/in, restart chatxz)');
+      } else if (saved && saved.serial_active) {
+        toast('Serial enabled — restart chatxz to apply');
+      } else {
+        toast('Serial settings saved — restart chatxz to apply');
+      }
       refreshNetworkStatus();
     } else {
       toast('Save failed: ' + (d.error || ''));
