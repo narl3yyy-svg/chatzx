@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.58
+**Current version:** 0.3.59
 
 ## Download
 
@@ -20,7 +20,7 @@ Portable Windows and Android builds are published automatically on every `v*` ta
 
 ## Windows (portable)
 
-1. Download **`chatxz-0.3.58-windows-portable.zip`** from [Releases](https://github.com/narl3yyy-svg/chatxz/releases).
+1. Download **`chatxz-0.3.59-windows-portable.zip`** from [Releases](https://github.com/narl3yyy-svg/chatxz/releases).
 2. Unzip anywhere (e.g. `C:\Users\You\chatxz`).
 3. Open the `chatxz` folder and double-click **`chatxz.exe`**.
 4. Browser opens at **http://127.0.0.1:8742**. Allow Windows Firewall on **private** networks if prompted (UDP 4242, TCP 8742).
@@ -118,6 +118,7 @@ cd android && ./gradlew assembleDebug
 
 ## Recent changes
 
+- **v0.3.59** — Fix network reset (all links), file upload chat tagging, link-active checks, UI link status per viewed peer
 - **v0.3.58** — Parallel per-peer RNS links (no peer stealing); per-peer chat routing; background wake connects; Android+Windows coexistence
 - **v0.3.57** — Manual announce on all platforms; ephemeral chats for non-contacts; queue retry/clear; peer switch UI; long-text and file-send fixes
 - **v0.3.56** — Fix multi-peer routing, reconnect storms, file queue retries, live transfer speed

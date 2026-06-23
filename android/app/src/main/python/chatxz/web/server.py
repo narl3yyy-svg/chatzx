@@ -386,6 +386,11 @@ class ChatWebServer:
         return [clean] if clean else []
 
     def _session_chat_peer(self, sender_hash=None):
+        viewing = self._ui_state.get("viewing_peer")
+        if viewing:
+            resolved = self._peer_dest_hash(viewing)
+            if resolved and resolved != "unknown":
+                return resolved
         if self.messaging and self.messaging.active_peer_hash:
             resolved = self._peer_dest_hash(self.messaging.active_peer_hash)
             if resolved and resolved != "unknown":
@@ -1477,7 +1482,7 @@ class ChatWebServer:
 
     def _reset_network_state(self, update_settings=True):
         if self.messaging:
-            self.messaging._teardown_active_link()
+            self.messaging.disconnect_all_peers(clear_session=True)
         self.active_peer = None
         if self.discovery:
             self.discovery.disable_discovery()
@@ -1506,7 +1511,7 @@ class ChatWebServer:
     async def handle_network_reset(self, request):
         self._reset_network_state(update_settings=True)
         await self._broadcast({"type": "peers", "data": []})
-        await self._broadcast({"type": "link_closed", "data": {}})
+        await self._broadcast({"type": "link_closed", "data": {"linked_peers": []}})
         await self._broadcast({"type": "network_reset", "data": {}})
         return web.json_response({"status": "ok"})
 
@@ -1745,7 +1750,7 @@ class ChatWebServer:
         if self.messaging and peer:
             self.messaging.disconnect_peer(peer)
         elif self.messaging:
-            self.messaging._teardown_active_link(clear_session=True)
+            self.messaging.disconnect_all_peers(clear_session=True)
         if self.active_peer and peer and self._peers_equivalent(self.active_peer, peer):
             self.active_peer = None
         if peer:
@@ -1973,7 +1978,7 @@ class ChatWebServer:
             queue_target = self._queue_target_hash()
             transfer_id = str(uuid.uuid4())[:12]
             linked_to_target = bool(
-                queue_target and self.messaging._link_for_peer(queue_target)
+                queue_target and self.messaging._peer_link_active(queue_target)
             )
             if not linked_to_target or self.messaging._has_active_transfer():
                 self.messaging.enqueue(
@@ -1991,7 +1996,7 @@ class ChatWebServer:
                 })
             my_hash = self._my_sender_hash()
             ts = time.time()
-            chat_peer = self._session_chat_peer() or self._peer_dest_hash(self.active_peer)
+            chat_peer = self._peer_dest_hash(queue_target) or self._session_chat_peer()
             transfer_id = str(uuid.uuid4())[:12]
             entry = self._enrich_message({
                 "type": msg_type,
@@ -2085,7 +2090,7 @@ class ChatWebServer:
             print(f"[folder] Created {zip_name} ({zsize} bytes, {file_count} files)")
             queue_target = self._queue_target_hash()
             linked_to_target = bool(
-                queue_target and self.messaging._link_for_peer(queue_target)
+                queue_target and self.messaging._peer_link_active(queue_target)
             )
             if not linked_to_target or self.messaging._has_active_transfer():
                 self.messaging.enqueue("file", zip_path,
@@ -2099,7 +2104,7 @@ class ChatWebServer:
                 })
             my_hash = self._my_sender_hash()
             ts = time.time()
-            chat_peer = self._session_chat_peer() or self._peer_dest_hash(self.active_peer)
+            chat_peer = self._peer_dest_hash(queue_target) or self._session_chat_peer()
             transfer_id = str(uuid.uuid4())[:12]
             entry = self._enrich_message({
                 "type": "file",
@@ -2187,7 +2192,7 @@ class ChatWebServer:
 
             queue_target = self._queue_target_hash()
             linked_to_target = bool(
-                queue_target and self.messaging._link_for_peer(queue_target)
+                queue_target and self.messaging._peer_link_active(queue_target)
             )
             if not linked_to_target or self.messaging._has_active_transfer():
                 self.messaging.enqueue("voice", voice_path, target_hash=queue_target,
@@ -2200,7 +2205,7 @@ class ChatWebServer:
 
             my_hash = self._my_sender_hash()
             ts = time.time()
-            chat_peer = self._session_chat_peer() or self._peer_dest_hash(self.active_peer)
+            chat_peer = self._peer_dest_hash(queue_target) or self._session_chat_peer()
             voice_name = os.path.basename(voice_path)
             transfer_id = str(uuid.uuid4())[:12]
             entry = self._enrich_message({
@@ -2466,7 +2471,7 @@ class ChatWebServer:
                 if not target_hash and self.messaging._session_peer_hash:
                     target_hash = self.messaging._session_peer_hash
                 linked_to_target = bool(
-                    target_hash and self.messaging._link_for_peer(target_hash)
+                    target_hash and self.messaging._peer_link_active(target_hash)
                 )
                 if linked_to_target:
                     def on_receipt(status, receipt):

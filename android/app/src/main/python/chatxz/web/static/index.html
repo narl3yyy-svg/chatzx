@@ -1435,12 +1435,10 @@ function pollLinkStatus() {
       if (d.linked_peers && d.linked_peers.length) {
         syncLinkedPeers(d.linked_peers);
         updatePeerHeader();
-        setLinkStatus('connected', linkedPeers.size > 1 ? linkedPeers.size + ' linked' : 'Active');
       } else if (d.link_active && d.active_peer) {
         setLinkPeer(d.active_peer, true);
         registerPeerAliases(d.active_peer, d.session_peer, viewingPeer);
         updatePeerHeader();
-        setLinkStatus('connected', 'Active');
       } else if (linkedPeers.size && (d.session_peer || d.active_peer)) {
         setLinkStatus('disconnected', 'Reconnecting…');
         updatePeerHeader();

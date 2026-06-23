@@ -237,6 +237,31 @@ class MessagingBackend:
             pass
         return True
 
+    def disconnect_all_peers(self, clear_session=True):
+        """Tear down every open RNS link (network reset / full disconnect)."""
+        self._link_handoff = True
+        try:
+            seen = set()
+            for link in list(self.links.values()):
+                lid = getattr(link, "link_id", None)
+                if lid and lid in seen:
+                    continue
+                if lid:
+                    seen.add(lid)
+                try:
+                    link.teardown()
+                except Exception:
+                    pass
+            self.peer_links.clear()
+            self._link_peer_hashes.clear()
+            self.active_link = None
+            self.active_peer_hash = None
+            self._send_link = None
+            if clear_session:
+                self.clear_session_peer()
+        finally:
+            self._link_handoff = False
+
     def _peer_for_link(self, link, fallback=None):
         cached = self._link_peer_hashes.get(link.link_id) if link else None
         if cached and not self._is_self_hash(cached):
@@ -1206,11 +1231,13 @@ class MessagingBackend:
         self._register_peer_link(link, peer)
         self._last_link_established_at = time.time()
         if promote_active:
+            old_active = self.active_peer_hash
             self.active_link = link
             self.active_peer_hash = peer
             self._session_peer_hash = peer
-            self._pending_sends.clear()
             self._send_link = link
+            if not old_active or self.hashes_equivalent(peer, old_active):
+                self._pending_sends.clear()
         label = "background" if background else "active"
         print(f"[messaging] Link ready with {peer[:16]}... ({label})")
         if self.on_link_established:
@@ -1951,6 +1978,9 @@ class MessagingBackend:
 
     def send_message(self, text, receipt_callback=None, msg_id=None, target_peer=None):
         peer = self.dest_hash_for(target_peer or self.active_peer_hash or "")
+        if not self._peer_link_active(peer):
+            print(f"[messaging] send_message: no active link to {peer[:16] if peer else 'peer'}")
+            return False
         link = self._outgoing_link(peer)
         if not link:
             print(f"[messaging] send_message: no link to {peer[:16] if peer else 'peer'}")
