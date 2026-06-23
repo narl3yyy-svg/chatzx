@@ -32,9 +32,8 @@ IDENTITY_WAIT_TIMEOUT_S = 18
 ANDROID_IDENTITY_WAIT_TIMEOUT_S = 24
 REVERSE_CONNECT_WAIT_S = 22
 ANDROID_REVERSE_CONNECT_WAIT_S = 35
-INBOUND_WAIT_AFTER_WAKE_S = 6
-ANDROID_INBOUND_WAIT_AFTER_WAKE_S = 14
-REVERSE_RESPOND_INBOUND_WAIT_S = 5
+INITIATOR_INBOUND_WAIT_S = 28
+ANDROID_INITIATOR_INBOUND_WAIT_S = 32
 LINK_FAILOVER_GRACE_S = 12
 RECEIPT_FAILOVER_TIMEOUT_S = 10
 
@@ -634,11 +633,12 @@ class MessagingBackend:
         return self._http_peer_post(peer_ip, peer_port, "/api/announce", payload={}, timeout=4.0)
 
     def _request_peer_connect(self, peer_ip, peer_port, my_hash, caller_ip=None, caller_port=8742):
-        """Ask peer to open outbound RNS link (fixes Android inbound UDP link requests)."""
+        """Ask peer to open outbound RNS link back to us (we wait inbound)."""
         payload = {
             "hash": normalize_hash(my_hash or self.my_dest_hash or ""),
             "ip": caller_ip or "",
             "port": int(caller_port or 8742),
+            "outbound": True,
         }
         return self._http_peer_post(peer_ip, peer_port, "/api/request_connect", payload=payload)
 
@@ -1383,20 +1383,19 @@ class MessagingBackend:
                     caller_ip=caller_ip, caller_port=caller_port,
                 )
                 inbound_wait = (
-                    ANDROID_INBOUND_WAIT_AFTER_WAKE_S if is_android()
-                    else INBOUND_WAIT_AFTER_WAKE_S
+                    ANDROID_INITIATOR_INBOUND_WAIT_S if is_android()
+                    else INITIATOR_INBOUND_WAIT_S
                 )
-                print(f"[connect] Waiting for peer inbound link ({inbound_wait}s)...")
+                print(f"[connect] Waiting for peer outbound link ({inbound_wait}s)...")
                 if self._wait_for_peer_link(dest_hex, alt_hex=clean, timeout_s=inbound_wait):
                     print("[connect] Link established (inbound after wake)")
                     return True
+                print("[connect] Peer did not connect back — trying outbound fallback...")
             elif peer_ip and respond_to_wake:
-                print(f"[connect] Reverse-connect to {peer_ip}:{peer_port or 8742} (no wake-back)")
-                if self._wait_for_peer_link(
-                    dest_hex, alt_hex=clean, timeout_s=REVERSE_RESPOND_INBOUND_WAIT_S
-                ):
-                    print("[connect] Link established (inbound before reverse outbound)")
-                    return True
+                print(
+                    f"[connect] Outbound to caller at {peer_ip}:{peer_port or 8742} "
+                    f"({dest_hex[:16]}...)"
+                )
             scrub_peer_path(dest_hex)
             if peer_ip or is_android():
                 self._prime_udp_path(dest_hex, peer_ip=peer_ip)

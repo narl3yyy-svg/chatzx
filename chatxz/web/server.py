@@ -1089,7 +1089,7 @@ class ChatWebServer:
                 clean = self._peer_dest_hash(self.messaging.active_peer_hash or peer_hash)
                 self.active_peer = clean
                 await self._broadcast({"type": "connect_ok", "data": {"hash": clean}})
-                print(f"[connect] Reverse-connect established with {clean[:16]}...")
+                print(f"[connect] Outbound-connect established with {clean[:16]}...")
             else:
                 await self._broadcast({"type": "connect_fail", "error": "reverse connect failed"})
         except Exception as e:
@@ -1121,9 +1121,18 @@ class ChatWebServer:
             if now - self._reverse_connect_last.get(dedupe_key, 0) < 3.0:
                 return web.json_response({"status": "ok", "connecting": True, "deduped": True})
             self._reverse_connect_last[dedupe_key] = now
-            print(f"[connect] Reverse-connect request from {peer_ip or 'unknown'} for {resolved[:16]}...")
+            caller_from = (data.get("ip") or "").strip()
+            if caller_from:
+                from chatxz.core.lan_rns import register_udp_peer_ip
+                register_udp_peer_ip(caller_from)
+            print(
+                f"[connect] Outbound-connect request from {caller_from or peer_ip or 'unknown'} "
+                f"for {resolved[:16]}..."
+            )
             asyncio.create_task(
-                self._reverse_connect_task(resolved, peer_ip, peer_port, caller_ip, self.port)
+                self._reverse_connect_task(
+                    resolved, caller_from or peer_ip, peer_port, caller_ip, self.port
+                )
             )
             return web.json_response({"status": "ok", "connecting": True})
         except Exception as e:

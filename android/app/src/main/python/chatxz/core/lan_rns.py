@@ -309,7 +309,7 @@ def _udp_unicast_targets(peer_ip=None, subnet_scan=None):
 
 
 def patch_udp_interface_unicast(force=False):
-    """Replace RNS UDPInterface broadcast transmit with subnet unicast on Android."""
+    """Prefer directed UDP to known peer IPs; Android falls back to subnet unicast."""
     global _udp_patched
     if _udp_patched and not force:
         return True
@@ -320,66 +320,63 @@ def patch_udp_interface_unicast(force=False):
 
     original = UDPInterface.process_outgoing
 
-    def process_outgoing(self, data):
-        use_unicast = is_android()
-        port = int(getattr(self, "forward_port", None) or RNS_PORT)
-        targets = _udp_unicast_targets() if use_unicast else []
-
-        if not use_unicast:
-            try:
-                original(self, data)
-                return
-            except Exception:
-                use_unicast = True
-                targets = _udp_unicast_targets()
-
-        if not targets:
-            try:
-                original(self, data)
-            except Exception as exc:
-                RNS.log(
-                    "Could not transmit on " + str(self)
-                    + ". The contained exception was: " + str(exc),
-                    RNS.LOG_ERROR,
-                )
-            return
-
+    def _send_directed(self, data, hosts, port):
+        if not hosts:
+            return False
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         except OSError:
             pass
-
         sent_any = False
-        for host in targets:
+        for host in hosts:
             try:
                 sock.sendto(data, (host, port))
                 sent_any = True
             except OSError:
                 pass
-
-        if not sent_any:
-            forward_ip = getattr(self, "forward_ip", None)
-            if forward_ip:
-                try:
-                    sock.sendto(data, (forward_ip, port))
-                    sent_any = True
-                except OSError as exc:
-                    RNS.log(
-                        "Could not transmit on " + str(self)
-                        + ". The contained exception was: " + str(exc),
-                        RNS.LOG_ERROR,
-                    )
-
-        if sent_any:
-            self.txb += len(data)
         try:
             sock.close()
         except OSError:
             pass
+        if sent_any:
+            self.txb += len(data)
+        return sent_any
+
+    def process_outgoing(self, data):
+        port = int(getattr(self, "forward_port", None) or RNS_PORT)
+        peer_targets = sorted(_known_peer_ips)
+
+        if peer_targets and _send_directed(self, data, peer_targets, port):
+            return
+
+        if is_android():
+            targets = _udp_unicast_targets(subnet_scan=True)
+            if targets and _send_directed(self, data, targets, port):
+                return
+            forward_ip = getattr(self, "forward_ip", None)
+            if forward_ip and _send_directed(self, data, [forward_ip], port):
+                return
+            RNS.log(
+                "Could not transmit on " + str(self) + " (no UDP targets available)",
+                RNS.LOG_ERROR,
+            )
+            return
+
+        try:
+            original(self, data)
+        except Exception as exc:
+            if peer_targets:
+                if _send_directed(self, data, peer_targets, port):
+                    return
+            RNS.log(
+                "Could not transmit on " + str(self)
+                + ". The contained exception was: " + str(exc),
+                RNS.LOG_ERROR,
+            )
 
     UDPInterface.process_outgoing = process_outgoing
     _udp_patched = True
-    if is_android():
-        print("[network] Android UDP unicast patch installed (RNS port %d)" % RNS_PORT)
+    label = "Android" if is_android() else "directed"
+    print(f"[network] {label} UDP transmit patch installed (RNS port {RNS_PORT})")
     return True
