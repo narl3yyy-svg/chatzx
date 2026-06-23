@@ -62,7 +62,7 @@ public class MainActivity extends AppCompatActivity {
     private WifiManager.MulticastLock multicastLock;
     private UsbPermissionReceiver usbPermissionReceiver;
     private String serverUrl = "http://127.0.0.1:8742";
-    private boolean serverStarted = false;
+    private static boolean serverStarted = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -302,7 +302,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private synchronized void startPythonServer() {
-        if (serverStarted) return;
+        if (serverStarted) {
+            webView.loadUrl(serverUrl);
+            return;
+        }
         serverStarted = true;
 
         new Thread(() -> {

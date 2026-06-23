@@ -27,6 +27,7 @@ BIND_HOST, PORT = "0.0.0.0", 8742
 # WebView always loads the local loopback URL.
 WEB_HOST = "127.0.0.1"
 _server_error = []
+_server_started = False
 
 
 def _wait_for_port(host, port, timeout=90):
@@ -47,6 +48,9 @@ def _wait_for_port(host, port, timeout=90):
 
 def start_server():
     """Called from MainActivity via Chaquopy. Returns (host, port) or (None, error)."""
+    global _server_started
+    if _server_started and _wait_for_port(WEB_HOST, PORT, timeout=3):
+        return WEB_HOST, str(PORT)
     try:
         from chatxz.utils.platform import android_files_dir, is_android
         files_dir = android_files_dir()
@@ -72,6 +76,7 @@ def start_server():
         except Exception:
             _server_error.append(traceback.format_exc())
 
+    _server_started = True
     thread = threading.Thread(target=_run, name="chatxz-server", daemon=True)
     thread.start()
 

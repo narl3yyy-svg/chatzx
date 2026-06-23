@@ -276,6 +276,7 @@ class ChatWebServer:
         self.rns_init_error = None
         self._announce_lock = threading.Lock()
         self._reverse_connect_last = {}
+        self._session_resume_last = 0.0
         self._shutting_down = False
         self._progress_last = {}
         self._progress_throttle_ms = 250
@@ -682,6 +683,11 @@ class ChatWebServer:
                 )
 
     def start_rns(self):
+        try:
+            if RNS.Reticulum.get_instance() is not None and self.messaging and self.messaging.destination:
+                return RNS.hexrep(self.messaging.destination.hash)
+        except Exception:
+            pass
         if is_android():
             try:
                 from chatxz.android_usb.bootstrap import bootstrap as bootstrap_android_usb
@@ -709,6 +715,10 @@ class ChatWebServer:
         try:
             RNS.Reticulum(self.config_dir, loglevel=loglevel)
         except OSError as e:
+            err = str(e)
+            if "reinitialise" in err and self.messaging and self.messaging.destination:
+                print("[RNS] Already running — reusing existing instance")
+                return RNS.hexrep(self.messaging.destination.hash)
             print(f"[RNS] Bind error: {e}")
             if is_android():
                 raise RuntimeError(f"RNS failed to start: {e}") from e
@@ -1235,10 +1245,25 @@ class ChatWebServer:
             )
             self.save_settings(settings)
             self._write_rns_config(settings)
+            serial_hot = None
+            if is_android():
+                serial_hot = await self._run_blocking(
+                    ensure_runtime_serial, settings.get("rns_interfaces")
+                )
+            msg = "Interface updated."
+            if is_android():
+                msg = (
+                    "Serial interface attached to RNS."
+                    if serial_hot
+                    else "Settings saved. Select a USB port and grant access if needed."
+                )
+            else:
+                msg = "Interface updated. Restart chatxz to apply."
             return web.json_response({
                 "status": "ok",
                 "interfaces": self._interfaces_for_api(settings["rns_interfaces"]),
-                "message": "Interface updated. Restart chatxz to apply.",
+                "serial_hot_added": bool(serial_hot),
+                "message": msg,
             })
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
@@ -1349,6 +1374,26 @@ class ChatWebServer:
         if resolved_ip:
             return resolved_ip, resolved_port or peer_port
         return peer_ip, peer_port
+
+    async def _resume_session_task(self, peer, peer_ip, peer_port):
+        try:
+            result = await self._run_blocking(
+                self.messaging.resume_session_peer,
+                peer_ip,
+                peer_port,
+                self._discovery_peer_for_connect,
+                detect_lan_ip(),
+                self.port,
+            )
+            if self._shutting_down or result is None:
+                return
+            if result:
+                clean = self._peer_dest_hash(self.messaging.active_peer_hash or peer)
+                self.active_peer = clean
+                await self._broadcast({"type": "link_established", "data": {"hash": clean}})
+                print(f"[connect] Session resumed with {clean[:16]}...")
+        except Exception as e:
+            print(f"[connect] Session resume error: {e}")
 
     async def _link_failover_loop(self):
         """Detect dead or migrated RNS paths and reconnect without server restart."""
@@ -1630,7 +1675,10 @@ class ChatWebServer:
         return web.json_response({"status": "restarting"})
 
     async def handle_temperature(self, request):
-        avg = await asyncio.to_thread(get_avg_cpu_temperature)
+        try:
+            avg = await asyncio.to_thread(get_avg_cpu_temperature)
+        except Exception:
+            avg = None
         return web.json_response({"avg_celsius": avg})
 
     async def handle_cpu(self, request):
@@ -2039,6 +2087,16 @@ class ChatWebServer:
         print(f"[ws] Client connected ({len(self.websockets)} total)")
 
         await self._send_peers_to(ws)
+        if self.messaging:
+            peer = self._peer_dest_hash(
+                getattr(self.messaging, "_session_peer_hash", None) or self.active_peer
+            )
+            if peer and not self.messaging.active_link:
+                now = time.time()
+                if now - self._session_resume_last >= 8.0:
+                    self._session_resume_last = now
+                    peer_ip, peer_port = self._peer_connect_meta(peer)
+                    asyncio.create_task(self._resume_session_task(peer, peer_ip, peer_port))
 
         try:
             async for msg in ws:

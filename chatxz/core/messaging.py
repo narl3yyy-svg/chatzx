@@ -35,6 +35,7 @@ ANDROID_REVERSE_CONNECT_WAIT_S = 35
 INITIATOR_INBOUND_WAIT_S = 28
 ANDROID_INITIATOR_INBOUND_WAIT_S = 32
 LINK_FAILOVER_GRACE_S = 12
+LINK_STALE_FAILOVER_IDLE_S = 90
 RECEIPT_FAILOVER_TIMEOUT_S = 10
 
 MESSAGE_TYPE_TEXT = "text"
@@ -298,22 +299,25 @@ class MessagingBackend:
             return "serial"
         return None
 
-    def _prepare_failover_path(self, peer, prefer_family=None):
+    def _prepare_failover_path(self, peer, prefer_family=None, peer_ip=None):
         prune_dead_serial_interfaces()
-        scrub_peer_path(peer)
+        _, path_iface = peer_path_entry(peer)
+        if path_iface and not interface_is_healthy(path_iface):
+            clear_peer_path(peer)
+        else:
+            scrub_peer_path(peer)
         detached = detach_unhealthy_interfaces()
         if detached:
             print(f"[connect] Detached {detached} offline RNS interface(s)")
-        clear_peer_path(peer)
-        self._announce()
+        self._announce(peer_ip=peer_ip, unicast_subnet=peer_ip is None and is_android())
         request_paths_for_hash(peer, family=prefer_family)
         if prefer_family:
-            wait_s = 16.0 if prefer_family in ("lan", "udp") else 10.0
+            wait_s = 20.0 if prefer_family in ("lan", "udp") else 12.0
             path_iface = wait_for_peer_path(peer, family=prefer_family, timeout_s=wait_s)
             if path_iface:
                 print(f"[connect] Path ready on {type(path_iface).__name__} ({prefer_family})")
                 return True
-        path_iface = wait_for_peer_path(peer, family=None, timeout_s=6.0)
+        path_iface = wait_for_peer_path(peer, family=None, timeout_s=12.0)
         if path_iface:
             print(f"[connect] Path ready on {type(path_iface).__name__}")
             return True
@@ -322,6 +326,8 @@ class MessagingBackend:
 
     def link_needs_failover(self):
         if not self.active_link or not self.active_peer_hash:
+            return False, ""
+        if self._active_resources or self._current_transfer_id:
             return False, ""
         peer = self.dest_hash_for(self.active_peer_hash)
         if not peer or peer == "unknown":
@@ -377,7 +383,7 @@ class MessagingBackend:
         try:
             if getattr(self.active_link, "status", None) == RNS.Link.STALE:
                 inactive = self.active_link.inactive_for()
-                if inactive > 8:
+                if inactive > LINK_STALE_FAILOVER_IDLE_S:
                     return True, f"link stale ({inactive:.0f}s idle)"
         except Exception:
             pass
@@ -1247,6 +1253,22 @@ class MessagingBackend:
             if handoff:
                 self._link_handoff = False
 
+    def resume_session_peer(self, peer_ip=None, peer_port=None, peer_lookup=None,
+                            caller_ip=None, caller_port=8742):
+        """Reconnect to the saved session peer after link drop or UI resume."""
+        peer = self.dest_hash_for(self._session_peer_hash or self.active_peer_hash or "")
+        if not peer or peer == "unknown":
+            return False
+        if self.active_link and self._peer_link_active(peer):
+            return True
+        if self._failover_in_progress:
+            return False
+        print(f"[connect] Resuming session with {peer[:16]}...")
+        return self.reconnect_active_peer(
+            peer_ip, peer_port, peer_lookup, caller_ip, caller_port,
+            reason="session resume",
+        )
+
     def reconnect_active_peer(self, peer_ip=None, peer_port=None, peer_lookup=None,
                               caller_ip=None, caller_port=8742, reason=""):
         now = time.time()
@@ -1264,27 +1286,19 @@ class MessagingBackend:
         self._failover_in_progress = True
         try:
             prefer = self._preferred_failover_family(peer)
+            if prefer == "serial" and not self._has_online_family("serial"):
+                prefer = "udp" if self._has_online_family("udp") else (
+                    "lan" if lan_mesh_has_peer() else prefer
+                )
             print(f"[connect] Failover reconnect to {peer[:16]}... ({reason})")
             self._teardown_active_link(preserve_peer=True, handoff=True)
             time.sleep(0.3)
-            if not self._prepare_failover_path(peer, prefer_family=prefer):
+            if peer_ip:
+                register_udp_peer_ip(peer_ip)
+            if not self._prepare_failover_path(peer, prefer_family=prefer, peer_ip=peer_ip):
                 if prefer == "serial":
                     print("[connect] Serial failover blocked — plug in USB serial and ensure port is configured")
                 return False
-            use_reverse = bool(
-                peer_ip
-                and prefer != "serial"
-                and (
-                    (prefer == "lan" and lan_mesh_has_peer())
-                    or (prefer == "udp" and bool(online_interfaces(family="udp")))
-                )
-            )
-            if use_reverse:
-                self._wake_peer(
-                    peer_ip, int(peer_port or 8742),
-                    normalize_hash(self.my_dest_hash or ""),
-                    caller_ip=caller_ip, caller_port=int(caller_port or 8742),
-                )
             return self.connect_to(
                 peer,
                 peer_ip,

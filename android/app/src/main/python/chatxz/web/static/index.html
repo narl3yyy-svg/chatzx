@@ -2106,11 +2106,13 @@ function saveSerialInterface(id) {
       const saved = (d.interfaces || []).find(i => i.id === id);
       if (saved && saved.port_status === 'permission_denied') {
         requestUsbPermission(port);
-        toast('Saved ' + port + ' — grant USB access, then restart');
+        toast('Saved ' + port + ' — grant USB access, then Apply again');
+      } else if (d.serial_hot_added) {
+        toast('Serial active in RNS — no restart needed');
       } else if (saved && saved.serial_active) {
-        toast(appPlatform === 'android' ? 'Serial enabled — restart the app to apply' : 'Serial enabled — restart chatxz to apply');
+        toast(appPlatform === 'android' ? 'Serial enabled — hot-add pending (check Network panel)' : 'Serial enabled — restart chatxz to apply');
       } else {
-        toast(appPlatform === 'android' ? 'Serial settings saved — restart the app to apply' : 'Serial settings saved — restart chatxz to apply');
+        toast(appPlatform === 'android' ? 'Serial settings saved — pick port & grant USB access' : 'Serial settings saved — restart chatxz to apply');
       }
       refreshNetworkStatus();
     } else {

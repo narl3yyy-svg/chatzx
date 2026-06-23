@@ -12,6 +12,17 @@ The web interface handles day-to-day use: per-peer chats, send messages, transfe
 
 **HTTP (port 8742) is only the local web UI** — it serves the browser interface and previews files saved on your machine. Peer-to-peer chat and file transfer always travel over encrypted RNS links.
 
+### Security model
+
+| Layer | Encrypted? | Notes |
+|-------|------------|-------|
+| RNS Link (chat) | **Yes** — AES-256-CBC + ECDH key exchange | All messages and link setup |
+| RNS Resource (files) | **Yes** — over the encrypted link | Large files segmented inside the link |
+| UDP / serial transport | No (payload is ciphertext) | Android uses directed LAN UDP unicast instead of broadcast; wire format is still RNS packets |
+| HTTP `:8742` / beacon `:8743` | No | Local UI + discovery helpers only; never carries chat content between peers |
+
+Reinstalling the Android app generates a **new identity** — saved contacts pointing at the old hash will not connect until you rediscover the peer and update the contact.
+
 | Path | RNS? | Role |
 |------|------|------|
 | **AutoInterface** | Yes | LAN mesh over IPv6 link-local (desktop default) |
@@ -202,9 +213,10 @@ cd android && chmod +x gradlew && ./gradlew assembleDebug
 
 **Android notes:**
 - Same failover, messaging, and web UI as desktop (WebView loads embedded `index.html`)
-- USB serial via OTG: grant permission when prompted, Apply in Settings → Network, restart app
-- Wi-Fi multicast lock held while running; subnet unicast supplements UDP broadcast
-- Reverse-connect (`POST /api/request_connect`) helps when outbound RNS link from phone fails
+- USB serial via OTG: grant permission, pick port in Settings → Network, Apply — **hot-adds to RNS without restart** (v0.3.45+)
+- Wi-Fi multicast lock held while running; directed UDP unicast to known peer IPs (link traffic stays encrypted inside RNS)
+- Connect protocol: waking peer waits inbound; woken peer opens outbound RNS link (`POST /api/request_connect`)
+- Session auto-resume when reopening the app UI if a chat session peer was active
 
 ## CLI Usage
 
@@ -222,6 +234,19 @@ chatxz --daemon
 ```
 
 ## Changelog (recent)
+
+### v0.3.45
+- **Failover stability** — no reconnect during active file transfers; stale-link threshold 90s (was 8s); gentler path rebuild on reconnect
+- **Session resume** — reopening WebView/UI auto-reconnects to saved session peer via wake protocol
+- **Android serial** — hot-add on Apply (no app restart); prevents double RNS init crash on recreate
+- **Temperature API** — no PermissionError spam on Android when hwmon is unavailable
+
+### v0.3.44
+- **Connect race fix** — initiator waits for peer outbound link (28s); responder outbounds immediately (no dual-outbound deadlock)
+- **Directed UDP** — link packets sent to known peer IPs on all platforms; Android subnet scan only when no peers known
+
+### v0.3.43
+- **Android UDP EPERM fix** — unicast fan-out replaces blocked broadcast; `NEARBY_WIFI_DEVICES`; multicast lock in Application
 
 ### v0.3.42
 - **Connect race fix** — wait for inbound link before outbound (avoids Android↔desktop dual-outbound deadlock)
