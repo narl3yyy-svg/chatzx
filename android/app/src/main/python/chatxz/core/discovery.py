@@ -98,10 +98,10 @@ class PeerDiscovery:
 
     def start(self):
         self.running = True
-        self.accept_peers = True
+        self.accept_peers = False
         self._handler = AnnounceHandler(self)
         RNS.Transport.register_announce_handler(self._handler)
-        print("[discovery] Announce handler registered (listening for LAN peers)")
+        print("[discovery] Announce handler registered (tap Announce to discover peers)")
 
     def stop(self):
         self.running = False

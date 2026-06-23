@@ -133,6 +133,22 @@ def debug_log_path():
     return _log_path
 
 
+def debug_log_tail(max_bytes=32000):
+    """Return the tail of the active debug log for in-app viewing."""
+    path = _log_path
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as fh:
+            if size > max_bytes:
+                fh.seek(size - max_bytes)
+            data = fh.read()
+        return data.decode("utf-8", errors="replace")
+    except OSError:
+        return None
+
+
 def start_debug_capture():
     """Mirror stdout/stderr to Downloads/chatxz-debug-*.txt on Android."""
     global _log_path, _orig_stdout, _orig_stderr
