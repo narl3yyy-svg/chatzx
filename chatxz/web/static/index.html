@@ -1219,6 +1219,7 @@ let ws = null;
 let myHash = '';
 let viewingPeer = null;
 let linkPeer = null;
+let linkedPeers = new Set();
 let connectInFlight = false;
 let progressLastUpdate = 0;
 let lastLinkToastAt = 0;
@@ -1431,17 +1432,19 @@ function pollLinkStatus() {
   fetch('/api/network-status')
     .then(r => r.json())
     .then(d => {
-      if (d.link_active && d.active_peer) {
-        if (!linkPeer || !peersMatch(linkPeer, d.active_peer)) {
-          setLinkPeer(d.active_peer);
-          registerPeerAliases(d.active_peer, d.session_peer, viewingPeer);
-        }
+      if (d.linked_peers && d.linked_peers.length) {
+        syncLinkedPeers(d.linked_peers);
+        updatePeerHeader();
+        setLinkStatus('connected', linkedPeers.size > 1 ? linkedPeers.size + ' linked' : 'Active');
+      } else if (d.link_active && d.active_peer) {
+        setLinkPeer(d.active_peer, true);
+        registerPeerAliases(d.active_peer, d.session_peer, viewingPeer);
         updatePeerHeader();
         setLinkStatus('connected', 'Active');
-      } else if (linkPeer && (d.session_peer || d.active_peer)) {
+      } else if (linkedPeers.size && (d.session_peer || d.active_peer)) {
         setLinkStatus('disconnected', 'Reconnecting…');
         updatePeerHeader();
-      } else if (!linkPeer) {
+      } else if (!linkedPeers.size) {
         setLinkStatus('disconnected', 'Inactive');
       }
     })
@@ -1477,6 +1480,7 @@ function filterContacts(query) {
 function showWelcome() {
   viewingPeer = null;
   linkPeer = null;
+  linkedPeers.clear();
   try { localStorage.removeItem(LS_VIEWING_PEER); } catch (_) {}
   document.getElementById('messages').innerHTML = '';
   document.getElementById('peer-name').textContent = 'No chat selected';
@@ -1493,7 +1497,8 @@ function updatePeerHeader() {
   if (!viewingPeer) return;
   const name = contactNameFor(viewingPeer) || truncateHash(viewingPeer);
   document.getElementById('peer-name').textContent = name;
-  const linked = linkPeer && peersMatch(linkPeer, viewingPeer);
+  const linked = isPeerLinked(viewingPeer);
+  linkPeer = linked ? peerKey(viewingPeer) : null;
   document.getElementById('peer-status').textContent = linked
     ? 'Encrypted · Connected'
     : 'Viewing history · not connected';
@@ -1550,14 +1555,16 @@ function fetchIdentity() {
         const hint = document.getElementById('settings-received-hint');
         if (hint) hint.textContent = 'Tap Browse to open the Android folder picker, then Save to apply.';
       }
-      if (d.connected) {
-        setLinkPeer(d.connected);
+      if (d.linked_peers && d.linked_peers.length) {
+        syncLinkedPeers(d.linked_peers);
+      } else if (d.connected) {
+        setLinkPeer(d.connected, true);
         registerPeerAliases(d.connected, viewingPeer);
-        updatePeerHeader();
       } else {
+        linkedPeers.clear();
         linkPeer = null;
-        updatePeerHeader();
       }
+      updatePeerHeader();
       const saved = localStorage.getItem(LS_VIEWING_PEER);
       if (saved && !viewingPeer) openChat(saved, false);
     });
@@ -1619,35 +1626,39 @@ function handleWSMessage(msg) {
     if (msg.data?.hash) {
       const h = msg.data.hash;
       registerPeerAliases(h, viewingPeer, ...(msg.data.aliases || []));
-      setLinkPeer(h);
-      if (!msg.data.path_switch) {
-        openChat(h, false);
-      } else if (viewingPeer && peersMatch(viewingPeer, h)) {
-        updatePeerHeader();
-        loadHistoryForPeer(viewingPeer);
-      } else {
-        openChat(h, false);
-      }
+      setLinkPeer(h, true);
+      if (msg.data.linked_peers) syncLinkedPeers(msg.data.linked_peers);
       const now = Date.now();
-      if (!msg.data.path_switch) {
+      if (connectInFlight && !msg.data.background) {
+        connectInFlight = false;
+        openChat(h, false);
         toast('Connected');
         lastLinkToastAt = now;
-      } else if (now - lastLinkToastAt > 45000) {
-        toast('Switched to faster link');
-        lastLinkToastAt = now;
+      } else if (msg.data.path_switch && viewingPeer && peersMatch(viewingPeer, h)) {
+        updatePeerHeader();
+        if (now - lastLinkToastAt > 45000) {
+          toast('Switched to faster link');
+          lastLinkToastAt = now;
+        }
+      } else {
+        updatePeerHeader();
       }
       pollQueue();
     }
   } else if (msg.type === 'link_closed') {
-    setLinkStatus('disconnected', 'Reconnecting…');
-    setLinkPeer(null);
+    if (msg.data?.peer) setLinkPeer(msg.data.peer, false);
+    if (msg.data?.linked_peers) syncLinkedPeers(msg.data.linked_peers);
     updatePeerHeader();
+    if (!linkedPeers.size) {
+      setLinkStatus('disconnected', 'Inactive');
+    }
     pollQueue();
   } else if (msg.type === 'connect_ok') {
     if (connectInFlight) {
       connectInFlight = false;
-      setLinkPeer(msg.hash);
-      if (viewingPeer && peersMatch(viewingPeer, msg.hash)) updatePeerHeader();
+      setLinkPeer(msg.hash, true);
+      if (msg.linked_peers) syncLinkedPeers(msg.linked_peers);
+      openChat(msg.hash, false);
       toast('Connected!');
     }
   } else if (msg.type === 'connect_fail') {
@@ -1664,6 +1675,7 @@ function handleWSMessage(msg) {
     }
   } else if (msg.type === 'network_reset') {
     linkPeer = null;
+    linkedPeers.clear();
     updatePeerHeader();
     setLinkStatus('disconnected', 'Inactive');
     renderDiscovered([]);
@@ -1883,7 +1895,7 @@ function renderContacts(contacts) {
     const div = document.createElement('div');
     const name = c.name || c.hash;
     const active = peersMatch(c.hash, viewingPeer);
-    const linked = peersMatch(c.hash, linkPeer);
+    const linked = isPeerLinked(c.hash);
     const unread = unreadForPeer(c.hash);
     const ipHint = c.ip ? ` · ${escapeHtml(c.ip)}` : '';
     div.className = 'contact-item' + (active ? ' active' : '');
@@ -1906,10 +1918,11 @@ function renderDiscovered(peers) {
   window._discoveredPeers = peers || [];
   const el = document.getElementById('discovered-list');
   el.innerHTML = '';
-  let hasLink = !!linkPeer;
+  let hasLink = linkedPeers.size > 0;
   let discovered = peers ? peers.filter(p => !p.connected) : [];
   let count = discovered.length;
-  document.getElementById('peer-count').textContent = count + ' peer' + (count !== 1 ? 's' : '') + (hasLink ? ' · 1 linked' : '');
+  const linkCount = linkedPeers.size;
+  document.getElementById('peer-count').textContent = count + ' peer' + (count !== 1 ? 's' : '') + (linkCount ? ' · ' + linkCount + ' linked' : '');
   const dc = document.getElementById('discovered-count');
   if (dc) dc.textContent = count;
   if (!discovered || discovered.length === 0) {
@@ -2056,7 +2069,7 @@ function connectTo(hash, ip, port) {
     toast('Connection already in progress...');
     return;
   }
-  if (linkPeer && peersMatch(linkPeer, hash)) {
+  if (isPeerLinked(hash)) {
     openChat(hash, false);
     toast('Already connected');
     return;
@@ -2085,7 +2098,8 @@ function connectTo(hash, ip, port) {
     if (d.status === 'ok') {
       const connected = d.hash || hash;
       registerPeerAliases(connected, hash, viewingPeer);
-      setLinkPeer(connected);
+      setLinkPeer(connected, true);
+      if (d.linked_peers) syncLinkedPeers(d.linked_peers);
       if (viewingPeer && peersMatch(viewingPeer, connected)) updatePeerHeader();
       else openChat(connected, false);
       toast('Connected!');
@@ -2413,6 +2427,7 @@ function resetNetwork() {
     .then(d => {
       if (d.status === 'ok') {
         linkPeer = null;
+        linkedPeers.clear();
         updatePeerHeader();
         setLinkStatus('disconnected', 'Inactive');
         renderDiscovered([]);
@@ -2620,9 +2635,20 @@ function saveSettings() {
   }).catch(() => toast('Failed to save settings'));
 }
 
-function setLinkPeer(hash) {
-  linkPeer = hash ? peerKey(hash) : null;
-  if (viewingPeer && linkPeer) registerPeerAliases(linkPeer, viewingPeer);
+function setLinkPeer(hash, linked) {
+  const k = peerKey(hash);
+  if (!k) return;
+  if (linked === false) {
+    linkedPeers.delete(k);
+  } else {
+    linkedPeers.add(k);
+  }
+  if (viewingPeer && isPeerLinked(viewingPeer)) {
+    linkPeer = peerKey(viewingPeer);
+    registerPeerAliases(linkPeer, viewingPeer);
+  } else {
+    linkPeer = null;
+  }
   renderContacts(allContacts);
   renderDiscovered(window._discoveredPeers || []);
 }
@@ -2639,18 +2665,26 @@ function openChat(hash, tryConnect, meta) {
   loadHistoryForPeer(viewingPeer);
   renderContacts(allContacts);
   renderDiscovered(window._discoveredPeers || []);
-  if (tryConnect && (!linkPeer || !peersMatch(linkPeer, viewingPeer))) {
+  if (tryConnect && !isPeerLinked(viewingPeer)) {
     const m = meta || peerMetaForHash(hash);
     connectTo(hash, m?.ip, m?.port);
-  } else if (!document.body.classList.contains('modal-open') && linkPeer && peersMatch(linkPeer, viewingPeer)) {
+  } else if (!document.body.classList.contains('modal-open') && isPeerLinked(viewingPeer)) {
     document.getElementById('msg-input').focus();
   }
 }
 
 function disconnect() {
-  fetch('/api/disconnect', {method: 'POST'});
-  showWelcome();
-  fetchIdentity();
+  const peer = viewingPeer || '';
+  fetch('/api/disconnect', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({peer}),
+  }).then(() => {
+    if (peer) setLinkPeer(peer, false);
+    updatePeerHeader();
+    if (!linkedPeers.size) setLinkStatus('disconnected', 'Inactive');
+    fetchIdentity();
+  });
 }
 
 function sendMessage() {
@@ -2661,7 +2695,7 @@ function sendMessage() {
     toast('Select a chat first');
     return;
   }
-  const linked = linkPeer && peersMatch(linkPeer, viewingPeer);
+  const linked = isPeerLinked(viewingPeer);
   ws.send(JSON.stringify({type: 'send', text, peer: viewingPeer}));
   input.value = '';
   autoResize(input);
@@ -2745,6 +2779,23 @@ function peerKey(hash) {
   return (hash || '').replace(/:/g, '').toLowerCase();
 }
 
+function isPeerLinked(hash) {
+  const k = peerKey(hash);
+  if (!k) return false;
+  for (const lp of linkedPeers) {
+    if (peersMatch(lp, k)) return true;
+  }
+  return false;
+}
+
+function syncLinkedPeers(list) {
+  if (!Array.isArray(list)) return;
+  linkedPeers = new Set(list.map(peerKey).filter(Boolean));
+  updatePeerHeader();
+  renderContacts(allContacts);
+  renderDiscovered(window._discoveredPeers || []);
+}
+
 function registerPeerAliases(...hashes) {
   const keys = [...new Set(hashes.map(peerKey).filter(Boolean))];
   if (keys.length < 2) return;
@@ -2777,7 +2828,6 @@ function messageBelongsToPeer(data) {
   if (chatPeer && peersMatch(chatPeer, active)) return true;
   const sender = peerKey(data.sender);
   if (sender && peersMatch(sender, active) && data.sender !== 'system') return true;
-  if (linkPeer && !data.outgoing && peersMatch(linkPeer, active)) return true;
   if (data.type === 'system' && peersMatch(chatPeer, active)) return true;
   return false;
 }
