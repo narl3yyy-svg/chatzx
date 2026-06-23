@@ -569,7 +569,7 @@ class MessagingBackend:
             return False, ""
         if time.time() - self._failover_last_attempt < self._failover_cooldown_s:
             return False, ""
-        return True, "link dropped — reconnecting"
+        return True, "link dropped - reconnecting"
 
     def clear_session_peer(self):
         self._session_peer_hash = None
@@ -863,7 +863,7 @@ class MessagingBackend:
         self._announce()
 
     def _silent_announce(self, peer_ip=None):
-        """RNS path refresh only — no subnet beacon probe."""
+        """RNS path refresh only - no subnet beacon probe."""
         if not self.destination:
             return
         prune_dead_serial_interfaces()
@@ -985,7 +985,7 @@ class MessagingBackend:
         if path_iface:
             print(f"[connect] Serial path ready via {type(path_iface).__name__}")
             return True
-        print("[connect] Serial path not ready yet — ensure both ends have USB serial configured")
+        print("[connect] Serial path not ready yet - ensure both ends have USB serial configured")
         return False
 
     def _establish_outbound_link(self, destination, dest_hex, clean, old_link=None,
@@ -1787,7 +1787,7 @@ class MessagingBackend:
                 register_udp_peer_ip(peer_ip)
             if not self._prepare_failover_path(peer, prefer_family=prefer, peer_ip=peer_ip):
                 if prefer == "serial":
-                    print("[connect] Serial failover blocked — plug in USB serial and ensure port is configured")
+                    print("[connect] Serial failover blocked - plug in USB serial and ensure port is configured")
                 return False
             if peer_ip and self._lan_transport_ready():
                 inbound_wait = INITIATOR_INBOUND_WAIT_S
@@ -1835,7 +1835,7 @@ class MessagingBackend:
                     if link_ok:
                         print(f"[connect] Already connected to {self.active_peer_hash[:16]}...")
                         return True
-                    print(f"[connect] Stale link to {self.active_peer_hash[:16]}... — reconnecting")
+                    print(f"[connect] Stale link to {self.active_peer_hash[:16]}... - reconnecting")
                     self._teardown_active_link(preserve_peer=True, handoff=True)
                 elif self._link_path_score(self.active_link) >= 90 and link_ok:
                     return True
@@ -1898,11 +1898,11 @@ class MessagingBackend:
             serial_only = serial_ready and not lan_ready
 
             if serial_only:
-                print("[connect] Serial-only mode (no LAN) — skipping HTTP wake")
+                print("[connect] Serial-only mode (no LAN) - skipping HTTP wake")
                 peer_ip = None
                 self._prime_serial_path(dest_hex)
                 if self._peer_has_path_on_family(dest_hex, "serial"):
-                    print(f"[connect] Serial path known — quick outbound ({QUICK_OUTBOUND_TIMEOUT_S}s)")
+                    print(f"[connect] Serial path known - quick outbound ({QUICK_OUTBOUND_TIMEOUT_S}s)")
                     if self._establish_outbound_link(
                         destination, dest_hex, clean, old_link=old_link,
                         timeout_s=QUICK_OUTBOUND_TIMEOUT_S,
@@ -1910,7 +1910,7 @@ class MessagingBackend:
                         return True
             elif serial_ready and self._peer_has_path_on_family(dest_hex, "serial"):
                 self._prime_serial_path(dest_hex, timeout_s=8.0)
-                print(f"[connect] Serial path available — quick outbound ({QUICK_OUTBOUND_TIMEOUT_S}s)")
+                print(f"[connect] Serial path available - quick outbound ({QUICK_OUTBOUND_TIMEOUT_S}s)")
                 if self._establish_outbound_link(
                     destination, dest_hex, clean, old_link=old_link,
                     timeout_s=QUICK_OUTBOUND_TIMEOUT_S,
@@ -1919,7 +1919,7 @@ class MessagingBackend:
             elif peer_ip and not respond_to_wake and lan_ready:
                 self._prime_udp_path(dest_hex, peer_ip=peer_ip, timeout_s=2.5)
                 if self._peer_has_path(dest_hex):
-                    print(f"[connect] Path known — quick outbound attempt ({QUICK_OUTBOUND_TIMEOUT_S}s)")
+                    print(f"[connect] Path known - quick outbound attempt ({QUICK_OUTBOUND_TIMEOUT_S}s)")
                     if self._establish_outbound_link(
                         destination, dest_hex, clean, old_link=old_link,
                         timeout_s=QUICK_OUTBOUND_TIMEOUT_S,
@@ -1941,7 +1941,7 @@ class MessagingBackend:
                 if self._wait_for_peer_link(dest_hex, alt_hex=clean, timeout_s=inbound_wait):
                     print("[connect] Link established (inbound after wake)")
                     return True
-                print("[connect] Peer did not connect back — trying outbound fallback...")
+                print("[connect] Peer did not connect back - trying outbound fallback...")
             elif peer_ip and respond_to_wake:
                 print(
                     f"[connect] Outbound to caller at {peer_ip}:{peer_port or 8742} "
@@ -1958,7 +1958,7 @@ class MessagingBackend:
             else:
                 request_paths_for_hash(dest_hex)
             if is_android() and not peer_ip and not serial_ready:
-                print("[connect] Android: no peer IP — connect from Discovered list or add contact with LAN IP")
+                print("[connect] Android: no peer IP - connect from Discovered list or add contact with LAN IP")
             connect_timeout = FAILOVER_CONNECT_TIMEOUT_S if failover else (
                 ANDROID_LINK_CONNECT_TIMEOUT_S if is_android() else LINK_CONNECT_TIMEOUT_S
             )
@@ -1976,7 +1976,7 @@ class MessagingBackend:
 
             if peer_ip and lan_ready:
                 reverse_wait = ANDROID_REVERSE_CONNECT_WAIT_S if is_android() else REVERSE_CONNECT_WAIT_S
-                print(f"[connect] Outbound timed out — waiting for reverse connect ({reverse_wait}s)...")
+                print(f"[connect] Outbound timed out - waiting for reverse connect ({reverse_wait}s)...")
                 if not respond_to_wake:
                     self._wake_peer(
                         peer_ip, peer_port, my_hash,
