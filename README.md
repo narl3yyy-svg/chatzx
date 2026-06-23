@@ -86,7 +86,17 @@ Reinstalling the Android app generates a **new identity** — saved contacts poi
 
 All data (identity, chats, received files) stays in **`chatxz-data\`** next to the exe — move or back up the whole folder to relocate.
 
-To build the zip yourself on Windows: `powershell -File packaging\windows\build-portable.ps1`
+To build the zip yourself on Windows 11:
+
+```powershell
+git clone https://github.com/narl3yyy-svg/chatxz.git
+cd chatxz
+powershell -ExecutionPolicy Bypass -File packaging\windows\build-portable.ps1
+```
+
+Output: `dist\chatxz-0.3.51-windows-portable.zip` — unzip it, then double-click `chatxz\chatxz.exe`.
+
+**Automated GitHub releases:** replace `.github/workflows/build-apk.yml` with the contents of `packaging/windows/github-workflow-build-releases.yml` in the GitHub web editor (requires `workflow` scope to push from CI bots).
 
 ## Quick Start (Linux)
 
