@@ -224,6 +224,10 @@ body::before {
   margin-left: 8px;
 }
 .contact-badge.lan { background: var(--success-soft); color: var(--success); }
+.contact-badge.unread {
+  background: var(--primary); color: #fff; min-width: 20px;
+  text-align: center; font-size: 10px; padding: 2px 6px;
+}
 .contacts-scroll { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -4px; padding: 0 4px; }
 
 .empty-state {
@@ -1166,6 +1170,8 @@ let linkPeer = null;
 let connectInFlight = false;
 let progressLastUpdate = 0;
 const LS_VIEWING_PEER = 'chatxz_viewing_peer';
+const LS_UNREAD = 'chatxz_unread_counts';
+let unreadCounts = {};
 let recording = false;
 let mediaRecorder = null;
 let audioChunks = [];
@@ -1212,7 +1218,65 @@ function initMobileLayout() {
   });
 }
 
+function loadUnreadCounts() {
+  try {
+    unreadCounts = JSON.parse(localStorage.getItem(LS_UNREAD) || '{}') || {};
+  } catch (_) {
+    unreadCounts = {};
+  }
+}
+
+function saveUnreadCounts() {
+  try { localStorage.setItem(LS_UNREAD, JSON.stringify(unreadCounts)); } catch (_) {}
+}
+
+function unreadForPeer(hash) {
+  const key = peerKey(hash);
+  return unreadCounts[key] || 0;
+}
+
+function setUnreadForPeer(hash, count) {
+  const key = peerKey(hash);
+  if (count > 0) unreadCounts[key] = count;
+  else delete unreadCounts[key];
+  saveUnreadCounts();
+}
+
+function bumpUnread(hash) {
+  const key = peerKey(hash);
+  setUnreadForPeer(key, unreadForPeer(key) + 1);
+}
+
+function clearUnread(hash) {
+  setUnreadForPeer(hash, 0);
+}
+
+function requestNotificationPermission() {
+  if (!('Notification' in window)) return;
+  if (Notification.permission === 'default') {
+    Notification.requestPermission().catch(() => {});
+  }
+}
+
+function showMessageNotification(peerHash, preview) {
+  const name = contactNameFor(peerHash) || truncateHash(peerHash);
+  const body = (preview || 'New message').substring(0, 120);
+  const viewingThis = viewingPeer && peersMatch(viewingPeer, peerHash);
+  if (viewingThis && !document.hidden) return;
+  if (window.chatxzAndroid?.showNotification) {
+    window.chatxzAndroid.showNotification(name, body);
+    return;
+  }
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  try {
+    const n = new Notification(name, { body, tag: 'chatxz-' + peerKey(peerHash) });
+    n.onclick = () => { window.focus(); openChat(peerHash, false); n.close(); };
+  } catch (_) {}
+}
+
 function init() {
+  loadUnreadCounts();
+  requestNotificationPermission();
   initMobileLayout();
   showWelcome();
   fetchIdentity();
@@ -1268,7 +1332,6 @@ function pollLinkStatus() {
         if (!linkPeer || !peersMatch(linkPeer, d.active_peer)) {
           setLinkPeer(d.active_peer);
           registerPeerAliases(d.active_peer, d.session_peer, viewingPeer);
-          if (!viewingPeer) openChat(d.active_peer, false);
         }
         updatePeerHeader();
         setLinkStatus('connected', 'Active');
@@ -1333,11 +1396,15 @@ function contactNameFor(hash) {
 
 function loadHistoryForPeer(peerHash) {
   const peer = peerHash.replace(/:/g, '');
+  const msgsEl = document.getElementById('messages');
+  msgsEl.innerHTML = '';
   fetch('/api/history?limit=500&peer=' + encodeURIComponent(peer))
     .then(r => r.json())
     .then(msgs => {
-      document.getElementById('messages').innerHTML = '';
-      msgs.forEach(m => addMessage(m));
+      msgs.forEach(m => addMessage(m, { scroll: false }));
+      requestAnimationFrame(() => {
+        msgsEl.scrollTop = msgsEl.scrollHeight;
+      });
     })
     .catch(() => {});
 }
@@ -1369,8 +1436,7 @@ function fetchIdentity() {
       if (d.connected) {
         setLinkPeer(d.connected);
         registerPeerAliases(d.connected, viewingPeer);
-        if (!viewingPeer) openChat(d.connected, false);
-        else updatePeerHeader();
+        updatePeerHeader();
       } else {
         linkPeer = null;
         updatePeerHeader();
@@ -1410,7 +1476,18 @@ function connectWS() {
 function handleWSMessage(msg) {
   console.log('[ws] Message type:', msg.type);
   if (msg.type === 'message') {
-    addMessage(msg.data);
+    const data = msg.data || {};
+    const chatPeer = data.chat_peer || data.peer || data.sender;
+    const isIncoming = !data.outgoing && data.sender !== 'system';
+    if (isIncoming && chatPeer && !messageBelongsToPeer(data)) {
+      bumpUnread(chatPeer);
+      renderContacts(allContacts);
+      const preview = data.type === 'text' || data.type === 'emoji'
+        ? data.content
+        : (data.file_name || data.type || 'New message');
+      showMessageNotification(chatPeer, preview);
+    }
+    addMessage(data);
   } else if (msg.type === 'receipt') {
     const r = msg.data;
     const el = document.querySelector(`.msg[data-msgid="${r.msg_id}"] .receipt`);
@@ -1425,20 +1502,20 @@ function handleWSMessage(msg) {
       const h = msg.data.hash;
       registerPeerAliases(h, viewingPeer, ...(msg.data.aliases || []));
       setLinkPeer(h);
-      if (!viewingPeer || peersMatch(viewingPeer, h)) {
-        if (!viewingPeer) openChat(h, false);
-        else loadHistoryForPeer(viewingPeer);
+      if (viewingPeer && peersMatch(viewingPeer, h)) {
+        updatePeerHeader();
+        loadHistoryForPeer(viewingPeer);
       }
-      updatePeerHeader();
-      toast(msg.data.path_switch ? 'Switched to faster link' : 'Peer connected');
+      toast(msg.data.path_switch ? 'Switched to faster link' : 'Connected');
     }
   } else if (msg.type === 'link_closed') {
     setLinkStatus('disconnected', 'Reconnecting…');
     updatePeerHeader();
   } else if (msg.type === 'connect_ok') {
     if (connectInFlight) {
+      connectInFlight = false;
       setLinkPeer(msg.hash);
-      openChat(msg.hash, false);
+      if (viewingPeer && peersMatch(viewingPeer, msg.hash)) updatePeerHeader();
       toast('Connected!');
     }
   } else if (msg.type === 'connect_fail') {
@@ -1655,13 +1732,16 @@ function renderContacts(contacts) {
     const name = c.name || c.hash;
     const active = peersMatch(c.hash, viewingPeer);
     const linked = peersMatch(c.hash, linkPeer);
+    const unread = unreadForPeer(c.hash);
+    const ipHint = c.ip ? ` · ${escapeHtml(c.ip)}` : '';
     div.className = 'contact-item' + (active ? ' active' : '');
     div.innerHTML = `<div class="contact-avatar contact-avatar-saved">${name.charAt(0).toUpperCase()}</div>
       <div class="contact-info">
         <div class="contact-name">${escapeHtml(name)}${linked ? ' <span style="color:var(--success);font-size:10px">●</span>' : ''}</div>
-        <div class="contact-hash">${truncateHash(c.hash)}</div>
-      </div>`;
-    div.onclick = () => openChat(c.hash, true);
+        <div class="contact-hash">${truncateHash(c.hash)}${ipHint}</div>
+      </div>
+      ${unread > 0 ? `<span class="contact-badge unread">${unread > 99 ? '99+' : unread}</span>` : ''}`;
+    div.onclick = () => openChat(c.hash, true, { ip: c.ip, port: c.port });
     div.oncontextmenu = (e) => { e.preventDefault(); showActionPanel(e, c.hash); };
     el.appendChild(div);
   });
@@ -1723,6 +1803,8 @@ function toggleActionPanel() {
 
 function peerMetaForHash(hash) {
   const key = peerKey(hash);
+  const contact = allContacts.find(c => peerKey(c.hash) === key);
+  if (contact?.ip) return { hash: contact.hash, ip: contact.ip, port: contact.port || 8742 };
   return (window._discoveredPeers || []).find(p => peerKey(p.hash) === key);
 }
 
@@ -1761,10 +1843,18 @@ function doSaveContact() {
   const hash = document.getElementById('save-contact-hash').value;
   const name = document.getElementById('save-contact-name').value.trim();
   if (!hash) return;
+  const meta = peerMetaForHash(hash) || {};
+  const body = {
+    hash,
+    name: name || hash.substring(0, 12),
+    ip: meta.ip || undefined,
+    port: meta.port || undefined,
+    identity_hash: meta.identity_hash || undefined,
+  };
   fetch('/api/contacts', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({hash, name: name || hash.substring(0, 12)})
+    body: JSON.stringify(body)
   }).then(() => {
     toast('Contact saved');
     closeSaveContact();
@@ -1827,7 +1917,7 @@ function connectTo(hash, ip, port) {
     }
   }
   if (appPlatform === 'android' && !ip) {
-    toast('Need peer LAN IP — tap a Discovered peer or wait for discovery');
+    toast('No LAN IP for this contact — save from Discovered peers first or wait for discovery');
     return;
   }
   connectInFlight = true;
@@ -1844,7 +1934,8 @@ function connectTo(hash, ip, port) {
       const connected = d.hash || hash;
       registerPeerAliases(connected, hash, viewingPeer);
       setLinkPeer(connected);
-      openChat(connected, false);
+      if (viewingPeer && peersMatch(viewingPeer, connected)) updatePeerHeader();
+      else openChat(connected, false);
       toast('Connected!');
     } else {
       toast('Connection failed: ' + (d.error || 'unknown'));
@@ -2386,6 +2477,7 @@ function setLinkPeer(hash) {
 
 function openChat(hash, tryConnect, meta) {
   viewingPeer = (hash || '').replace(/:/g, '');
+  clearUnread(viewingPeer);
   try { localStorage.setItem(LS_VIEWING_PEER, viewingPeer); } catch (_) {}
   document.getElementById('placeholder').style.display = 'none';
   document.getElementById('messages').style.display = 'flex';
@@ -2564,7 +2656,8 @@ function isSessionSystemMessage(data) {
   return c.startsWith('Link established with ') || c.includes('Link closed') || c.startsWith('Connected to ');
 }
 
-function addMessage(data) {
+function addMessage(data, opts) {
+  const scroll = !opts || opts.scroll !== false;
   const msgs = document.getElementById('messages');
   if (msgs.style.display === 'none' || !viewingPeer) return;
   if (isSessionSystemMessage(data)) return;
@@ -2632,7 +2725,7 @@ function addMessage(data) {
   html += `<div class="time">${time}${icon ? ' <span class="receipt" style="font-size:11px;margin-left:4px">' + icon + '</span>' : ''}</div>`;
   div.innerHTML = html;
   msgs.appendChild(div);
-  msgs.scrollTop = msgs.scrollHeight;
+  if (scroll) msgs.scrollTop = msgs.scrollHeight;
 
   if (isSelf && data.msg_id && (data.status === 'received' || data.status === 'read')) {
     data.type === 'text' && sendReadReceipt(data.msg_id);

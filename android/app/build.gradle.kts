@@ -15,8 +15,8 @@ val versionProps = Properties().apply {
 val appVersionName = versionProps.getProperty("VERSION_NAME", "0.0.0")
 val appVersionCode = versionProps.getProperty("VERSION_CODE", "1").toInt()
 // CI release metadata (keep in sync via scripts/bump-version.sh)
-val releaseVersionNameForCi = "0.3.45"  // versionName
-val releaseVersionCodeForCi = 45  // versionCode
+val releaseVersionNameForCi = "0.3.46"  // versionName
+val releaseVersionCodeForCi = 46  // versionCode
 
 android {
     namespace = "com.chatxz.android"

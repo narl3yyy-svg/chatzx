@@ -10,6 +10,12 @@ from chatxz.core.messaging import MessagingBackend
 from chatxz.core.voice import VoiceRecorder, VoicePlayer
 from chatxz.core.discovery import PeerDiscovery
 from chatxz.core.lan_beacon import LanBeacon, BEACON_PORT
+from chatxz.core.contacts import (
+    contact_connect_meta,
+    delete_contact as delete_saved_contact,
+    list_contacts,
+    save_contact,
+)
 from chatxz.core.lan_rns import patch_udp_interface_unicast, serial_interface_online
 from chatxz.core.rns_interfaces import (
     INTERFACE_PRESETS,
@@ -785,6 +791,10 @@ class ChatWebServer:
         else:
             print("[network] Manual announce only — use Announce button or peer connect wake")
 
+        serial_hot = ensure_runtime_serial(settings.get("rns_interfaces"))
+        if serial_hot:
+            print(f"[serial] Runtime serial interface active on {getattr(serial_hot, 'port', '?')}")
+
         return my_hash
 
     def _on_message(self, chat_msg, sender_hash):
@@ -958,17 +968,7 @@ class ChatWebServer:
                 pass
         from chatxz.core.discovery import normalize_hash
         h = normalize_hash(self.destination_hash or self.identity_mgr.get_hex_hash())
-        contacts = []
-        contacts_dir = os.path.join(self.config_dir, "contacts")
-        os.makedirs(contacts_dir, exist_ok=True)
-        for f in os.listdir(contacts_dir):
-            path = os.path.join(contacts_dir, f)
-            try:
-                with open(path) as fh:
-                    name = fh.read().strip()
-                contacts.append({"hash": f, "name": name})
-            except:
-                contacts.append({"hash": f, "name": f})
+        contacts = list_contacts(self.config_dir)
         discovered = self.discovery.get_peers() if self.discovery else []
         link_active = bool(self.messaging and self.messaging.active_link)
         connected = self.active_peer if link_active and self.active_peer else None
@@ -991,22 +991,22 @@ class ChatWebServer:
             name = data.get("name", peer_hash).strip()
             if not peer_hash:
                 return web.json_response({"error": "hash required"}, status=400)
-            contacts_dir = os.path.join(self.config_dir, "contacts")
-            os.makedirs(contacts_dir, exist_ok=True)
-            path = os.path.join(contacts_dir, peer_hash)
-            with open(path, "w") as f:
-                f.write(name)
-            return web.json_response({"status": "ok"})
+            entry = save_contact(
+                self.config_dir,
+                peer_hash,
+                name=name or peer_hash,
+                ip=data.get("ip"),
+                port=data.get("port"),
+                identity_hash=data.get("identity_hash"),
+            )
+            return web.json_response({"status": "ok", "contact": entry})
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
 
     async def handle_delete_contact(self, request):
         try:
             peer_hash = request.match_info["hash"].replace(":", "")
-            contacts_dir = os.path.join(self.config_dir, "contacts")
-            path = os.path.join(contacts_dir, peer_hash)
-            if os.path.exists(path):
-                os.unlink(path)
+            if delete_saved_contact(self.config_dir, peer_hash):
                 return web.json_response({"status": "ok"})
             return web.json_response({"error": "not found"}, status=404)
         except Exception as e:
@@ -1358,6 +1358,12 @@ class ChatWebServer:
     def _peer_connect_meta(self, peer_hash):
         peer_ip = None
         peer_port = 8742
+        stored_ip, stored_port = contact_connect_meta(
+            self.config_dir, peer_hash, self._peers_equivalent
+        )
+        if stored_ip:
+            peer_ip = stored_ip
+            peer_port = stored_port or peer_port
         for p in (self.discovery.get_peers() if self.discovery else []):
             if not self._peers_equivalent(p.get("hash"), peer_hash):
                 continue
@@ -2238,8 +2244,7 @@ class ChatWebServer:
             print("[history] Cleared on restart")
         asyncio.create_task(self._history_maintenance_loop())
         asyncio.create_task(self._link_failover_loop())
-        if not is_android():
-            asyncio.create_task(self._serial_watchdog_loop())
+        asyncio.create_task(self._serial_watchdog_loop())
 
     def _register_routes(self, app):
         app.router.add_get("/", self.handle_index)

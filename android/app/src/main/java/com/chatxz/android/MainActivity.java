@@ -26,7 +26,12 @@ import android.app.AlertDialog;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
+
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 
 import com.chaquo.python.Python;
 import com.chaquo.python.PyObject;
@@ -55,6 +60,8 @@ public class MainActivity extends AppCompatActivity {
     private static final int REQ_FOLDER = 1003;
     private static final int REQ_FILE = 1004;
     private static final int REQ_SEND_FOLDER = 1005;
+    private static final String MSG_CHANNEL_ID = "chatxz_messages";
+    private static int notificationId = 2000;
 
     private WebView webView;
     private ValueCallback<Uri[]> filePathCallback;
@@ -119,6 +126,43 @@ public class MainActivity extends AppCompatActivity {
 
     public void restartApp() {
         recreate();
+    }
+
+    public void showMessageNotification(String title, String body) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        ensureMessageNotificationChannel();
+        String safeTitle = title != null && !title.isEmpty() ? title : "chatxz";
+        String safeBody = body != null ? body : "New message";
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, MSG_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_notify_chat)
+                .setContentTitle(safeTitle)
+                .setContentText(safeBody)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setAutoCancel(true);
+        try {
+            NotificationManagerCompat.from(this).notify(notificationId++, builder.build());
+        } catch (SecurityException ignored) {}
+    }
+
+    private void ensureMessageNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return;
+        }
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager == null) {
+            return;
+        }
+        NotificationChannel channel = new NotificationChannel(
+                MSG_CHANNEL_ID,
+                "Messages",
+                NotificationManager.IMPORTANCE_DEFAULT
+        );
+        channel.setDescription("Incoming chat messages");
+        manager.createNotificationChannel(channel);
     }
 
     @Override

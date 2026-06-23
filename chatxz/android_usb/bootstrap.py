@@ -16,6 +16,8 @@ def _install_jnius_shim():
     if "jnius" in sys.modules:
         return
 
+    import importlib.machinery
+
     jnius = types.ModuleType("jnius")
 
     def autoclass(name):
@@ -23,6 +25,7 @@ def _install_jnius_shim():
         return jclass(name)
 
     jnius.autoclass = autoclass
+    jnius.__spec__ = importlib.machinery.ModuleSpec("jnius", loader=None)
     sys.modules["jnius"] = jnius
 
 

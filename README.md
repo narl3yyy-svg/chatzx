@@ -63,8 +63,10 @@ Reinstalling the Android app generates a **new identity** — saved contacts poi
 - **Fast connect** — outgoing links succeed or fail within ~10s (22s during failover)
 - **Reset network** — Settings → Network clears discovered peers, disconnects links, and zeros beacon counters (identity unchanged)
 - **Weekly auto-reset** — beacon/discovery counters optionally reset after 7 days (toggle in Settings)
-- **Contacts** — save peers with display names; click to open their chat
-- **Incoming connections** — when a peer connects to you, the UI updates automatically
+- **Contacts** — save peers with display names and LAN IP; tap/click to message (no manual Announce required when IP is saved)
+- **Unread badges** — per-device unread counts on each saved contact
+- **Notifications** — browser and Android notifications for messages when you are not viewing that chat
+- **Incoming connections** — link status updates on all tabs; chat does not auto-open on other devices
 - **Connection status** — WebSocket and Reticulum link indicators; Network panel shows active RNS path (`AutoInterfacePeer`, `SerialInterface`, `UDPInterface`)
 
 ### Platforms
@@ -93,7 +95,7 @@ Open **http://localhost:8742** (or your LAN IP with `--share`).
 2. History for that peer loads automatically.
 3. If not connected yet, the app connects in the background (or use **Connect** panel).
 4. **Your messages** appear on the **right**; **received** messages on the **left**.
-5. When a peer connects **to you** (incoming link), the chat opens automatically.
+5. When a peer connects **to you**, the link indicator turns green; your current chat stays open (no cross-device auto-open).
 
 ### Connecting
 
@@ -234,6 +236,15 @@ chatxz --daemon
 ```
 
 ## Changelog (recent)
+
+### v0.3.46
+- **Messaging UX** — tap saved contact to connect and chat; unread badges per contact; notifications (Web + Android)
+- **Multi-device** — link established no longer auto-opens chat on other browsers/devices; only updates connected status
+- **Chat scroll** — history opens scrolled to bottom (no visible scroll-from-top)
+- **Contacts** — JSON storage with saved LAN IP/port; connect uses stored IP without manual Announce
+- **Android serial fix** — skip broken RNS Android SerialInterface in config; hot-add via usbserial4a pyserial patch
+- **Serial watchdog** — runs on Android too; runtime serial attached after RNS start
+- **Beacon rate** — Android periodic announce/beacon interval 45s (reduces excessive announce blocking)
 
 ### v0.3.45
 - **Failover stability** — no reconnect during active file transfers; stale-link threshold 90s (was 8s); gentler path rebuild on reconnect

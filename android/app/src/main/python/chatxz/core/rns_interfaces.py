@@ -467,6 +467,13 @@ def hot_add_serial_interface(port, speed=SERIAL_DEFAULT_BAUD, ifac_size=16):
     if not port or not serial_port_accessible(port):
         return None
     try:
+        from chatxz.utils.platform import is_android
+        if is_android():
+            from chatxz.core.android_serial import ensure_android_serial_patch
+            ensure_android_serial_patch()
+    except Exception:
+        pass
+    try:
         import RNS
         from RNS.Interfaces.SerialInterface import SerialInterface
     except Exception as exc:
@@ -540,6 +547,10 @@ def render_rns_config(interfaces, broadcast_ip=None, android=False, log=print):
     for iface in normalize_interface_list(interfaces):
         itype = iface.get("type", "")
         if itype == "SerialInterface":
+            if android:
+                port, reason = serial_skip_reason(iface.get("port"))
+                skipped_serial.append((iface.get("name") or "Serial", port, "hot-add on Android"))
+                continue
             if not serial_runtime_active(iface):
                 port, reason = serial_skip_reason(iface.get("port"))
                 skipped_serial.append((iface.get("name") or "Serial", port, reason))

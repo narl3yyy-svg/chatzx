@@ -48,4 +48,9 @@ public class ChatxzBridge {
     public void restartApp() {
         activity.runOnUiThread(activity::restartApp);
     }
+
+    @JavascriptInterface
+    public void showNotification(String title, String body) {
+        activity.runOnUiThread(() -> activity.showMessageNotification(title, body));
+    }
 }

@@ -105,7 +105,7 @@ class MessagingBackend:
         self.on_link_closed = on_link_closed
         self.display_name = display_name
         self.auto_announce = auto_announce
-        self.announce_interval = 15 if is_android() else 30
+        self.announce_interval = 45 if is_android() else 30
         self.destination = None
         self.links = {}
         self.active_link = None

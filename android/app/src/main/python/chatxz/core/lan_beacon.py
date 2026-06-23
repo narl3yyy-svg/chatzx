@@ -36,7 +36,7 @@ class LanBeacon:
         self.last_subnet_probes = 0
         self.packets_sent = 0
         self.packets_received = 0
-        self._interval = 15 if is_android() else 30
+        self._interval = 45 if is_android() else 30
 
     def start(self):
         if self.running:
