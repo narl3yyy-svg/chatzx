@@ -781,9 +781,9 @@ class ChatWebServer:
                 raise RuntimeError(msg)
             sys.exit(1)
 
-        if self.debug:
+        if self.debug and not (self.embedded or is_android()):
             loglevel = getattr(RNS, "LOG_EXTREME", RNS.LOG_DEBUG)
-        elif self.verbose:
+        elif self.debug or self.verbose:
             loglevel = RNS.LOG_DEBUG
         else:
             loglevel = RNS.LOG_NOTICE

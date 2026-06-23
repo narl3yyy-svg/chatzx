@@ -2601,6 +2601,10 @@ function refreshNetworkStatus() {
       }
       html += row('Discovered peers', d.discovered_count ?? 0, (d.discovered_count || 0) > 0);
       html += row('WS clients', (d.ws_clients ?? 0) + ' (browser tabs on this device)', true);
+      if (platform === 'android' && window.chatxzAndroid) {
+        const micOk = window.chatxzAndroid.hasAudioPermission();
+        html += row('Microphone', micOk ? 'allowed' : 'denied — tap 🎤 to request', micOk);
+      }
       if (d.beacon) {
         html += row('Beacon mode', (d.beacon.interval_sec ? 'auto' : 'manual only'), !d.beacon.interval_sec);
         html += row('Beacon sent (last announce)', d.beacon.last_announce_sent ?? 0);
@@ -3122,11 +3126,36 @@ function toggleVoice() {
 
 let pendingVoiceAfterPermission = false;
 
+function setVoiceRecordingUi(on) {
+  ['voice-btn', 'voice-btn-mobile'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('recording', on);
+  });
+}
+
+function pickVoiceRecorderMime() {
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/ogg;codecs=opus',
+    'audio/mp4',
+    'audio/aac',
+    ''
+  ];
+  for (const mime of candidates) {
+    if (!mime || (window.MediaRecorder && MediaRecorder.isTypeSupported(mime))) {
+      return mime;
+    }
+  }
+  return '';
+}
+
 window.onChatxzAudioPermissionGranted = function() {
   if (pendingVoiceAfterPermission) {
     pendingVoiceAfterPermission = false;
     startVoice(true);
   }
+  refreshNetworkStatus();
 };
 
 function startVoice(skipPermissionCheck) {
@@ -3140,17 +3169,24 @@ function startVoice(skipPermissionCheck) {
     toast('Allow microphone access to record');
     return;
   }
+  const mimeType = pickVoiceRecorderMime();
+  const recorderOpts = mimeType ? {mimeType} : {};
   navigator.mediaDevices.getUserMedia({audio: true})
     .then(stream => {
       recording = true;
       voiceChunks = [];
-      document.getElementById('voice-btn').classList.add('recording');
-      toast('Recording... click 🎤 to stop');
-      mediaRecorder = new MediaRecorder(stream, {mimeType: 'audio/webm;codecs=opus'});
+      setVoiceRecordingUi(true);
+      toast('Recording... tap 🎤 to stop');
+      try {
+        mediaRecorder = new MediaRecorder(stream, recorderOpts);
+      } catch (err) {
+        mediaRecorder = new MediaRecorder(stream);
+      }
+      const blobType = mediaRecorder.mimeType || mimeType || 'audio/webm';
       mediaRecorder.ondataavailable = e => { if (e.data.size > 0) voiceChunks.push(e.data); };
       mediaRecorder.onstop = () => {
         stream.getTracks().forEach(t => t.stop());
-        const blob = new Blob(voiceChunks, {type: 'audio/webm'});
+        const blob = new Blob(voiceChunks, {type: blobType});
         const reader = new FileReader();
         reader.onloadend = () => {
           const b64 = reader.result.split(',')[1];
@@ -3167,12 +3203,24 @@ function startVoice(skipPermissionCheck) {
       };
       mediaRecorder.start();
     })
-    .catch(() => toast('Microphone access denied'));
+    .catch(err => {
+      console.warn('getUserMedia failed', err);
+      if (window.chatxzAndroid && !window.chatxzAndroid.hasAudioPermission()) {
+        pendingVoiceAfterPermission = true;
+        window.chatxzAndroid.requestAudioPermission();
+        toast('Allow microphone access to record');
+      } else if (window.chatxzAndroid && window.chatxzAndroid.openAppSettings) {
+        toast('Microphone blocked — open Settings to allow');
+        window.chatxzAndroid.openAppSettings();
+      } else {
+        toast('Microphone access denied');
+      }
+    });
 }
 
 function stopVoice() {
   recording = false;
-  document.getElementById('voice-btn').classList.remove('recording');
+  setVoiceRecordingUi(false);
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     mediaRecorder.stop();
   }
@@ -3525,7 +3573,7 @@ function updateAndroidDebugLogHint(path) {
     return;
   }
   el.style.display = 'block';
-  el.innerHTML = '<strong>Debug log (temporary):</strong> server output is saved to your phone Downloads folder.<br><code style="font-size:10px">' + escapeHtml(path) + '</code><br>Also see <code>chatxz-debug-latest.txt</code> for the current file path.';
+  el.innerHTML = '<strong>Debug log:</strong> server output is saved on this device.<br><code style="font-size:10px">' + escapeHtml(path) + '</code><br>Check <code>chatxz-debug-latest.txt</code> in the same folder for the current path.';
 }
 
 function formatSize(bytes) {

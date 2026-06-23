@@ -94,16 +94,18 @@ def start_server():
     debug_mode = os.environ.get("CHATXZ_DEBUG") == "1"
     _startup_log(f"debug_mode={debug_mode}")
 
+    def _enable_debug_capture():
+        try:
+            from chatxz.utils.debug_log import start_debug_capture
+            path = start_debug_capture()
+            if path:
+                _startup_log(f"debug capture enabled: {path}")
+        except Exception as exc:
+            _startup_log(f"debug capture failed: {exc}")
+
     def _run():
         try:
             _startup_log("server thread starting")
-            if debug_mode:
-                try:
-                    from chatxz.utils.debug_log import start_debug_capture
-                    start_debug_capture()
-                    _startup_log("debug capture enabled")
-                except Exception as exc:
-                    _startup_log(f"debug capture failed: {exc}")
             from chatxz.web.server import ChatWebServer
             _startup_log("ChatWebServer import ok")
             server = ChatWebServer(
@@ -125,8 +127,10 @@ def start_server():
     thread = threading.Thread(target=_run, name="chatxz-server", daemon=True)
     thread.start()
 
-    _startup_log("waiting for port 8742")
-    if not _wait_for_port(WEB_HOST, PORT, timeout=45):
+    port_timeout = 120 if debug_mode else 45
+    _startup_log(f"waiting for port 8742 (timeout={port_timeout}s)")
+    if not _wait_for_port(WEB_HOST, PORT, timeout=port_timeout):
+        _server_started = False
         if _server_error:
             err = _server_error[0]
             _startup_log(f"failed: {err[:500]}")
@@ -134,7 +138,10 @@ def start_server():
                 err = err[-4000:]
             return "None", err
         _startup_log("failed: port timeout")
-        return "None", "Server timeout — port 8742 did not open in 45s"
+        return "None", f"Server timeout — port 8742 did not open in {port_timeout}s"
+
+    if debug_mode:
+        threading.Thread(target=_enable_debug_capture, name="chatxz-debug-log", daemon=True).start()
 
     _startup_log("server ready")
     return WEB_HOST, str(PORT)

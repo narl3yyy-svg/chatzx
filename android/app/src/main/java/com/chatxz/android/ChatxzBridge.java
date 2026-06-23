@@ -40,6 +40,11 @@ public class ChatxzBridge {
     }
 
     @JavascriptInterface
+    public void openAppSettings() {
+        activity.runOnUiThread(activity::openAppSettings);
+    }
+
+    @JavascriptInterface
     public void requestUsbPermission(String deviceName) {
         activity.runOnUiThread(() -> UsbSerialHelper.requestPermission(deviceName));
     }

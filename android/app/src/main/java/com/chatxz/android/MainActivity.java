@@ -14,6 +14,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.DocumentsContract;
+import android.provider.Settings;
 import android.webkit.ValueCallback;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -220,24 +221,7 @@ public class MainActivity extends AppCompatActivity {
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onPermissionRequest(PermissionRequest request) {
-                boolean needsAudio = false;
-                for (String resource : request.getResources()) {
-                    if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)) {
-                        needsAudio = true;
-                        break;
-                    }
-                }
-                if (needsAudio && ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO)
-                        != PackageManager.PERMISSION_GRANTED) {
-                    pendingWebPermissionRequest = request;
-                    ActivityCompat.requestPermissions(
-                            MainActivity.this,
-                            new String[]{Manifest.permission.RECORD_AUDIO},
-                            REQ_AUDIO
-                    );
-                    return;
-                }
-                runOnUiThread(() -> request.grant(request.getResources()));
+                runOnUiThread(() -> handleWebPermissionRequest(request));
             }
 
             @Override
@@ -261,15 +245,67 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    private void handleWebPermissionRequest(PermissionRequest request) {
+        if (request == null) {
+            return;
+        }
+        boolean needsAudio = false;
+        for (String resource : request.getResources()) {
+            if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)) {
+                needsAudio = true;
+                break;
+            }
+        }
+        if (needsAudio && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            pendingWebPermissionRequest = request;
+            ActivityCompat.requestPermissions(
+                    this,
+                    new String[]{Manifest.permission.RECORD_AUDIO},
+                    REQ_AUDIO
+            );
+            return;
+        }
+        request.grant(request.getResources());
+    }
+
+    public void notifyAudioPermissionGranted() {
+        webView.post(() -> webView.evaluateJavascript(
+                "window.onChatxzAudioPermissionGranted && window.onChatxzAudioPermissionGranted();",
+                null));
+    }
+
     public void requestAudioPermission() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            notifyAudioPermissionGranted();
             return;
         }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
                 == PackageManager.PERMISSION_GRANTED) {
+            notifyAudioPermissionGranted();
+            return;
+        }
+        if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO)) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Microphone")
+                    .setMessage("chatxz needs microphone access to record voice notes.")
+                    .setPositiveButton("Allow", (d, w) -> ActivityCompat.requestPermissions(
+                            this, new String[]{Manifest.permission.RECORD_AUDIO}, REQ_AUDIO))
+                    .setNegativeButton("Cancel", null)
+                    .show();
             return;
         }
         ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, REQ_AUDIO);
+    }
+
+    public void openAppSettings() {
+        try {
+            Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+            intent.setData(Uri.parse("package:" + getPackageName()));
+            startActivity(intent);
+        } catch (Exception e) {
+            Toast.makeText(this, "Open Settings → Apps → chatxz → Permissions", Toast.LENGTH_LONG).show();
+        }
     }
 
     private void showLoading(String message) {
@@ -304,10 +340,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         List<String> needed = new ArrayList<>();
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-                != PackageManager.PERMISSION_GRANTED) {
-            needed.add(Manifest.permission.RECORD_AUDIO);
-        }
+        // Microphone is requested when the user taps 🎤 (not at startup).
         // POST_NOTIFICATIONS only exists on Android 13+ — requesting it earlier crashes the app.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
                 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
@@ -361,9 +394,15 @@ public class MainActivity extends AppCompatActivity {
                 Toast.makeText(this, "Microphone permission denied", Toast.LENGTH_SHORT).show();
             }
             if (granted) {
-                webView.post(() -> webView.evaluateJavascript(
-                        "window.onChatxzAudioPermissionGranted && window.onChatxzAudioPermissionGranted();",
-                        null));
+                notifyAudioPermissionGranted();
+            } else if (!ActivityCompat.shouldShowRequestPermissionRationale(
+                    this, Manifest.permission.RECORD_AUDIO)) {
+                new AlertDialog.Builder(this)
+                        .setTitle("Microphone blocked")
+                        .setMessage("Enable microphone for chatxz in Android Settings to record voice notes.")
+                        .setPositiveButton("Open Settings", (d, w) -> openAppSettings())
+                        .setNegativeButton("Cancel", null)
+                        .show();
             }
         }
     }

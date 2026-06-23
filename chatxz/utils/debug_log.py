@@ -110,12 +110,22 @@ def android_public_downloads_dir():
 
 
 def resolve_android_debug_dir():
-    public = android_public_downloads_dir()
-    if public and _dir_writable(public):
-        return public, "phone Downloads"
+    """Prefer app-private paths — public Downloads often needs extra storage permission."""
+    try:
+        from chatxz.utils.platform import android_files_dir
+        files = android_files_dir()
+        if files:
+            logs = os.path.join(files, "debug_logs")
+            if _dir_writable(logs):
+                return logs, "app debug_logs folder"
+    except Exception:
+        pass
     app_dl = android_app_downloads_dir()
     if app_dl and _dir_writable(app_dl):
         return app_dl, "app Downloads folder"
+    public = android_public_downloads_dir()
+    if public and _dir_writable(public):
+        return public, "phone Downloads"
     return None, ""
 
 
