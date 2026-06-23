@@ -5,26 +5,10 @@ import time
 
 import RNS
 
+from chatxz.core.lan_targets import directed_broadcasts, efficient_unicast_hosts
 from chatxz.utils.platform import is_android, lan_ip, list_network_interfaces
 
 RNS_PORT = 4242
-
-
-def _subnet_unicast_targets(peer_ip=None):
-    ip = lan_ip()
-    targets = []
-    if peer_ip and peer_ip not in targets:
-        targets.append(peer_ip)
-    if ip:
-        parts = ip.split(".")
-        if len(parts) == 4:
-            base = f"{parts[0]}.{parts[1]}.{parts[2]}"
-            my_host = parts[3]
-            for i in range(1, 255):
-                host = f"{base}.{i}"
-                if host != my_host and host not in targets:
-                    targets.append(host)
-    return targets
 
 
 def unicast_announce_packet(packet, peer_ip=None, port=RNS_PORT, subnet_probe=None):
@@ -44,7 +28,7 @@ def unicast_announce_packet(packet, peer_ip=None, port=RNS_PORT, subnet_probe=No
     if peer_ip:
         targets.append(peer_ip)
     if subnet_probe:
-        for host in _subnet_unicast_targets(peer_ip):
+        for host in efficient_unicast_hosts(peer_ip=peer_ip, known_ips=known_udp_peer_ips()):
             if host not in targets:
                 targets.append(host)
 
@@ -274,15 +258,7 @@ def wait_for_peer_path(hash_hex, family=None, timeout_s=12.0, poll_s=0.25):
 
 def udp_interface_targets():
     """Broadcast targets for patching UDPInterface forward_ip (Android fallback)."""
-    targets = []
-    for iface in list_network_interfaces():
-        for candidate in (iface.get("subnet_broadcast"), iface.get("broadcast")):
-            if candidate and candidate not in targets:
-                targets.append(candidate)
-    for candidate in ("255.255.255.255",):
-        if candidate not in targets:
-            targets.append(candidate)
-    return targets
+    return directed_broadcasts()
 
 
 _udp_patched = False
@@ -295,6 +271,10 @@ def register_udp_peer_ip(ip):
     if not host or host.startswith("127.") or host.startswith("169.254."):
         return
     _known_peer_ips.add(host)
+
+
+def known_udp_peer_ips():
+    return sorted(_known_peer_ips)
 
 
 def register_udp_peer_ips_from_discovery(peers):
@@ -312,7 +292,7 @@ def _udp_unicast_targets(peer_ip=None, subnet_scan=None):
     if subnet_scan is None:
         subnet_scan = is_android()
     if subnet_scan:
-        for host in _subnet_unicast_targets(peer_ip):
+        for host in efficient_unicast_hosts(peer_ip=peer_ip, known_ips=known_udp_peer_ips()):
             if host not in targets:
                 targets.append(host)
     return targets
