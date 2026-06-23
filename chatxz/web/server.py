@@ -850,6 +850,18 @@ class ChatWebServer:
         dest = self._peer_dest_hash(peer.get("hash"))
         if peer.get("identity_hash"):
             self.messaging.register_peer_mapping(dest, peer.get("identity_hash"))
+        if peer.get("ip"):
+            for contact in list_contacts(self.config_dir):
+                if self._peers_equivalent(contact.get("hash"), dest):
+                    if contact.get("ip") != peer.get("ip"):
+                        save_contact(
+                            self.config_dir,
+                            contact.get("hash"),
+                            ip=peer.get("ip"),
+                            port=peer.get("port"),
+                            identity_hash=peer.get("identity_hash"),
+                        )
+                    break
         if self.discovery and self.websockets and self._loop:
             peers = self.discovery.get_peers()
             asyncio.run_coroutine_threadsafe(
