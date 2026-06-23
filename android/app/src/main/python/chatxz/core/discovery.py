@@ -40,8 +40,16 @@ def register_identity_from_beacon(data):
         except Exception:
             app_data = None
 
+    identity_hex = normalize_hash(data.get("identity_hash"))
+    packet_bytes = dest_bytes
+    if identity_hex and len(identity_hex) == 32:
+        try:
+            packet_bytes = bytes.fromhex(identity_hex)
+        except ValueError:
+            packet_bytes = dest_bytes
+
     try:
-        RNS.Identity.remember(dest_bytes, dest_bytes, pubkey, app_data)
+        RNS.Identity.remember(packet_bytes, dest_bytes, pubkey, app_data)
         return True
     except Exception:
         return False

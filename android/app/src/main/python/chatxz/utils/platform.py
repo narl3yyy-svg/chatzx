@@ -104,6 +104,17 @@ def lan_ip():
     if is_android():
         for host, _ in _java_lan_addresses():
             return host
+        for probe in ("192.168.1.1", "10.0.0.1", "192.168.0.1"):
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.settimeout(0.4)
+                s.connect((probe, 80))
+                ip = s.getsockname()[0]
+                s.close()
+                if ip and not ip.startswith("127."):
+                    return ip
+            except OSError:
+                pass
 
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

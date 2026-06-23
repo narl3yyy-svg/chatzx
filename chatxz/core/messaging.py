@@ -24,11 +24,13 @@ from chatxz.core.rns_interfaces import prune_dead_serial_interfaces
 
 APP_NAME = "chatxz"
 LINK_CONNECT_TIMEOUT_S = 10
+ANDROID_LINK_CONNECT_TIMEOUT_S = 20
 FAILOVER_CONNECT_TIMEOUT_S = 22
 LINK_CONNECT_POLL_S = 0.1
 IDENTITY_WAIT_TIMEOUT_S = 18
+ANDROID_IDENTITY_WAIT_TIMEOUT_S = 24
 REVERSE_CONNECT_WAIT_S = 15
-ANDROID_REVERSE_CONNECT_WAIT_S = 30
+ANDROID_REVERSE_CONNECT_WAIT_S = 35
 LINK_FAILOVER_GRACE_S = 12
 RECEIPT_FAILOVER_TIMEOUT_S = 10
 
@@ -605,29 +607,59 @@ class MessagingBackend:
                 return
         print(f"[messaging] Announced on LAN (name={self.display_name or 'none'})")
 
-    def _request_peer_connect(self, peer_ip, peer_port, my_hash, caller_ip=None, caller_port=8742):
-        """Ask peer to open outbound RNS link (fixes Android inbound UDP link requests)."""
+    def _http_peer_post(self, peer_ip, peer_port, path, payload=None, timeout=3.0):
         if not peer_ip:
             return False
         port = int(peer_port or 8742)
+        url = f"http://{peer_ip}:{port}{path}"
+        try:
+            data = None
+            headers = {}
+            if payload is not None:
+                data = json.dumps(payload).encode("utf-8")
+                headers["Content-Type"] = "application/json"
+            req = urlrequest.Request(url, data=data, headers=headers, method="POST")
+            with urlrequest.urlopen(req, timeout=timeout) as resp:
+                return 200 <= resp.status < 300
+        except Exception as exc:
+            print(f"[connect] HTTP {path} to {peer_ip} failed: {exc}")
+            return False
+
+    def _request_peer_announce(self, peer_ip, peer_port):
+        """Ask peer to send RNS + beacon announces (helps Android UDP path discovery)."""
+        return self._http_peer_post(peer_ip, peer_port, "/api/announce", payload={}, timeout=4.0)
+
+    def _request_peer_connect(self, peer_ip, peer_port, my_hash, caller_ip=None, caller_port=8742):
+        """Ask peer to open outbound RNS link (fixes Android inbound UDP link requests)."""
         payload = {
             "hash": normalize_hash(my_hash or self.my_dest_hash or ""),
             "ip": caller_ip or "",
             "port": int(caller_port or 8742),
         }
-        url = f"http://{peer_ip}:{port}/api/request_connect"
-        try:
-            req = urlrequest.Request(
-                url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urlrequest.urlopen(req, timeout=3.0) as resp:
-                return 200 <= resp.status < 300
-        except Exception as exc:
-            print(f"[connect] Reverse-connect request to {peer_ip} failed: {exc}")
+        return self._http_peer_post(peer_ip, peer_port, "/api/request_connect", payload=payload)
+
+    def _wake_peer(self, peer_ip, peer_port, my_hash, caller_ip=None, caller_port=8742):
+        """Wake peer for reverse RNS connect and refresh its LAN announces."""
+        if not peer_ip:
             return False
+        ok = self._request_peer_connect(
+            peer_ip, peer_port, my_hash,
+            caller_ip=caller_ip, caller_port=caller_port,
+        )
+        self._request_peer_announce(peer_ip, peer_port)
+        return ok
+
+    def _prime_udp_path(self, dest_hex, peer_ip=None, timeout_s=None):
+        """Establish a UDP RNS path before opening a link (required for Android peers)."""
+        if timeout_s is None:
+            timeout_s = 10.0 if is_android() else 6.0
+        self._announce(peer_ip=peer_ip, unicast_subnet=peer_ip is None and is_android())
+        request_paths_for_hash(dest_hex, family="udp")
+        path_iface = wait_for_peer_path(dest_hex, family="udp", timeout_s=timeout_s)
+        if path_iface:
+            print(f"[connect] UDP path ready via {type(path_iface).__name__}")
+            return True
+        return False
 
     def _wait_for_reverse_link(self, dest_hex, alt_hex=None, timeout_s=REVERSE_CONNECT_WAIT_S):
         deadline = time.time() + timeout_s
@@ -697,7 +729,8 @@ class MessagingBackend:
     def _wait_for_identity(self, hash_hex, peer_ip=None, peer_port=None, peer_lookup=None,
                           caller_ip=None, caller_port=8742):
         clean = normalize_hash(hash_hex)
-        deadline = time.time() + IDENTITY_WAIT_TIMEOUT_S
+        wait_s = ANDROID_IDENTITY_WAIT_TIMEOUT_S if is_android() else IDENTITY_WAIT_TIMEOUT_S
+        deadline = time.time() + wait_s
         last_log = 0
         while time.time() < deadline:
             ident = self._identity_for_hash(clean)
@@ -1222,7 +1255,7 @@ class MessagingBackend:
                 )
             )
             if use_reverse:
-                self._request_peer_connect(
+                self._wake_peer(
                     peer_ip, int(peer_port or 8742),
                     normalize_hash(self.my_dest_hash or ""),
                     caller_ip=caller_ip, caller_port=int(caller_port or 8742),
@@ -1312,23 +1345,23 @@ class MessagingBackend:
 
             my_hash = normalize_hash(self.my_dest_hash or dest_hex)
             if peer_ip:
-                self._request_peer_connect(
+                print(f"[connect] Waking peer at {peer_ip}:{peer_port or 8742}")
+                self._wake_peer(
                     peer_ip, peer_port, my_hash,
                     caller_ip=caller_ip, caller_port=caller_port,
                 )
+                time.sleep(0.5 if is_android() else 0.3)
             scrub_peer_path(dest_hex)
-            request_paths_for_hash(dest_hex)
-            connect_timeout = FAILOVER_CONNECT_TIMEOUT_S if failover else LINK_CONNECT_TIMEOUT_S
-            print(f"[connect] Connecting to {dest_hex[:16]}... (timeout {connect_timeout}s)")
-
-            if is_android() and peer_ip:
-                print(f"[connect] Android: waking peer at {peer_ip}:{peer_port} before outbound link")
-                self._request_peer_connect(
-                    peer_ip, peer_port, my_hash,
-                    caller_ip=caller_ip, caller_port=caller_port,
-                )
-                time.sleep(0.8)
+            if peer_ip or is_android():
+                self._prime_udp_path(dest_hex, peer_ip=peer_ip)
+            else:
                 request_paths_for_hash(dest_hex)
+            if is_android() and not peer_ip:
+                print("[connect] Android: no peer IP — connect from Discovered list or add contact with LAN IP")
+            connect_timeout = FAILOVER_CONNECT_TIMEOUT_S if failover else (
+                ANDROID_LINK_CONNECT_TIMEOUT_S if is_android() else LINK_CONNECT_TIMEOUT_S
+            )
+            print(f"[connect] Connecting to {dest_hex[:16]}... (timeout {connect_timeout}s)")
 
             link = None
             try:
@@ -1387,7 +1420,7 @@ class MessagingBackend:
             if peer_ip:
                 reverse_wait = ANDROID_REVERSE_CONNECT_WAIT_S if is_android() else REVERSE_CONNECT_WAIT_S
                 print(f"[connect] Outbound link timed out — waiting for reverse connect ({reverse_wait}s)...")
-                self._request_peer_connect(
+                self._wake_peer(
                     peer_ip, peer_port, my_hash,
                     caller_ip=caller_ip, caller_port=caller_port,
                 )

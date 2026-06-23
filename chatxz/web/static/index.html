@@ -1819,6 +1819,17 @@ function connectTo(hash, ip, port) {
     toast('Already connected');
     return;
   }
+  if (!ip) {
+    const meta = peerMetaForHash(hash);
+    if (meta?.ip) {
+      ip = meta.ip;
+      port = meta.port || port;
+    }
+  }
+  if (appPlatform === 'android' && !ip) {
+    toast('Need peer LAN IP — tap a Discovered peer or wait for discovery');
+    return;
+  }
   connectInFlight = true;
   toast('Connecting...');
   const body = {hash};
@@ -2326,7 +2337,8 @@ function doConnectFromPanel() {
       body: JSON.stringify({hash, name})
     });
   }
-  connectTo(hash);
+  const meta = peerMetaForHash(hash);
+  connectTo(hash, meta?.ip, meta?.port);
   toggleConnectPanel();
 }
 

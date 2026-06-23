@@ -223,6 +223,11 @@ chatxz --daemon
 
 ## Changelog (recent)
 
+### v0.3.41
+- **Android RNS connect** — periodic beacon + auto RNS announce; UDP path priming before link; wake peer with `/api/announce`; longer connect timeouts
+- **Beacon identity** — register identity hash correctly from LAN beacon pubkey (fixes "no known identity" on connect)
+- **Connect IP resolution** — server and UI resolve peer IP from discovery when not passed manually (required for Android reverse connect)
+
 ### v0.3.40
 - **APK build fix** — `UsbSerialHelper` uses `ChatxzApplication` context instead of invalid `Platform.getApplication()` Java API
 

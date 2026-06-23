@@ -736,7 +736,7 @@ class ChatWebServer:
             on_link_established=self._on_link_established,
             on_link_closed=self._on_link_closed,
             display_name=settings.get("name", ""),
-            auto_announce=False,
+            auto_announce=is_android(),
             receive_dir=received_dir,
             peer_resolver=self._resolve_incoming_peer,
         )
@@ -755,19 +755,23 @@ class ChatWebServer:
                 identity_pubkey = self.identity.get_public_key()
             except Exception:
                 identity_pubkey = None
+        android = is_android()
         self.lan_beacon = LanBeacon(
             self.discovery,
             my_dest_clean,
             display_name=settings.get("name", ""),
             ip=my_ip,
             port=self.port,
-            periodic=False,
+            periodic=android,
             identity_hash=self.identity_mgr.get_hex_hash(),
             identity_pubkey=identity_pubkey,
-            on_periodic=None,
+            on_periodic=(self.messaging.announce if android else None),
         )
         self.lan_beacon.start()
-        print("[network] Manual announce only — use Announce button or peer connect wake")
+        if android:
+            print("[network] Android: periodic beacon + RNS announce enabled")
+        else:
+            print("[network] Manual announce only — use Announce button or peer connect wake")
 
         return my_hash
 
@@ -1035,7 +1039,10 @@ class ChatWebServer:
             peer_ip = (data.get("ip") or "").strip() or None
             peer_port = data.get("port") or 8742
             resolved_hash = self._resolve_connect_target(peer_hash, peer_ip)
+            peer_ip, peer_port = self._resolve_peer_connect_ip(resolved_hash, peer_ip, peer_port)
             caller_ip = detect_lan_ip() or (self.host if self.host not in ("127.0.0.1", "0.0.0.0") else "")
+            if is_android() and not caller_ip:
+                print("[connect] Warning: could not detect Android LAN IP — reverse connect may fail")
             ok = await self._run_blocking(
                 self.messaging.connect_to,
                 resolved_hash,
@@ -1310,6 +1317,15 @@ class ChatWebServer:
             if p.get("ip"):
                 peer_ip = p.get("ip")
             peer_port = p.get("port") or peer_port
+        return peer_ip, peer_port
+
+    def _resolve_peer_connect_ip(self, peer_hash, peer_ip=None, peer_port=8742):
+        """Fill peer IP/port from discovery when the UI did not pass them (common on Android)."""
+        if peer_ip:
+            return peer_ip, peer_port
+        resolved_ip, resolved_port = self._peer_connect_meta(peer_hash)
+        if resolved_ip:
+            return resolved_ip, resolved_port or peer_port
         return peer_ip, peer_port
 
     async def _link_failover_loop(self):
@@ -2093,6 +2109,7 @@ class ChatWebServer:
                 peer_ip = (data.get("ip") or "").strip() or None
                 peer_port = data.get("port") or 8742
                 resolved_hash = self._resolve_connect_target(peer_hash, peer_ip)
+                peer_ip, peer_port = self._resolve_peer_connect_ip(resolved_hash, peer_ip, peer_port)
                 caller_ip = detect_lan_ip() or (self.host if self.host not in ("127.0.0.1", "0.0.0.0") else "")
                 ok = await self._run_blocking(
                     self.messaging.connect_to,
