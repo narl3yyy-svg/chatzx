@@ -51,6 +51,7 @@ a = Analysis(
         "chatxz.core.voice",
         "chatxz.utils.helpers",
         "chatxz.utils.platform",
+        "chatxz.utils.rns_frozen",
         "chatxz.utils.system",
         "chatxz._version",
     ],
