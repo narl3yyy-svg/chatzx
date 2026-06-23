@@ -1,11 +1,39 @@
 """Portable Windows/desktop launcher — double-click chatxz.exe to start."""
 
+import importlib
 import os
 import socket
 import sys
 import threading
 import time
 import webbrowser
+
+
+def _preload_rns():
+    """Ensure RNS interface modules load before Reticulum (PyInstaller/frozen builds)."""
+    if not getattr(sys, "frozen", False):
+        return
+    for mod in (
+        "RNS.Interfaces.Interface",
+        "RNS.Interfaces.UDPInterface",
+        "RNS.Interfaces.AutoInterface",
+        "RNS.Interfaces.TCPInterface",
+        "RNS.Interfaces.LocalInterface",
+    ):
+        try:
+            importlib.import_module(mod)
+        except Exception:
+            pass
+    try:
+        import RNS.Interfaces as rns_ifaces
+        names = (
+            "Interface", "UDPInterface", "AutoInterface", "TCPInterface",
+            "LocalInterface", "SerialInterface", "BackboneInterface",
+        )
+        if not getattr(rns_ifaces, "__all__", None) or "Interface" not in rns_ifaces.__all__:
+            rns_ifaces.__all__ = list(names)
+    except Exception:
+        pass
 
 
 def portable_root():
@@ -29,6 +57,7 @@ def main():
     root = portable_root()
     os.environ.setdefault("CHATXZ_PORTABLE", root)
     os.chdir(root)
+    _preload_rns()
 
     from chatxz._version import __version__ as app_version
     from chatxz.web.server import ChatWebServer

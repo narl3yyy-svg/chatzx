@@ -1,7 +1,6 @@
 # PyInstaller spec — one-folder portable build (chatxz.exe + _internal/)
 # Build on Windows: pyinstaller packaging/windows/chatxz-portable.spec
 
-import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
@@ -11,11 +10,23 @@ ROOT = Path(SPECPATH).resolve().parents[1]
 block_cipher = None
 
 hiddenimports = []
-for pkg in ("rns", "aiohttp", "cryptography", "multidict", "yarl", "frozenlist", "aiosignal", "attr"):
+for pkg in ("RNS", "aiohttp", "cryptography", "multidict", "yarl", "frozenlist", "aiosignal", "attrs", "configobj"):
     try:
         hiddenimports.extend(collect_submodules(pkg))
     except Exception:
         pass
+
+hiddenimports += [
+    "RNS.Interfaces.Interface",
+    "RNS.Interfaces.UDPInterface",
+    "RNS.Interfaces.AutoInterface",
+    "RNS.Interfaces.TCPInterface",
+    "RNS.Interfaces.LocalInterface",
+    "RNS.Interfaces.SerialInterface",
+    "RNS.Interfaces.BackboneInterface",
+    "RNS.vendor.configobj",
+    "RNS.vendor.platformutils",
+]
 
 datas = []
 datas += collect_data_files("chatxz", includes=["**/*.html", "**/*.css", "**/*.js", "**/*.json", "**/*.svg", "**/*.png"])
@@ -45,7 +56,7 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[str(ROOT / "packaging" / "windows" / "rthook_rns.py")],
     excludes=["tkinter", "matplotlib", "numpy", "pandas", "PIL", "pytest"],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
