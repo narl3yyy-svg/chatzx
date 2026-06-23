@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.67
+**Current version:** 0.3.70
 
 ## Download
 
@@ -11,10 +11,11 @@ Pre-built binaries are on **[GitHub Releases](https://github.com/narl3yyy-svg/ch
 | Platform | File | Install |
 |----------|------|---------|
 | **Windows 11** | `chatxz-X.Y.Z-windows-portable.zip` | Unzip → double-click `chatxz.exe` |
+| **macOS** | `chatxz-X.Y.Z-macos.dmg` | Open DMG → drag `chatxz.app` to Applications |
 | **Android** | `chatxz-X.Y.Z.apk` | Sideload (arm64) |
-| **Linux** | Source — see below | `./run.sh web --share` |
+| **Linux / macOS (source)** | Git clone | `./run.sh web --share` |
 
-Portable Windows and Android builds are published automatically on every `v*` tag.
+Portable Windows, macOS, and Android builds are published automatically on every `v*` tag (or workflow dispatch).
 
 ---
 
@@ -36,6 +37,26 @@ Your identity, chats, and received files live in **`chatxz-data\`** next to the 
 3. Grant notification permission when asked. Microphone is requested when you tap 🎤 to record a voice note.
 
 Reinstalling the app creates a **new identity** — update saved contacts after reinstall.
+
+---
+
+## macOS (portable .dmg)
+
+1. Download **`chatxz-X.Y.Z-macos.dmg`** from [Releases](https://github.com/narl3yyy-svg/chatxz/releases).
+2. Open the DMG and drag **chatxz.app** to Applications (or run from the DMG).
+3. Double-click **chatxz.app** — a Terminal window opens and your browser loads **http://127.0.0.1:8742**.
+4. If Gatekeeper blocks the app: right-click → **Open** (first launch only).
+
+Your identity, chats, and received files live in **`chatxz-data/`** next to the app (same layout as Windows portable). LAN access is enabled by default (like `./run.sh web --share`).
+
+**From source (Arch-style on Mac):**
+
+```bash
+git clone https://github.com/narl3yyy-svg/chatxz.git
+cd chatxz
+bash scripts/install-macos.sh
+./run.sh web --share
+```
 
 ---
 
@@ -120,6 +141,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.70** — macOS portable `.dmg` + `.app` (CI build); `scripts/install-macos.sh`; source workflow `./run.sh web --share` on Mac
 - **v0.3.69** — Android: back button minimizes app (keeps server running) instead of restarting; skip Normal/Debug prompt when server already up; chat history only persists for saved contacts; fix queued file messages showing filename "file"
 - **v0.3.68** — Fix Windows↔Android connect: register peer identity from beacon pubkey before connect; Windows portable defaults to UDP LAN (not loopback TCP); Android resolves peer IP from discovery server-side; debug log includes startup log tail
 - **v0.3.67** — Fix Android crash: restore `chatxz/core/messaging.py` (was accidentally published as `PLACEHOLDER` in v0.3.66)

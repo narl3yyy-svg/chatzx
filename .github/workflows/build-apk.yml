@@ -1,4 +1,4 @@
-# Builds chatxz releases on version tags: Android APK + Windows portable zip.
+# Builds chatxz releases on version tags: Android APK + Windows portable + macOS .dmg.
 name: Build Releases
 
 on:
@@ -88,8 +88,11 @@ jobs:
             |----------|------|
             | Android | `${{ steps.version.outputs.apk }}` |
             | Windows 11 portable | `chatxz-${{ steps.version.outputs.version }}-windows-portable.zip` |
+            | macOS | `chatxz-${{ steps.version.outputs.version }}-macos.dmg` |
 
             **Windows:** unzip, double-click `chatxz.exe`. Data in `chatxz-data\` beside the exe.
+
+            **macOS:** open the `.dmg`, drag `chatxz.app` to Applications, double-click to start. Data in `chatxz-data/` beside the app. From source: `./run.sh web --share`.
           files: ${{ steps.version.outputs.apk }}
           make_latest: true
 
@@ -144,5 +147,60 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           files: dist/${{ steps.version.outputs.zip }}
+          append_body: true
+          make_latest: false
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Determine release version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            TAG="${GITHUB_REF_NAME}"
+          else
+            INPUT="${{ github.event.inputs.version }}"
+            if [ -n "$INPUT" ]; then
+              VERSION="${INPUT#v}"
+            else
+              VERSION=$(grep '__version__' chatxz/_version.py | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+            fi
+            TAG="v${VERSION}"
+          fi
+          DMG="chatxz-${VERSION}-macos.dmg"
+          ZIP="chatxz-${VERSION}-macos.zip"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "dmg=${DMG}" >> "$GITHUB_OUTPUT"
+          echo "zip=${ZIP}" >> "$GITHUB_OUTPUT"
+
+      - name: Build macOS .app and .dmg
+        shell: bash
+        run: |
+          chmod +x packaging/macos/build-portable.sh
+          bash packaging/macos/build-portable.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: chatxz-${{ steps.version.outputs.version }}-macos
+          path: |
+            dist/${{ steps.version.outputs.dmg }}
+            dist/${{ steps.version.outputs.zip }}
+
+      - name: Publish macOS release assets
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          files: |
+            dist/${{ steps.version.outputs.dmg }}
+            dist/${{ steps.version.outputs.zip }}
           append_body: true
           make_latest: false
