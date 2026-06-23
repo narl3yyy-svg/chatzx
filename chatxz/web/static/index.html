@@ -2036,9 +2036,19 @@ function toggleActionPanel() {
 
 function peerMetaForHash(hash) {
   const key = peerKey(hash);
-  const contact = allContacts.find(c => peerKey(c.hash) === key);
+  const contact = allContacts.find(c =>
+    peerKey(c.hash) === key
+    || peerKey(c.identity_hash) === key
+    || peersMatch(c.hash, hash)
+    || peersMatch(c.identity_hash, hash)
+  );
   if (contact?.ip) return { hash: contact.hash, ip: contact.ip, port: contact.port || 8742 };
-  return (window._discoveredPeers || []).find(p => peerKey(p.hash) === key);
+  return (window._discoveredPeers || []).find(p =>
+    peerKey(p.hash) === key
+    || peerKey(p.identity_hash) === key
+    || peersMatch(p.hash, hash)
+    || peersMatch(p.identity_hash, hash)
+  );
 }
 
 function actionConnect() {
@@ -2150,8 +2160,7 @@ function connectTo(hash, ip, port) {
     }
   }
   if (appPlatform === 'android' && !ip) {
-    toast('No LAN IP for this contact — save from Discovered peers first or wait for discovery');
-    return;
+    toast('Resolving peer IP from discovery...');
   }
   connectInFlight = true;
   toast('Connecting...');
@@ -2607,17 +2616,16 @@ function refreshNetworkStatus() {
       }
       if (d.beacon) {
         html += row('Beacon mode', (d.beacon.interval_sec ? 'auto' : 'manual only'), !d.beacon.interval_sec);
-        html += row('Beacon sent (last announce)', d.beacon.last_announce_sent ?? 0);
+        html += row('Broadcasts (last announce)', d.beacon.last_broadcast_sent ?? 0);
+        if ((d.beacon.last_subnet_probes ?? 0) > 0) {
+          html += row('Unicast probes (last announce)', d.beacon.last_subnet_probes);
+        }
+        html += row('Total sent (last announce)', d.beacon.last_announce_sent ?? 0);
         html += row('Beacon sent (session)', d.beacon.packets_sent ?? 0);
         html += row('Beacon received (session)', d.beacon.packets_received ?? 0, (d.beacon.packets_received || 0) > 0);
-        if ((d.beacon.last_subnet_probes ?? 0) > 0) {
-          html += row('Subnet probes (last announce)', d.beacon.last_subnet_probes);
-        }
       }
-      const probeHint = platform === 'android'
-        ? 'Android: one Announce sends ~253 subnet unicast probes plus a few broadcasts.'
-        : 'Desktop: one Announce sends a few UDP broadcasts (no subnet probe).';
-      html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);line-height:1.45">' + probeHint + ' <strong>Reset network</strong> zeros session counters. <strong>Received</strong> counts foreign peers only (not your own echo).</div>';
+      const probeHint = 'One Announce sends directed broadcasts plus a small unicast sweep (~45 hosts on Android, ~25 on desktop) — not a full /24 scan.';
+      html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);line-height:1.45">' + probeHint + ' Counters start at 0 on launch. <strong>Reset network</strong> zeros session counters. <strong>Received</strong> counts foreign peers only.</div>';
       html += '<div style="margin-top:6px;font-size:10px;color:var(--text3);line-height:1.45"><strong>Link active</strong> = encrypted RNS session open. <strong>Inactive</strong> = no session — connect to a peer or wait for incoming. Connect waits for RNS announce, then times out in ~10s if the peer is offline.</div>';
       html += '<div style="margin-top:6px;font-size:10px;color:var(--text3);line-height:1.45">Announce and beacon are <strong>manual only</strong> — use the Announce button. Connect uses reverse-connect for Android when outbound link fails.</div>';
       html += '<div style="margin-top:6px;font-size:10px;color:var(--text3);line-height:1.45"><strong>Dual-path failover:</strong> with USB serial + LAN both configured, chat auto-reconnects over the other path when one drops (serial unplugged → LAN/AutoInterface; LAN lost → serial). Both machines need the same version. Serial must show <strong>Serial in RNS: yes</strong> before LAN→serial failover works.</div>';
@@ -3573,7 +3581,33 @@ function updateAndroidDebugLogHint(path) {
     return;
   }
   el.style.display = 'block';
-  el.innerHTML = '<strong>Debug log:</strong> server output is saved on this device.<br><code style="font-size:10px">' + escapeHtml(path) + '</code><br>Check <code>chatxz-debug-latest.txt</code> in the same folder for the current path.';
+  el.innerHTML = '<strong>Debug log:</strong> server output is saved on this device.<br><code style="font-size:10px">' + escapeHtml(path) + '</code><br>Check <code>chatxz-debug-latest.txt</code> in the same folder. <a href="#" onclick="viewDebugLog();return false" style="color:var(--accent)">View recent log</a>';
+}
+
+function viewDebugLog() {
+  fetch('/api/debug')
+    .then(r => r.json())
+    .then(d => {
+      const tail = d.debug_log_tail || '(log empty — restart in Debug mode and reproduce the issue)';
+      const path = d.debug_log_path || '';
+      const text = (path ? 'Path: ' + path + '\n\n' : '') + tail;
+      const pre = document.createElement('pre');
+      pre.style.cssText = 'max-height:60vh;overflow:auto;font-size:10px;white-space:pre-wrap;word-break:break-all';
+      pre.textContent = text;
+      const wrap = document.createElement('div');
+      wrap.appendChild(pre);
+      const dlg = document.createElement('div');
+      dlg.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+      const box = document.createElement('div');
+      box.style.cssText = 'background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px;max-width:95vw;max-height:90vh;overflow:auto';
+      box.innerHTML = '<strong>Debug log</strong> <button type="button" style="float:right">Close</button>';
+      box.appendChild(wrap);
+      box.querySelector('button').onclick = () => dlg.remove();
+      dlg.appendChild(box);
+      dlg.onclick = e => { if (e.target === dlg) dlg.remove(); };
+      document.body.appendChild(dlg);
+    })
+    .catch(() => toast('Could not load debug log'));
 }
 
 function formatSize(bytes) {
