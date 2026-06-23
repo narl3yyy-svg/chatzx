@@ -128,7 +128,7 @@ def default_interface_list():
     except Exception:
         pass
     if (
-        sys.platform == "win32"
+        sys.platform in ("win32", "darwin")
         or os.environ.get("CHATXZ_PORTABLE")
         or getattr(sys, "frozen", False)
     ):
