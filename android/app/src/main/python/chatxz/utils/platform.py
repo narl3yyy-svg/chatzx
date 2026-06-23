@@ -30,16 +30,25 @@ def patch_embedded_signals():
 
 
 def is_android():
+    """True on Chaquopy/Android — never cache False before env/java checks run."""
     global _android
-    if _android is not None:
-        return _android
+    if os.environ.get("CHATXZ_ANDROID") == "1":
+        _android = True
+        return True
+    if _android is True:
+        return True
+    if "chaquopy" in sys.modules:
+        _android = True
+        return True
     try:
         from java import jclass
         jclass("com.chaquo.python.android.AndroidPlatform")
         _android = True
+        return True
     except Exception:
-        _android = "chaquopy" in sys.modules or os.environ.get("CHATXZ_ANDROID") == "1"
-    return _android
+        pass
+    _android = False
+    return False
 
 
 def android_files_dir():

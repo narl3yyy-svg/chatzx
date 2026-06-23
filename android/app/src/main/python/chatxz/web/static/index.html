@@ -2178,7 +2178,11 @@ function connectTo(hash, ip, port) {
     .finally(() => { connectInFlight = false; });
 }
 
+let announceInFlight = false;
+
 function announceSelf() {
+  if (announceInFlight) return;
+  announceInFlight = true;
   toast('Starting announce...');
   fetch('/api/announce', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'})
     .then(async r => {
@@ -2186,7 +2190,11 @@ function announceSelf() {
       if (r.ok && d.status === 'ok') {
         const hint = d.broadcast ? ` via ${d.broadcast}` : '';
         const hits = d.http_probe_hits ? `, ${d.http_probe_hits} HTTP replies` : '';
-        toast('Announcing on LAN' + hint + hits);
+        const found = d.discovered_count ? `, ${d.discovered_count} peer(s) seen` : '';
+        toast('Announcing on LAN' + hint + hits + found);
+        if (d.discovered_count) {
+          fetch('/api/discover').then(r => r.json()).then(p => renderDiscovered(p.peers)).catch(() => {});
+        }
         refreshNetworkStatus();
         return;
       }
@@ -2197,7 +2205,8 @@ function announceSelf() {
       }
       toast('Announce failed: ' + (d.error || 'unknown'));
     })
-    .catch(() => toast('Announce failed — server not reachable'));
+    .catch(() => toast('Announce failed — server not reachable'))
+    .finally(() => { announceInFlight = false; });
 }
 
 window.onChatxzFolderPicked = function(path) {
@@ -2576,8 +2585,11 @@ function refreshNetworkStatus() {
       let html = '';
       const row = (label, value, ok) =>
         `<div class="net-row"><span class="net-label">${label}</span><span class="net-value ${ok === undefined ? '' : netClass(ok)}">${escapeHtml(String(value ?? '—'))}</span></div>`;
-      html += row('Platform', d.platform);
-      html += row('HTTP bind', d.http_bind);
+      const platform = (window.chatxzAndroid?.isAndroid?.() ? 'android' : null) || d.platform;
+      if (platform) appPlatform = platform;
+      html += row('Platform', platform);
+      html += row('HTTP bind', d.http_webview ? `${d.http_bind} (WebView ${d.http_webview})` : d.http_bind);
+      html += row('Discovery listening', d.discovery_active ? 'yes' : 'no (tap Announce)', !!d.discovery_active);
       html += row('RNS UDP', d.rns_udp_port ? d.rns_udp_port + ' (required for chat)' : '4242', true);
       html += row('Beacon UDP', d.beacon_udp_port || 8743);
       html += row('LAN IP', d.lan_ip || 'none', !!d.lan_ip);
@@ -2602,7 +2614,7 @@ function refreshNetworkStatus() {
         html += row('Beacon received (session)', d.beacon.packets_received ?? 0, (d.beacon.packets_received || 0) > 0);
         html += row('Subnet probes (last announce)', d.beacon.last_subnet_probes ?? 0);
       }
-      html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);line-height:1.45">Beacon/subnet counters are <strong>session totals</strong> — each Announce sends ~259 packets (253 subnet probes + broadcasts). Use <strong>Reset network</strong> to zero counters and clear discovered peers without affecting your identity.</div>';
+      html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);line-height:1.45">One Announce ≈ <strong>253 subnet probes</strong> on Android (plus a few broadcasts on desktop). <strong>Reset network</strong> zeros beacon counters. If the session total looks doubled, you may have tapped Announce twice — wait for the toast before tapping again.</div>';
       html += '<div style="margin-top:6px;font-size:10px;color:var(--text3);line-height:1.45"><strong>Link active</strong> = encrypted RNS session open. <strong>Inactive</strong> = no session — connect to a peer or wait for incoming. Connect waits for RNS announce, then times out in ~10s if the peer is offline.</div>';
       html += '<div style="margin-top:6px;font-size:10px;color:var(--text3);line-height:1.45">Announce and beacon are <strong>manual only</strong> — use the Announce button. Connect uses reverse-connect for Android when outbound link fails.</div>';
       html += '<div style="margin-top:6px;font-size:10px;color:var(--text3);line-height:1.45"><strong>Dual-path failover:</strong> with USB serial + LAN both configured, chat auto-reconnects over the other path when one drops (serial unplugged → LAN/AutoInterface; LAN lost → serial). Both machines need the same version. Serial must show <strong>Serial in RNS: yes</strong> before LAN→serial failover works.</div>';
@@ -2622,7 +2634,7 @@ function refreshNetworkStatus() {
           const ok = iface.serial_active || (iface.enabled && iface.preset !== 'serial');
           html += row(iface.name || iface.type, status + ' · ' + (iface.preset || iface.type), ok);
         });
-        if (d.platform === 'android') {
+        if (platform === 'android') {
           const ready = d.usb_serial_ready ?? 0;
           html += row('USB serial ready', ready + ' device(s)', ready > 0);
         } else if (d.serial_group_access === false) {

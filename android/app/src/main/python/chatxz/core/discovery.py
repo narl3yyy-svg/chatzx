@@ -100,6 +100,12 @@ class PeerDiscovery:
         self.running = True
         self._handler = AnnounceHandler(self)
         RNS.Transport.register_announce_handler(self._handler)
+        try:
+            from chatxz.utils.platform import is_android
+            if is_android():
+                self.accept_peers = True
+        except Exception:
+            pass
         print("[discovery] Announce handler registered (passive until manual announce)")
 
     def stop(self):

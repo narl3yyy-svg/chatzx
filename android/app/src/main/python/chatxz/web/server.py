@@ -1197,7 +1197,7 @@ class ChatWebServer:
             "linked_peers": linked_peers,
             "contacts": contacts,
             "discovered": discovered,
-            "platform": "android" if is_android() else "desktop",
+            "platform": self._platform_name(),
             "app_version": APP_VERSION,
             "rns_ready": bool(self.messaging and self.messaging.destination),
             "rns_error": self.rns_init_error,
@@ -1544,12 +1544,18 @@ class ChatWebServer:
                 pass
         return payload
 
+    def _platform_name(self):
+        if is_android() or self.embedded:
+            return "android"
+        return "desktop"
+
     def _reset_network_state(self, update_settings=True):
         if self.messaging:
             self.messaging.disconnect_all_peers(clear_session=True)
         self.active_peer = None
         if self.discovery:
-            self.discovery.disable_discovery()
+            self.discovery.clear_peers()
+            self.discovery.accept_peers = True
         if self.lan_beacon:
             self.lan_beacon.reset_stats()
         if update_settings:
@@ -1577,7 +1583,12 @@ class ChatWebServer:
         await self._broadcast({"type": "peers", "data": []})
         await self._broadcast({"type": "link_closed", "data": {"linked_peers": []}})
         await self._broadcast({"type": "network_reset", "data": {}})
-        return web.json_response({"status": "ok"})
+        beacon = self.lan_beacon.status() if self.lan_beacon else None
+        return web.json_response({
+            "status": "ok",
+            "beacon": beacon,
+            "discovery_active": bool(self.discovery and self.discovery.accept_peers),
+        })
 
     def _disable_rns_serial_interfaces(self):
         try:
@@ -1723,9 +1734,12 @@ class ChatWebServer:
             active_peer = linked_peers[0]
         port, _ = configured_serial_port(self.load_settings().get("rns_interfaces"))
         return web.json_response({
-            "platform": "android" if is_android() else "desktop",
+            "platform": self._platform_name(),
+            "embedded": self.embedded,
             "app_version": APP_VERSION,
             "http_bind": f"{self.host}:{self.port}",
+            "http_webview": f"127.0.0.1:{self.port}" if self.embedded else None,
+            "discovery_active": bool(self.discovery and self.discovery.accept_peers),
             "rns_udp_port": 4242,
             "beacon_udp_port": BEACON_PORT,
             "lan_ip": detect_lan_ip(),
@@ -1786,12 +1800,19 @@ class ChatWebServer:
                     beacon_sent = await asyncio.to_thread(
                         self.lan_beacon.send, 3, True
                     )
+                peers = self.discovery.get_peers() if self.discovery else []
+                if peers:
+                    await self._broadcast({"type": "peers", "data": peers})
                 return web.json_response({
                     "status": "ok",
                     "broadcast": lan_broadcast(),
                     "beacon_port": BEACON_PORT,
                     "beacon_sent": beacon_sent,
+                    "beacon_session_total": (
+                        self.lan_beacon.packets_sent if self.lan_beacon else 0
+                    ),
                     "lan_ip": detect_lan_ip(),
+                    "discovered_count": len(peers),
                 })
             except Exception as e:
                 return web.json_response({"error": str(e)}, status=400)
