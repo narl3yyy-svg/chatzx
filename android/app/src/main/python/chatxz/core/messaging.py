@@ -59,6 +59,7 @@ MESSAGE_TYPE_VOICE = "voice"
 MESSAGE_TYPE_VIDEO = "video"
 MESSAGE_TYPE_EMOJI = "emoji"
 MESSAGE_TYPE_LONGTEXT = "longtext"
+HUB_GROUP_PEER = "__hub_group__"
 
 class ChatMessage:
     def __init__(self, msg_type, content, sender=None, timestamp=None, file_name=None, file_size=None, msg_id=None):
@@ -69,6 +70,7 @@ class ChatMessage:
         self.file_name = file_name
         self.file_size = file_size
         self.msg_id = msg_id or str(uuid.uuid4())[:12]
+        self.hub_group = False
 
     def to_dict(self):
         d = {
@@ -83,11 +85,13 @@ class ChatMessage:
             d["file_name"] = self.file_name
         if self.file_size:
             d["file_size"] = self.file_size
+        if self.hub_group:
+            d["hub"] = True
         return d
 
     @classmethod
     def from_dict(cls, d):
-        return cls(
+        msg = cls(
             msg_type=d.get("type", MESSAGE_TYPE_TEXT),
             content=d.get("content", ""),
             sender=d.get("sender"),
@@ -96,6 +100,8 @@ class ChatMessage:
             file_size=d.get("file_size"),
             msg_id=d.get("msg_id"),
         )
+        msg.hub_group = bool(d.get("hub"))
+        return msg
 
     def to_json(self):
         return json.dumps(self.to_dict())
@@ -1982,6 +1988,55 @@ class MessagingBackend:
 
             print("[connect] Peer not reachable")
             return False
+
+    def send_hub_message(self, text, receipt_callback=None, msg_id=None,
+                       hub_server_hash=None, hub_server_mode=False):
+        msg = ChatMessage(MESSAGE_TYPE_TEXT, text, msg_id=msg_id)
+        msg.hub_group = True
+        data = msg.to_json().encode("utf-8")
+        if hub_server_mode:
+            targets = self.linked_peers()
+        elif hub_server_hash:
+            targets = [self.dest_hash_for(hub_server_hash)]
+        else:
+            targets = self.linked_peers()[:1]
+        sent = False
+        for peer in targets:
+            if not peer:
+                continue
+            link = self._link_for_peer(peer)
+            if not link:
+                continue
+            try:
+                packet = RNS.Packet(link, data)
+                packet.send()
+                sent = True
+            except Exception as e:
+                print(f"[hub] send failed to {peer[:16]}: {e}")
+        if not sent:
+            print("[hub] send_hub_message: no active link")
+            return False
+        print(f"[hub] Sent group message: {text[:50]}...")
+        self._sent_messages[msg.msg_id] = msg
+        self._pending_sends[msg.msg_id] = time.time()
+        if receipt_callback:
+            self._receipt_callbacks[msg.msg_id] = receipt_callback
+        return msg
+
+    def relay_hub_message(self, chat_msg, sender_hash):
+        if not getattr(chat_msg, "hub_group", False):
+            return
+        data = chat_msg.to_json().encode("utf-8")
+        for peer in self.linked_peers():
+            if self.hashes_equivalent(peer, sender_hash):
+                continue
+            link = self._link_for_peer(peer)
+            if not link:
+                continue
+            try:
+                RNS.Packet(link, data).send()
+            except Exception as e:
+                print(f"[hub] relay failed to {peer[:16]}: {e}")
 
     def send_message(self, text, receipt_callback=None, msg_id=None, target_peer=None):
         peer = self.dest_hash_for(target_peer or self.active_peer_hash or "")

@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.60
+**Current version:** 0.3.61
 
 ## Download
 
@@ -20,7 +20,7 @@ Portable Windows and Android builds are published automatically on every `v*` ta
 
 ## Windows (portable)
 
-1. Download **`chatxz-0.3.60-windows-portable.zip`** from [Releases](https://github.com/narl3yyy-svg/chatxz/releases).
+1. Download **`chatxz-0.3.61-windows-portable.zip`** from [Releases](https://github.com/narl3yyy-svg/chatxz/releases).
 2. Unzip anywhere (e.g. `C:\Users\You\chatxz`).
 3. Open the `chatxz` folder and double-click **`chatxz.exe`**.
 4. Browser opens at **http://127.0.0.1:8742**. Allow Windows Firewall on **private** networks if prompted (UDP 4242, TCP 8742).
@@ -111,13 +111,16 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\build-portable.ps1
 **Build Android APK locally:**
 
 ```bash
-cd android && ./gradlew assembleDebug
+cd android && ./gradlew assembleRelease
 ```
+
+On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose logs).
 
 ---
 
 ## Recent changes
 
+- **v0.3.61** — Android: no auto-close chat on back, fixed notifications, 5‑min peer TTL, Normal/Debug startup picker, release APK builds. Default first install uses TCP client. Hub server/client group chat via TCP hub. Windows/Android CI builds normal (release) mode.
 - **v0.3.60** — Path traversal fixes, multi-peer folder/voice/read-receipt routing, CLI connect fix, version/CI alignment
 - **v0.3.59** — Fix network reset (all links), file upload chat tagging, link-active checks, UI link status per viewed peer
 - **v0.3.58** — Parallel per-peer RNS links (no peer stealing); per-peer chat routing; background wake connects; Android+Windows coexistence

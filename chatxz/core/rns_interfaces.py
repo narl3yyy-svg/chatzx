@@ -30,6 +30,16 @@ INTERFACE_PRESETS = {
             "ifac_size": 16,
         },
     },
+    "tcp_server": {
+        "label": "TCP Hub Server",
+        "type": "TCPServerInterface",
+        "defaults": {
+            "enabled": True,
+            "listen_ip": "0.0.0.0",
+            "listen_port": 4242,
+            "ifac_size": 16,
+        },
+    },
     "serial": {
         "label": "Serial",
         "type": "SerialInterface",
@@ -78,16 +88,15 @@ def serial_permission_hint_for_process():
 
 DEFAULT_INTERFACE_LIST = [
     {
-        "id": "udp-lan",
-        "preset": "udp_lan",
-        "name": "UDP Interface",
+        "id": "tcp-client",
+        "preset": "tcp_client",
+        "name": "TCP Client",
+        "type": "TCPClientInterface",
         "enabled": True,
-        "listen_ip": "0.0.0.0",
-        "listen_port": 4242,
-        "forward_ip": "255.255.255.255",
-        "forward_port": 4242,
+        "target_host": "127.0.0.1",
+        "target_port": 4242,
         "ifac_size": 16,
-    }
+    },
 ]
 
 
@@ -354,11 +363,15 @@ def update_interface(items, iface_id, updates):
             updated = _sync_serial_enabled(updated)
             if serial_port_accessible(updated.get("port")):
                 updated["enabled"] = True
-        elif preset == "tcp_client" or itype == "TCPClientInterface":
+        elif preset in ("tcp_client", "tcp_server") or itype in ("TCPClientInterface", "TCPServerInterface"):
             if "target_host" in updates and updates["target_host"]:
                 updated["target_host"] = str(updates["target_host"]).strip()
             if "target_port" in updates and updates["target_port"] is not None:
                 updated["target_port"] = int(updates["target_port"])
+            if "listen_ip" in updates and updates["listen_ip"]:
+                updated["listen_ip"] = str(updates["listen_ip"]).strip()
+            if "listen_port" in updates and updates["listen_port"] is not None:
+                updated["listen_port"] = int(updates["listen_port"])
         elif preset == "udp_lan" or itype == "UDPInterface":
             for key in ("listen_ip", "listen_port", "forward_ip", "forward_port"):
                 if key in updates and updates[key] is not None:
@@ -542,9 +555,15 @@ def ensure_runtime_serial(settings_interfaces=None):
 
 
 def render_rns_config(interfaces, broadcast_ip=None, android=False, log=print):
+    normalized = normalize_interface_list(interfaces)
+    has_tcp_server = any(
+        i.get("type") == "TCPServerInterface" and i.get("enabled", True)
+        for i in normalized
+    )
+    enable_transport = "Yes" if (not android or has_tcp_server) else "No"
     lines = [
         "[reticulum]",
-        f"enable_transport = {'No' if android else 'Yes'}",
+        f"enable_transport = {enable_transport}",
         "share_instance = No",
         "",
         "[logging]",
@@ -553,7 +572,7 @@ def render_rns_config(interfaces, broadcast_ip=None, android=False, log=print):
         "[interfaces]",
     ]
     skipped_serial = []
-    for iface in normalize_interface_list(interfaces):
+    for iface in normalized:
         itype = iface.get("type", "")
         if itype == "SerialInterface":
             if android:
@@ -579,9 +598,13 @@ def render_rns_config(interfaces, broadcast_ip=None, android=False, log=print):
             lines.append(f"    forward_port = {iface.get('forward_port', 4242)}")
             if iface.get("ifac_size"):
                 lines.append(f"    ifac_size = {iface.get('ifac_size')}")
-        elif itype == "TCPClientInterface":
-            lines.append(f"    target_host = {iface.get('target_host', '127.0.0.1')}")
-            lines.append(f"    target_port = {iface.get('target_port', 4242)}")
+        elif itype in ("TCPClientInterface", "TCPServerInterface"):
+            if itype == "TCPServerInterface":
+                lines.append(f"    listen_ip = {iface.get('listen_ip', '0.0.0.0')}")
+                lines.append(f"    listen_port = {iface.get('listen_port', 4242)}")
+            else:
+                lines.append(f"    target_host = {iface.get('target_host', '127.0.0.1')}")
+                lines.append(f"    target_port = {iface.get('target_port', 4242)}")
             if iface.get("ifac_size"):
                 lines.append(f"    ifac_size = {iface.get('ifac_size')}")
         elif itype == "SerialInterface":

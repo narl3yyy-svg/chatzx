@@ -957,6 +957,18 @@ body.sidebar-open #sidebar-backdrop { display: block; }
       </div>
 
       <div class="contacts-scroll">
+        <div id="hub-group-section" style="display:none">
+          <div class="section-header">
+            <h3>Hub Group</h3>
+          </div>
+          <div id="hub-group-entry" class="contact-item" onclick="openChat(HUB_GROUP_PEER, false)">
+            <div class="contact-avatar contact-avatar-saved">G</div>
+            <div class="contact-info">
+              <div class="contact-name">Group Chat</div>
+              <div class="contact-hash">All peers on hub node</div>
+            </div>
+          </div>
+        </div>
         <div class="section-header">
           <h3>Contacts</h3>
           <span class="section-count" id="contacts-count">0</span>
@@ -1038,12 +1050,28 @@ body.sidebar-open #sidebar-backdrop { display: block; }
             Auto-reset beacon counters weekly
           </label>
           <div id="network-status-panel" class="network-status">Tap Refresh to load network status.</div>
+          <div class="settings-section" style="margin-top:12px">
+            <label>Hub mode</label>
+            <select id="settings-hub-role" onchange="saveHubSettings()">
+              <option value="off">Off (direct P2P)</option>
+              <option value="server">Hub server (main node)</option>
+              <option value="client">Hub client</option>
+            </select>
+            <p class="field-hint">Server: run TCP hub and relay group chat. Client: connect to hub IP below.</p>
+          </div>
+          <div id="hub-client-fields" class="settings-section" style="display:none">
+            <label>Hub host (IP)</label>
+            <input id="settings-hub-host" placeholder="10.10.100.1" spellcheck="false">
+            <label style="margin-top:8px">Hub port</label>
+            <input id="settings-hub-port" type="number" min="1" max="65535" value="4242">
+          </div>
           <div style="margin-top:12px">
             <h4 style="margin:0 0 8px;font-size:12px;color:var(--text2)">RNS interface presets</h4>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-              <button class="btn-block" style="flex:1;min-width:90px" onclick="addRnsInterface('udp_lan')">+ UDP</button>
-              <button class="btn-block" style="flex:1;min-width:90px" onclick="addRnsInterface('tcp_client')">+ TCP</button>
-              <button class="btn-block" style="flex:1;min-width:90px" onclick="addRnsInterface('serial')">+ Serial</button>
+              <button class="btn-block" style="flex:1;min-width:80px" onclick="addRnsInterface('udp_lan')">+ UDP</button>
+              <button class="btn-block" style="flex:1;min-width:80px" onclick="addRnsInterface('tcp_client')">+ TCP</button>
+              <button class="btn-block" style="flex:1;min-width:80px" onclick="addRnsInterface('tcp_server')">+ TCP Hub</button>
+              <button class="btn-block" style="flex:1;min-width:80px" onclick="addRnsInterface('serial')">+ Serial</button>
             </div>
             <div id="serial-devices-panel" class="serial-devices-panel" style="display:none"></div>
             <div id="rns-interfaces-list" style="font-size:11px;color:var(--text2)">Loading...</div>
@@ -1225,6 +1253,7 @@ let progressLastUpdate = 0;
 let lastLinkToastAt = 0;
 const LS_VIEWING_PEER = 'chatxz_viewing_peer';
 const LS_UNREAD = 'chatxz_unread_counts';
+const HUB_GROUP_PEER = '__hub_group__';
 let unreadCounts = {};
 let recording = false;
 let mediaRecorder = null;
@@ -1319,7 +1348,7 @@ function showMessageNotification(peerHash, preview) {
   const body = (preview || 'New message').substring(0, 120);
   const viewingThis = viewingPeer && peersMatch(viewingPeer, peerHash);
   if (viewingThis && !document.hidden) return;
-  if (window.chatxzAndroid?.showNotification && appPlatform !== 'android') {
+  if (window.chatxzAndroid?.showNotification && appPlatform === 'android') {
     window.chatxzAndroid.showNotification(name, body);
     return;
   }
@@ -1336,6 +1365,10 @@ function init() {
   initMobileLayout();
   showWelcome();
   fetchIdentity();
+  fetch('/api/settings').then(r => r.json()).then(s => {
+    window._hubRole = s.hub_role || 'off';
+    updateHubUi();
+  }).catch(() => {});
   connectWS();
   buildEmojiPicker();
   startPeerPolling();
@@ -1506,11 +1539,48 @@ function updatePeerHeader() {
 }
 
 function contactNameFor(hash) {
+  if (hash === HUB_GROUP_PEER) return 'Group Chat';
   const key = peerKey(hash);
   const c = allContacts.find(x => peerKey(x.hash) === key);
   if (c && c.name) return c.name;
   const d = (window._discoveredPeers || []).find(x => peerKey(x.hash) === key);
   return d?.name || '';
+}
+
+function updateHubUi() {
+  const role = window._hubRole || 'off';
+  const section = document.getElementById('hub-group-section');
+  const hubEntry = document.getElementById('hub-group-entry');
+  if (section) section.style.display = role !== 'off' ? 'block' : 'none';
+  if (hubEntry && viewingPeer === HUB_GROUP_PEER) hubEntry.classList.add('active');
+  else if (hubEntry) hubEntry.classList.remove('active');
+  const clientFields = document.getElementById('hub-client-fields');
+  if (clientFields) clientFields.style.display = role === 'client' ? 'block' : 'none';
+}
+
+function onHubRoleChange() {
+  const role = document.getElementById('settings-hub-role')?.value || 'off';
+  const clientFields = document.getElementById('hub-client-fields');
+  if (clientFields) clientFields.style.display = role === 'client' ? 'block' : 'none';
+}
+
+function saveHubSettings() {
+  const hub_role = document.getElementById('settings-hub-role')?.value || 'off';
+  const hub_host = document.getElementById('settings-hub-host')?.value.trim() || '';
+  const hub_port = parseInt(document.getElementById('settings-hub-port')?.value, 10) || 4242;
+  return fetch('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({hub_role, hub_host, hub_port}),
+  }).then(r => r.json()).then(d => {
+    if (d.status === 'ok') {
+      window._hubRole = d.settings?.hub_role || hub_role;
+      updateHubUi();
+      toast('Hub settings saved — restart chatxz to apply RNS config');
+      loadRnsInterfaces();
+    }
+    return d;
+  });
 }
 
 function loadHistoryForPeer(peerHash) {
@@ -1629,7 +1699,7 @@ function handleWSMessage(msg) {
       const now = Date.now();
       if (connectInFlight && !msg.data.background) {
         connectInFlight = false;
-        openChat(h, false);
+        if (!viewingPeer || peersMatch(viewingPeer, h)) openChat(h, false);
         toast('Connected');
         lastLinkToastAt = now;
       } else if (msg.data.path_switch && viewingPeer && peersMatch(viewingPeer, h)) {
@@ -1656,7 +1726,7 @@ function handleWSMessage(msg) {
       connectInFlight = false;
       setLinkPeer(msg.hash, true);
       if (msg.linked_peers) syncLinkedPeers(msg.linked_peers);
-      openChat(msg.hash, false);
+      if (!viewingPeer || peersMatch(viewingPeer, msg.hash)) openChat(msg.hash, false);
       toast('Connected!');
     }
   } else if (msg.type === 'connect_fail') {
@@ -2248,6 +2318,8 @@ function renderRnsInterfaceRow(iface, serialPorts, baudRates) {
   const id = escapeHtml(iface.id || '');
   const label = escapeHtml(iface.name || iface.type || iface.preset || 'iface');
   const isSerial = iface.preset === 'serial' || iface.type === 'SerialInterface';
+  const isTcpClient = iface.preset === 'tcp_client' || iface.type === 'TCPClientInterface';
+  const isTcpServer = iface.preset === 'tcp_server' || iface.type === 'TCPServerInterface';
   let metaBits = iface.type || '';
   if (isSerial) {
     if (iface.serial_active) metaBits += ' · active';
@@ -2274,8 +2346,55 @@ function renderRnsInterfaceRow(iface, serialPorts, baudRates) {
       <button type="button" class="rns-serial-refresh" onclick="refreshSerialPorts()">↻ Refresh devices</button>
       <button type="button" class="rns-serial-refresh" onclick="requestUsbPermissionForIface('${id}')">Grant USB access</button>
     </div>`;
+  } else if (isTcpClient) {
+    body += `<div class="rns-iface-serial-fields">
+      <div><label>Target host</label>
+        <input data-tcp-host="${id}" value="${escapeHtml(iface.target_host || '127.0.0.1')}" spellcheck="false">
+      </div>
+      <div><label>Target port</label>
+        <input data-tcp-port="${id}" type="number" min="1" max="65535" value="${iface.target_port || 4242}">
+      </div>
+    </div>
+    <div class="rns-iface-serial-actions">
+      <button type="button" class="btn-block" onclick="saveTcpInterface('${id}')">Apply</button>
+    </div>`;
+  } else if (isTcpServer) {
+    body += `<div class="rns-iface-serial-fields">
+      <div><label>Listen IP</label>
+        <input data-tcp-listen-ip="${id}" value="${escapeHtml(iface.listen_ip || '0.0.0.0')}" spellcheck="false">
+      </div>
+      <div><label>Listen port</label>
+        <input data-tcp-listen-port="${id}" type="number" min="1" max="65535" value="${iface.listen_port || 4242}">
+      </div>
+    </div>
+    <div class="rns-iface-serial-actions">
+      <button type="button" class="btn-block" onclick="saveTcpInterface('${id}')">Apply</button>
+    </div>`;
   }
   return `<div class="rns-iface-card">${body}</div>`;
+}
+
+function saveTcpInterface(id) {
+  const hostEl = document.querySelector(`input[data-tcp-host="${id}"]`);
+  const portEl = document.querySelector(`input[data-tcp-port="${id}"]`);
+  const listenIpEl = document.querySelector(`input[data-tcp-listen-ip="${id}"]`);
+  const listenPortEl = document.querySelector(`input[data-tcp-listen-port="${id}"]`);
+  const body = {id};
+  if (hostEl) body.target_host = hostEl.value.trim();
+  if (portEl) body.target_port = parseInt(portEl.value, 10) || 4242;
+  if (listenIpEl) body.listen_ip = listenIpEl.value.trim();
+  if (listenPortEl) body.listen_port = parseInt(listenPortEl.value, 10) || 4242;
+  fetch('/api/rns-interfaces/update', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  }).then(r => r.json()).then(d => {
+    if (d.status === 'ok') {
+      toast('TCP settings saved — restart chatxz to apply');
+      loadRnsInterfaces();
+      refreshNetworkStatus();
+    } else toast('Save failed: ' + (d.error || ''));
+  }).catch(() => toast('Save failed'));
 }
 
 function loadRnsInterfaces() {
@@ -2560,6 +2679,15 @@ function toggleSettings() {
         document.getElementById('settings-received-dir').value = s.received_dir || '';
         const autoReset = document.getElementById('settings-network-auto-reset');
         if (autoReset) autoReset.checked = s.network_stats_auto_reset !== false;
+        window._hubRole = s.hub_role || 'off';
+        const hubRole = document.getElementById('settings-hub-role');
+        if (hubRole) hubRole.value = window._hubRole;
+        const hubHost = document.getElementById('settings-hub-host');
+        if (hubHost) hubHost.value = s.hub_host || '';
+        const hubPort = document.getElementById('settings-hub-port');
+        if (hubPort) hubPort.value = s.hub_port || 4242;
+        onHubRoleChange();
+        updateHubUi();
         const sh = document.getElementById('settings-hash');
         if (sh) sh.value = myHash;
       });
@@ -2615,16 +2743,21 @@ function saveSettings() {
   const name = document.getElementById('settings-name').value.trim();
   const retention = document.getElementById('settings-retention').value;
   const received_dir = document.getElementById('settings-received-dir').value.trim();
+  const hub_role = document.getElementById('settings-hub-role')?.value || 'off';
+  const hub_host = document.getElementById('settings-hub-host')?.value.trim() || '';
+  const hub_port = parseInt(document.getElementById('settings-hub-port')?.value, 10) || 4242;
   fetch('/api/settings', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name, history_retention: retention, received_dir})
+    body: JSON.stringify({name, history_retention: retention, received_dir, hub_role, hub_host, hub_port})
   }).then(async r => {
     const d = await r.json();
     if (r.ok && d.status === 'ok') {
       if (d.settings?.received_dir) {
         document.getElementById('settings-received-dir').value = d.settings.received_dir;
       }
+      window._hubRole = d.settings?.hub_role || hub_role;
+      updateHubUi();
       toast('Settings saved');
       toggleSettings();
     } else {
@@ -2651,8 +2784,18 @@ function setLinkPeer(hash, linked) {
   renderDiscovered(window._discoveredPeers || []);
 }
 
+function androidHandleBack() {
+  if (document.body.classList.contains('sidebar-open')) {
+    closeSidebar();
+    return true;
+  }
+  if (viewingPeer) return true;
+  return false;
+}
+
 function openChat(hash, tryConnect, meta) {
   viewingPeer = (hash || '').replace(/:/g, '');
+  if (hash === HUB_GROUP_PEER) viewingPeer = HUB_GROUP_PEER;
   clearUnread(viewingPeer);
   try { localStorage.setItem(LS_VIEWING_PEER, viewingPeer); } catch (_) {}
   document.getElementById('placeholder').style.display = 'none';
@@ -2660,6 +2803,7 @@ function openChat(hash, tryConnect, meta) {
   updatePeerHeader();
   closeSidebar();
   syncUiState();
+  updateHubUi();
   loadHistoryForPeer(viewingPeer);
   renderContacts(allContacts);
   renderDiscovered(window._discoveredPeers || []);
@@ -2822,6 +2966,7 @@ function peersMatch(a, b) {
 function messageBelongsToPeer(data) {
   if (!viewingPeer) return false;
   const active = peerKey(viewingPeer);
+  if (active === HUB_GROUP_PEER && (data.hub_group || peerKey(data.chat_peer || data.peer) === HUB_GROUP_PEER)) return true;
   const chatPeer = peerKey(data.chat_peer || data.peer);
   if (chatPeer && peersMatch(chatPeer, active)) return true;
   const sender = peerKey(data.sender);

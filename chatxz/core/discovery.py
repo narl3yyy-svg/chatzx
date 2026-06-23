@@ -5,6 +5,16 @@ import RNS
 
 from chatxz.core.lan_rns import register_udp_peer_ip
 
+def discovery_timeout_s():
+    try:
+        from chatxz.utils.platform import is_android
+        if is_android():
+            return 300
+    except Exception:
+        pass
+    return 60
+
+
 DISCOVERY_TIMEOUT = 60
 APP_NAME = "chatxz"
 PUBKEY_SIZE = RNS.Identity.KEYSIZE // 8
@@ -229,7 +239,8 @@ class PeerDiscovery:
         if not self.accept_peers:
             return []
         now = time.time()
-        stale = [h for h, p in self.peers.items() if now - p["last_seen"] > DISCOVERY_TIMEOUT]
+        ttl = discovery_timeout_s()
+        stale = [h for h, p in self.peers.items() if now - p["last_seen"] > ttl]
         for h in stale:
             del self.peers[h]
 

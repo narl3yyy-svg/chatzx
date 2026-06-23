@@ -299,7 +299,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void requestNeededPermissions() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            startPythonServer();
+            showStartModeDialog();
             return;
         }
 
@@ -321,10 +321,20 @@ public class MainActivity extends AppCompatActivity {
         }
 
         if (needed.isEmpty()) {
-            startPythonServer();
+            showStartModeDialog();
         } else {
             ActivityCompat.requestPermissions(this, needed.toArray(new String[0]), PERM_REQUEST);
         }
+    }
+
+    private void showStartModeDialog() {
+        new AlertDialog.Builder(this)
+            .setTitle("Start chatxz")
+            .setMessage("Choose run mode")
+            .setPositiveButton("Normal", (d, w) -> startPythonServer(false))
+            .setNegativeButton("Debug", (d, w) -> startPythonServer(true))
+            .setCancelable(false)
+            .show();
     }
 
     @Override
@@ -332,7 +342,7 @@ public class MainActivity extends AppCompatActivity {
                                            @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == PERM_REQUEST) {
-            startPythonServer();
+            showStartModeDialog();
             return;
         }
         if (requestCode == REQ_AUDIO) {
@@ -370,7 +380,7 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception ignored) {}
     }
 
-    private synchronized void startPythonServer() {
+    private synchronized void startPythonServer(boolean debug) {
         if (serverStarted) {
             if (!webViewLoaded) {
                 webView.loadUrl(serverUrl);
@@ -387,7 +397,7 @@ public class MainActivity extends AppCompatActivity {
                 }
                 Python python = Python.getInstance();
                 PyObject module = python.getModule("main");
-                PyObject result = module.callAttr("start_server");
+                PyObject result = module.callAttr("start_server", debug);
                 String host = result.asList().get(0).toString();
                 String port = result.asList().get(1).toString();
                 if (host != null && !host.equals("None")) {
@@ -693,7 +703,9 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public void onBackPressed() {
         webView.evaluateJavascript(
-            "(function(){if(typeof closeSidebar==='function'&&document.body.classList.contains('sidebar-open')){closeSidebar();return 'true';}return 'false';})()",
+            "(function(){if(typeof androidHandleBack==='function'&&androidHandleBack())return 'true';"
+            + "if(typeof closeSidebar==='function'&&document.body.classList.contains('sidebar-open')){closeSidebar();return 'true';}"
+            + "return 'false';})()",
             value -> {
                 if (!"true".equals(value)) {
                     if (webView.canGoBack()) {

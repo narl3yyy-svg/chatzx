@@ -52,7 +52,7 @@ def _wait_for_port(host, port, timeout=90):
     return False
 
 
-def start_server():
+def start_server(debug=False):
     """Called from MainActivity via Chaquopy. Returns (host, port) or (None, error)."""
     global _server_started
     if _server_started and _wait_for_port(WEB_HOST, PORT, timeout=3):
@@ -67,16 +67,26 @@ def start_server():
     except Exception as e:
         return "None", f"Platform init: {type(e).__name__}: {e}"
 
+    debug_mode = bool(debug) or os.environ.get("CHATXZ_DEBUG") == "1"
+    if debug_mode:
+        os.environ["CHATXZ_DEBUG"] = "1"
+
     def _run():
         try:
-            try:
-                from chatxz.utils.debug_log import start_debug_capture
-                start_debug_capture()
-            except Exception:
-                pass
+            if debug_mode:
+                try:
+                    from chatxz.utils.debug_log import start_debug_capture
+                    start_debug_capture()
+                except Exception:
+                    pass
             from chatxz.web.server import ChatWebServer
             server = ChatWebServer(
-                host=BIND_HOST, port=PORT, verbose=True, force=False, embedded=True,
+                host=BIND_HOST,
+                port=PORT,
+                verbose=debug_mode,
+                debug=debug_mode,
+                force=False,
+                embedded=True,
             )
             server.run_embedded()
         except Exception:
@@ -89,7 +99,6 @@ def start_server():
     if not _wait_for_port(WEB_HOST, PORT):
         if _server_error:
             err = _server_error[0]
-            # Keep the most useful tail of long tracebacks for the UI dialog.
             if len(err) > 4000:
                 err = err[-4000:]
             return "None", err

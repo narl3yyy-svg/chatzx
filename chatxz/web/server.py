@@ -10,7 +10,7 @@ if getattr(sys, "frozen", False):
     ensure_rns_interfaces()
 
 from chatxz.core.identity import IdentityManager
-from chatxz.core.messaging import MessagingBackend
+from chatxz.core.messaging import HUB_GROUP_PEER, MessagingBackend
 from chatxz.core.voice import VoiceRecorder, VoicePlayer
 from chatxz.core.discovery import PeerDiscovery
 from chatxz.core.lan_beacon import LanBeacon, BEACON_PORT
@@ -365,6 +365,8 @@ class ChatWebServer:
         self.active_peer = None
 
     def _peer_dest_hash(self, any_hash):
+        if any_hash in (HUB_GROUP_PEER, "__hub_group__"):
+            return HUB_GROUP_PEER
         if self.messaging:
             return self.messaging.dest_hash_for(any_hash)
         return self._clean_hash(any_hash).lower()
@@ -582,6 +584,13 @@ class ChatWebServer:
 
     def _history_for_peer(self, peer_hash, limit=500):
         peer = self._peer_dest_hash(peer_hash)
+        if peer == HUB_GROUP_PEER:
+            filtered = [
+                self._enrich_message(m)
+                for m in self.message_history
+                if m.get("hub_group") or self._peer_dest_hash(m.get("chat_peer") or m.get("peer")) == HUB_GROUP_PEER
+            ]
+            return filtered[-limit:]
         if not peer:
             return self.message_history[-limit:]
         filtered = []
@@ -608,22 +617,50 @@ class ChatWebServer:
                         filtered.append(self._enrich_message(repaired, outgoing=False))
         return filtered[-limit:]
 
+    def _apply_hub_settings(self, settings):
+        hub_role = settings.get("hub_role", "off")
+        hub_host = (settings.get("hub_host") or "").strip()
+        hub_port = int(settings.get("hub_port") or 4242)
+        interfaces = normalize_interface_list(settings.get("rns_interfaces"))
+        if hub_role == "server":
+            if not any(i.get("type") == "TCPServerInterface" for i in interfaces):
+                interfaces = add_interface(interfaces, "tcp_server")
+        elif hub_role == "client" and hub_host:
+            updated = False
+            for iface in interfaces:
+                if iface.get("type") == "TCPClientInterface":
+                    iface["target_host"] = hub_host
+                    iface["target_port"] = hub_port
+                    updated = True
+                    break
+            if not updated:
+                interfaces = add_interface(interfaces, "tcp_client")
+                interfaces[-1]["target_host"] = hub_host
+                interfaces[-1]["target_port"] = hub_port
+        settings["rns_interfaces"] = interfaces
+        return settings
+
     def load_settings(self):
+        defaults = {
+            "name": "",
+            "history_retention": "never",
+            "received_dir": os.path.join(self.config_dir, "received"),
+            "network_stats_auto_reset": True,
+            "network_stats_reset_at": 0,
+            "rns_interfaces": normalize_interface_list(None),
+            "hub_role": "off",
+            "hub_host": "",
+            "hub_port": 4242,
+            "hub_server_hash": "",
+        }
         try:
             with open(SETTINGS_FILE) as f:
                 s = json.load(f)
-                s.setdefault("name", "")
-                s.setdefault("history_retention", "never")
-                s.setdefault("received_dir", os.path.join(self.config_dir, "received"))
-                s.setdefault("network_stats_auto_reset", True)
-                s.setdefault("network_stats_reset_at", 0)
-                s.setdefault("rns_interfaces", normalize_interface_list(None))
-                return s
+                for key, val in defaults.items():
+                    s.setdefault(key, val)
+                return self._apply_hub_settings(s)
         except:
-            return {"name": "", "history_retention": "never",
-                    "received_dir": os.path.join(self.config_dir, "received"),
-                    "network_stats_auto_reset": True, "network_stats_reset_at": 0,
-                    "rns_interfaces": normalize_interface_list(None)}
+            return self._apply_hub_settings(dict(defaults))
 
     def save_settings(self, settings):
         with open(SETTINGS_FILE, "w") as f:
@@ -822,7 +859,11 @@ class ChatWebServer:
         return my_hash
 
     def _on_message(self, chat_msg, sender_hash):
-        if sender_hash and sender_hash != "system":
+        hub_group = bool(getattr(chat_msg, "hub_group", False))
+        if hub_group:
+            chat_peer = HUB_GROUP_PEER
+            sender = self._peer_dest_hash(sender_hash) if sender_hash and sender_hash != "system" else "system"
+        elif sender_hash and sender_hash != "system":
             chat_peer = self._peer_dest_hash(sender_hash)
             sender = chat_peer
         else:
@@ -838,6 +879,7 @@ class ChatWebServer:
             "file_name": chat_msg.file_name,
             "file_size": chat_msg.file_size,
             "msg_id": chat_msg.msg_id,
+            "hub_group": hub_group,
             "status": "received" if sender_hash and sender_hash != "system" else "",
         }, outgoing=False)
         if self._is_session_system_message(chat_msg.content or ""):
@@ -851,9 +893,16 @@ class ChatWebServer:
                 self._broadcast({"type": "message", "data": entry}),
                 self._loop
             )
-        if sender_hash and sender_hash != "system" and self._should_android_notify(chat_peer, entry):
+        settings = self.load_settings()
+        if hub_group and settings.get("hub_role") == "server" and self.messaging and sender_hash:
+            self.messaging.relay_hub_message(chat_msg, sender_hash)
+        notify_peer = HUB_GROUP_PEER if hub_group else chat_peer
+        if sender_hash and sender_hash != "system" and self._should_android_notify(notify_peer, entry):
             preview = self._notification_preview(entry)
-            name = self._contact_name_for(chat_peer) or chat_peer[:8]
+            if hub_group:
+                name = "Group chat"
+            else:
+                name = self._contact_name_for(chat_peer) or chat_peer[:8]
             show_message_notification(name, preview)
 
     def _queue_target_hash(self):
@@ -1888,6 +1937,20 @@ class ChatWebServer:
                 settings["received_dir"] = path
             if "network_stats_auto_reset" in data:
                 settings["network_stats_auto_reset"] = bool(data["network_stats_auto_reset"])
+            if "hub_role" in data:
+                role = (data.get("hub_role") or "off").strip().lower()
+                if role in ("off", "server", "client"):
+                    settings["hub_role"] = role
+            if "hub_host" in data:
+                settings["hub_host"] = (data.get("hub_host") or "").strip()
+            if "hub_port" in data and data.get("hub_port") is not None:
+                try:
+                    settings["hub_port"] = int(data["hub_port"])
+                except (TypeError, ValueError):
+                    pass
+            if "hub_server_hash" in data:
+                settings["hub_server_hash"] = (data.get("hub_server_hash") or "").strip()
+            settings = self._apply_hub_settings(settings)
             self.save_settings(settings)
             if self.messaging:
                 self.messaging.display_name = settings.get("name", "")
@@ -2498,6 +2561,64 @@ class ChatWebServer:
                 peer_hint = data.get("peer") or data.get("hash") or ""
                 if peer_hint:
                     self._ui_state["viewing_peer"] = self._peer_dest_hash(peer_hint)
+                hub_send = peer_hint in (HUB_GROUP_PEER, "__hub_group__")
+                settings = self.load_settings()
+                hub_role = settings.get("hub_role", "off")
+                if hub_send:
+                    if hub_role == "off":
+                        await ws.send_str(json.dumps({"type": "info", "data": "Hub mode is off — enable in Network settings"}))
+                        return
+                    def on_receipt(status, receipt):
+                        if self._loop:
+                            asyncio.run_coroutine_threadsafe(
+                                self._broadcast({"type": "receipt", "data": {"msg_id": receipt.get("msg_id"), "status": status}}),
+                                self._loop
+                            )
+                    result = self.messaging.send_hub_message(
+                        text,
+                        receipt_callback=on_receipt,
+                        hub_server_hash=settings.get("hub_server_hash"),
+                        hub_server_mode=(hub_role == "server"),
+                    )
+                    if result:
+                        my_hash = self._my_sender_hash()
+                        entry = self._enrich_message({
+                            "type": result.msg_type,
+                            "content": result.content,
+                            "sender": my_hash,
+                            "peer": HUB_GROUP_PEER,
+                            "chat_peer": HUB_GROUP_PEER,
+                            "timestamp": result.timestamp,
+                            "msg_id": result.msg_id,
+                            "hub_group": True,
+                            "status": "sent",
+                        }, outgoing=True)
+                        self.message_history.append(entry)
+                        self._save_history()
+                        if self.debug:
+                            print(f"[chat] send hub msg_id={entry['msg_id'][:8]}")
+                        await self._broadcast({"type": "message", "data": entry})
+                    else:
+                        msg_id = str(uuid.uuid4())[:12]
+                        self.messaging.enqueue("text", text, target_hash=HUB_GROUP_PEER, msg_id=msg_id)
+                        my_hash = self._my_sender_hash()
+                        entry = self._enrich_message({
+                            "type": "text",
+                            "content": text,
+                            "sender": my_hash,
+                            "peer": HUB_GROUP_PEER,
+                            "chat_peer": HUB_GROUP_PEER,
+                            "timestamp": time.time(),
+                            "msg_id": msg_id,
+                            "hub_group": True,
+                            "status": "queued",
+                        }, outgoing=True)
+                        self.message_history.append(entry)
+                        self._save_history()
+                        await self._broadcast({"type": "message", "data": entry})
+                        qsize = self.messaging.queue_size()
+                        await ws.send_str(json.dumps({"type": "info", "data": f"Message queued ({qsize} pending)"}))
+                    return
                 target_hash = self._peer_dest_hash(peer_hint) if peer_hint else (
                     self._queue_target_hash()
                 )
