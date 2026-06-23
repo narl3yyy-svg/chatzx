@@ -34,6 +34,7 @@ from chatxz.core.rns_interfaces import (
     ensure_runtime_serial,
     remove_serial_interfaces,
     list_serial_ports,
+    android_standalone_needs_udp,
     normalize_interface_list,
     render_rns_config,
     serial_port_accessible,
@@ -658,7 +659,13 @@ class ChatWebServer:
                 s = json.load(f)
                 for key, val in defaults.items():
                     s.setdefault(key, val)
-                return self._apply_hub_settings(s)
+                s = self._apply_hub_settings(s)
+                if is_android() and android_standalone_needs_udp(
+                    s.get("rns_interfaces"), s.get("hub_role", "off")
+                ):
+                    s["rns_interfaces"] = normalize_interface_list(None)
+                    self.save_settings(s)
+                return s
         except:
             return self._apply_hub_settings(dict(defaults))
 

@@ -30,6 +30,27 @@ _server_error = []
 _server_started = False
 
 
+def _startup_log_path():
+    base = os.environ.get("CHATXZ_FILES_DIR") or "."
+    return os.path.join(base, "chatxz-startup.log")
+
+
+def _startup_log(msg):
+    try:
+        with open(_startup_log_path(), "a", encoding="utf-8") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+    except Exception:
+        pass
+
+
+def set_debug_mode(flag="0"):
+    """Called from MainActivity before start_server (string avoids Chaquopy bool issues)."""
+    if str(flag).strip().lower() in ("1", "true", "yes", "on"):
+        os.environ["CHATXZ_DEBUG"] = "1"
+    else:
+        os.environ.pop("CHATXZ_DEBUG", None)
+
+
 def _wait_for_port(host, port, timeout=90):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -52,10 +73,12 @@ def _wait_for_port(host, port, timeout=90):
     return False
 
 
-def start_server(debug=False):
+def start_server():
     """Called from MainActivity via Chaquopy. Returns (host, port) or (None, error)."""
     global _server_started
+    _startup_log("start_server() called")
     if _server_started and _wait_for_port(WEB_HOST, PORT, timeout=3):
+        _startup_log("reusing existing server")
         return WEB_HOST, str(PORT)
     try:
         from chatxz.utils.platform import android_files_dir, is_android
@@ -65,21 +88,24 @@ def start_server(debug=False):
         if not is_android():
             os.environ["CHATXZ_ANDROID"] = "1"
     except Exception as e:
+        _startup_log(f"platform init failed: {e}")
         return "None", f"Platform init: {type(e).__name__}: {e}"
 
-    debug_mode = bool(debug) or os.environ.get("CHATXZ_DEBUG") == "1"
-    if debug_mode:
-        os.environ["CHATXZ_DEBUG"] = "1"
+    debug_mode = os.environ.get("CHATXZ_DEBUG") == "1"
+    _startup_log(f"debug_mode={debug_mode}")
 
     def _run():
         try:
+            _startup_log("server thread starting")
             if debug_mode:
                 try:
                     from chatxz.utils.debug_log import start_debug_capture
                     start_debug_capture()
-                except Exception:
-                    pass
+                    _startup_log("debug capture enabled")
+                except Exception as exc:
+                    _startup_log(f"debug capture failed: {exc}")
             from chatxz.web.server import ChatWebServer
+            _startup_log("ChatWebServer import ok")
             server = ChatWebServer(
                 host=BIND_HOST,
                 port=PORT,
@@ -88,20 +114,27 @@ def start_server(debug=False):
                 force=False,
                 embedded=True,
             )
+            _startup_log("run_embedded()")
             server.run_embedded()
         except Exception:
-            _server_error.append(traceback.format_exc())
+            err = traceback.format_exc()
+            _server_error.append(err)
+            _startup_log(f"server thread error:\n{err}")
 
     _server_started = True
     thread = threading.Thread(target=_run, name="chatxz-server", daemon=True)
     thread.start()
 
-    if not _wait_for_port(WEB_HOST, PORT):
+    _startup_log("waiting for port 8742")
+    if not _wait_for_port(WEB_HOST, PORT, timeout=45):
         if _server_error:
             err = _server_error[0]
+            _startup_log(f"failed: {err[:500]}")
             if len(err) > 4000:
                 err = err[-4000:]
             return "None", err
-        return "None", "Server timeout — port 8742 did not open in 90s"
+        _startup_log("failed: port timeout")
+        return "None", "Server timeout — port 8742 did not open in 45s"
 
+    _startup_log("server ready")
     return WEB_HOST, str(PORT)

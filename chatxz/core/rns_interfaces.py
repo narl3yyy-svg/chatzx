@@ -99,6 +99,50 @@ DEFAULT_INTERFACE_LIST = [
     },
 ]
 
+ANDROID_DEFAULT_INTERFACE_LIST = [
+    {
+        "id": "udp-lan",
+        "preset": "udp_lan",
+        "name": "UDP Interface",
+        "type": "UDPInterface",
+        "enabled": True,
+        "listen_ip": "0.0.0.0",
+        "listen_port": 4242,
+        "forward_ip": "255.255.255.255",
+        "forward_port": 4242,
+        "ifac_size": 16,
+    },
+]
+
+
+def default_interface_list():
+    try:
+        from chatxz.utils.platform import is_android
+        if is_android():
+            return copy.deepcopy(ANDROID_DEFAULT_INTERFACE_LIST)
+    except Exception:
+        pass
+    return copy.deepcopy(DEFAULT_INTERFACE_LIST)
+
+
+def android_standalone_needs_udp(interfaces, hub_role="off"):
+    """True when Android has only a loopback TCP client and no hub — cannot work standalone."""
+    if hub_role and hub_role != "off":
+        return False
+    items = normalize_interface_list(interfaces)
+    if not items:
+        return True
+    has_udp = any(i.get("type") == "UDPInterface" for i in items)
+    if has_udp:
+        return False
+    if len(items) != 1:
+        return False
+    only = items[0]
+    if only.get("type") != "TCPClientInterface":
+        return False
+    host = (only.get("target_host") or "").strip().lower()
+    return host in ("127.0.0.1", "localhost", "")
+
 
 def _new_id():
     return uuid.uuid4().hex[:8]
@@ -199,7 +243,7 @@ def serial_skip_reason(port):
 
 def normalize_interface_list(items):
     if not items:
-        return copy.deepcopy(DEFAULT_INTERFACE_LIST)
+        return default_interface_list()
     out = []
     for item in items:
         if not isinstance(item, dict):
@@ -212,7 +256,7 @@ def normalize_interface_list(items):
         merged.setdefault("name", INTERFACE_PRESETS.get(preset, {}).get("label", merged.get("type", "Interface")))
         merged["type"] = INTERFACE_PRESETS.get(preset, {}).get("type", merged.get("type", "UDPInterface"))
         out.append(_sync_serial_enabled(merged))
-    return out or copy.deepcopy(DEFAULT_INTERFACE_LIST)
+    return out or default_interface_list()
 
 
 def _pick_default_serial_port():

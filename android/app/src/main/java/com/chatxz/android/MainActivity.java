@@ -389,6 +389,7 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         serverStarted = true;
+        runOnUiThread(() -> showLoading(debug ? "Starting chatxz (debug)..." : "Starting chatxz..."));
 
         new Thread(() -> {
             try {
@@ -397,7 +398,8 @@ public class MainActivity extends AppCompatActivity {
                 }
                 Python python = Python.getInstance();
                 PyObject module = python.getModule("main");
-                PyObject result = module.callAttr("start_server", debug);
+                module.callAttr("set_debug_mode", debug ? "1" : "0");
+                PyObject result = module.callAttr("start_server");
                 String host = result.asList().get(0).toString();
                 String port = result.asList().get(1).toString();
                 if (host != null && !host.equals("None")) {
@@ -411,6 +413,7 @@ public class MainActivity extends AppCompatActivity {
                     });
                 } else {
                     final String error = port;
+                    serverStarted = false;
                     File crashFile = new File(getFilesDir(), "python_crash_log.txt");
                     try {
                         FileOutputStream fos = new FileOutputStream(crashFile);
@@ -420,6 +423,7 @@ public class MainActivity extends AppCompatActivity {
                     runOnUiThread(() -> showError("Server Error", error));
                 }
             } catch (Exception e) {
+                serverStarted = false;
                 String stack = android.util.Log.getStackTraceString(e);
                 final String fullError = (e.getMessage() != null ? e.getMessage() : "Python error") + "\n\n" + stack;
                 File crashFile = new File(getFilesDir(), "python_crash_log.txt");
