@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.65
+**Current version:** 0.3.66
 
 ## Download
 
@@ -120,6 +120,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.66** — Fix Windows↔Android LAN discovery: Android always sends broadcast beacons (not unicast-only), desktop also sends efficient unicast probes; replace full /24 scan (~253 packets) with ~25–45 targeted hosts; discovery stays off until Announce; Android Debug log capture starts before RNS init with in-app log viewer; clearer beacon counters in Network panel
 - **v0.3.65** — Android: fix Debug mode startup (no LOG_EXTREME timeout, deferred log capture), fix microphone permission flow and voice recording mime fallback, network panel shows mic status
 - **v0.3.64** — Fix desktop announce: no subnet probe (≈6 broadcasts not 259), ignore self-echo in beacon received count, unified announce with server debounce, peer list refresh after announce
 - **v0.3.63** — Fix network reset on Android: correct platform detection, keep discovery listening after reset, zero beacon counters, announce debounce, peer list refresh
