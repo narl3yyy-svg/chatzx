@@ -668,6 +668,18 @@ body::before {
 }
 #send-btn:hover { transform: scale(1.05); box-shadow: 0 6px 20px rgba(124,106,239,0.5); }
 
+.attach-submenu {
+  display: none; flex-wrap: wrap; gap: 4px; align-items: center;
+  padding: 6px 0 2px; border-top: 1px solid var(--border); margin-top: 6px;
+}
+.attach-submenu.open { display: flex; }
+.composer-tools .desktop-only { display: flex; }
+.composer-tools .android-only { display: none; }
+body.android-composer .composer-tools .desktop-only { display: none !important; }
+body.android-composer .composer-tools .android-only { display: flex; }
+body.android-composer .attach-submenu { display: none; }
+body.android-composer .attach-submenu.open { display: flex; }
+
 /* Buttons */
 .dlg-btn-row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px; }
 .dlg-btn {
@@ -1106,16 +1118,24 @@ body.sidebar-open #sidebar-backdrop { display: block; }
       <div class="composer">
         <div id="emoji-picker"></div>
         <div id="input-row">
-          <textarea id="msg-input" rows="1" placeholder="Message..." onkeydown="onInputKey(event)" oninput="autoResize(this)"></textarea>
+          <textarea id="msg-input" rows="1" placeholder="Message..." onkeydown="onInputKey(event)" oninput="onComposerInput(this)" onfocus="onComposerFocus()" onblur="onComposerBlur()"></textarea>
           <div class="composer-tools">
-            <button class="input-btn" id="emoji-btn" onclick="toggleEmoji()" title="Emoji">😊</button>
-            <button class="input-btn" id="voice-btn" onclick="toggleVoice()" title="Voice note">🎤</button>
-            <button class="input-btn" id="file-btn" onclick="pickFiles()" title="Attach file">📎</button>
+            <button class="input-btn android-only" id="camera-btn" onclick="pickCamera()" title="Camera">+</button>
+            <input type="file" id="camera-input" accept="image/*" capture="environment" style="display:none" onchange="uploadFiles(this.files);this.value=''">
+            <button class="input-btn desktop-only" id="emoji-btn" onclick="toggleEmoji()" title="Emoji">😊</button>
+            <button class="input-btn desktop-only" id="voice-btn" onclick="toggleVoice()" title="Voice note">🎤</button>
+            <button class="input-btn desktop-only" id="file-btn" onclick="pickFiles()" title="Attach file">📎</button>
+            <button class="input-btn desktop-only" id="folder-btn" onclick="pickSendFolder()" title="Attach folder">📁</button>
             <input type="file" id="file-input" style="display:none" multiple onchange="uploadFiles(this.files);this.value=''">
-            <button class="input-btn" id="folder-btn" onclick="pickSendFolder()" title="Attach folder">📁</button>
             <input type="file" id="folder-input" style="display:none" webkitdirectory multiple onchange="uploadFolder(this.files);this.value=''">
             <button class="input-btn" id="send-btn" onclick="sendMessage()" title="Send">➤</button>
           </div>
+        </div>
+        <div id="attach-submenu" class="attach-submenu">
+          <button class="input-btn" id="emoji-btn-mobile" onclick="toggleEmoji()" title="Emoji">😊</button>
+          <button class="input-btn" id="voice-btn-mobile" onclick="toggleVoice()" title="Voice note">🎤</button>
+          <button class="input-btn" id="file-btn-mobile" onclick="pickFiles()" title="Attach file">📎</button>
+          <button class="input-btn" id="folder-btn-mobile" onclick="pickSendFolder()" title="Attach folder">📁</button>
         </div>
       </div>
     </div>
@@ -1238,7 +1258,9 @@ function closeSidebarOnBackdrop(e) {
 
 function initMobileLayout() {
   setSidebarOpen(!isMobileLayout());
+  updateAndroidComposerMode();
   window.addEventListener('resize', () => {
+    updateAndroidComposerMode();
     if (!isMobileLayout()) {
       document.body.classList.remove('sidebar-open');
       setSidebarOpen(true);
@@ -1293,7 +1315,7 @@ function showMessageNotification(peerHash, preview) {
   const body = (preview || 'New message').substring(0, 120);
   const viewingThis = viewingPeer && peersMatch(viewingPeer, peerHash);
   if (viewingThis && !document.hidden) return;
-  if (window.chatxzAndroid?.showNotification) {
+  if (window.chatxzAndroid?.showNotification && appPlatform !== 'android') {
     window.chatxzAndroid.showNotification(name, body);
     return;
   }
@@ -1314,6 +1336,53 @@ function init() {
   buildEmojiPicker();
   startPeerPolling();
   setupGlobalHandlers();
+  setupVisibilitySync();
+}
+
+function setupVisibilitySync() {
+  const sync = () => syncUiState();
+  document.addEventListener('visibilitychange', sync);
+  window.addEventListener('focus', sync);
+  window.addEventListener('blur', sync);
+}
+
+function syncUiState() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({type: 'visibility', hidden: document.hidden}));
+  if (viewingPeer) {
+    ws.send(JSON.stringify({type: 'viewing', peer: viewingPeer}));
+  }
+}
+
+function updateAndroidComposerMode() {
+  const useAndroidComposer = appPlatform === 'android' || isMobileLayout();
+  document.body.classList.toggle('android-composer', useAndroidComposer);
+}
+
+let composerBlurTimer = null;
+function onComposerFocus() {
+  if (!document.body.classList.contains('android-composer')) return;
+  if (composerBlurTimer) { clearTimeout(composerBlurTimer); composerBlurTimer = null; }
+  document.getElementById('attach-submenu')?.classList.add('open');
+}
+
+function onComposerBlur() {
+  if (!document.body.classList.contains('android-composer')) return;
+  composerBlurTimer = setTimeout(() => {
+    const input = document.getElementById('msg-input');
+    if (!input?.value.trim()) {
+      document.getElementById('attach-submenu')?.classList.remove('open');
+    }
+  }, 180);
+}
+
+function onComposerInput(el) {
+  autoResize(el);
+  if (!document.body.classList.contains('android-composer')) return;
+  const submenu = document.getElementById('attach-submenu');
+  if (!submenu) return;
+  if (el.value.trim()) submenu.classList.add('open');
+  else if (document.activeElement !== el) submenu.classList.remove('open');
 }
 
 function setupGlobalHandlers() {
@@ -1322,7 +1391,8 @@ function setupGlobalHandlers() {
   });
   document.addEventListener('click', e => {
     const picker = document.getElementById('emoji-picker');
-    if (picker?.classList.contains('open') && !e.target.closest('#emoji-picker') && !e.target.closest('#emoji-btn')) {
+    const emojiTriggers = '#emoji-btn, #emoji-btn-mobile';
+    if (picker?.classList.contains('open') && !e.target.closest('#emoji-picker') && !e.target.closest(emojiTriggers)) {
       picker.classList.remove('open');
     }
   });
@@ -1376,6 +1446,19 @@ function pollLinkStatus() {
 }
 
 function toggleSidebar() {
+  if (settingsShown) {
+    settingsShown = false;
+    document.getElementById('settings-panel')?.classList.remove('open');
+    document.getElementById('settings-btn')?.classList.remove('active');
+  }
+  if (connectShown) {
+    connectShown = false;
+    document.getElementById('connect-panel')?.classList.remove('open');
+  }
+  if (actionShown) {
+    actionShown = false;
+    document.getElementById('action-panel')?.classList.remove('open');
+  }
   setSidebarOpen(!sidebarOpen);
 }
 
@@ -1413,7 +1496,7 @@ function updatePeerHeader() {
     : 'Viewing history · not connected';
   document.getElementById('disconnect-btn').style.display = linked ? 'block' : 'none';
   setLinkStatus(linked ? 'connected' : 'disconnected', linked ? 'Active' : 'Inactive');
-  document.getElementById('input-area').style.display = linked ? 'block' : 'none';
+  document.getElementById('input-area').style.display = 'block';
 }
 
 function contactNameFor(hash) {
@@ -1459,6 +1542,7 @@ function fetchIdentity() {
       }
       appPlatform = d.platform || (window.chatxzAndroid?.isAndroid?.() ? 'android' : 'desktop');
       updatePlatformHints();
+      updateAndroidComposerMode();
       if (d.platform === 'android') {
         const hint = document.getElementById('settings-received-hint');
         if (hint) hint.textContent = 'Tap Browse to open the Android folder picker, then Save to apply.';
@@ -1484,6 +1568,7 @@ function connectWS() {
     console.log('[ws] Connected');
     setWsStatus('connected', 'Connected');
     fetchIdentity();
+    syncUiState();
   };
   ws.onmessage = e => {
     console.log('[ws] Received:', e.data.substring(0, 200));
@@ -2513,6 +2598,7 @@ function openChat(hash, tryConnect, meta) {
   document.getElementById('messages').style.display = 'flex';
   updatePeerHeader();
   closeSidebar();
+  syncUiState();
   loadHistoryForPeer(viewingPeer);
   renderContacts(allContacts);
   renderDiscovered(window._discoveredPeers || []);
@@ -2538,13 +2624,12 @@ function sendMessage() {
     toast('Select a chat first');
     return;
   }
-  if (!linkPeer || !peersMatch(linkPeer, viewingPeer)) {
-    toast('Connect to this peer first');
-    return;
-  }
-  ws.send(JSON.stringify({type: 'send', text}));
+  const linked = linkPeer && peersMatch(linkPeer, viewingPeer);
+  ws.send(JSON.stringify({type: 'send', text, peer: viewingPeer}));
   input.value = '';
   autoResize(input);
+  document.getElementById('emoji-picker')?.classList.remove('open');
+  if (!linked) toast('Message queued — will send when connected');
 }
 
 function onInputKey(e) {
@@ -2610,6 +2695,7 @@ function fileUrl(path, data) {
 }
 
 function receiptIcon(status) {
+  if (status === 'queued') return '⏳';
   if (status === 'sending') return '🕐';
   if (status === 'sent') return '✓';
   if (status === 'received') return '✓✓';
@@ -2661,6 +2747,12 @@ function messageBelongsToPeer(data) {
 
 function pickFiles() {
   const input = document.getElementById('file-input');
+  if (!input) return;
+  input.click();
+}
+
+function pickCamera() {
+  const input = document.getElementById('camera-input');
   if (!input) return;
   input.click();
 }
@@ -2776,8 +2868,7 @@ function buildEmojiPicker() {
       const input = document.getElementById('msg-input');
       input.value += e;
       input.focus();
-      autoResize(input);
-      picker.classList.remove('open');
+      onComposerInput(input);
     };
     picker.appendChild(span);
   });
@@ -2788,14 +2879,24 @@ function toggleVoice() {
   if (recording) { stopVoice(); } else { startVoice(); }
 }
 
-function startVoice() {
+let pendingVoiceAfterPermission = false;
+
+window.onChatxzAudioPermissionGranted = function() {
+  if (pendingVoiceAfterPermission) {
+    pendingVoiceAfterPermission = false;
+    startVoice(true);
+  }
+};
+
+function startVoice(skipPermissionCheck) {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     toast('Voice recording not supported');
     return;
   }
-  if (window.chatxzAndroid && !window.chatxzAndroid.hasAudioPermission()) {
+  if (!skipPermissionCheck && window.chatxzAndroid && !window.chatxzAndroid.hasAudioPermission()) {
+    pendingVoiceAfterPermission = true;
     window.chatxzAndroid.requestAudioPermission();
-    toast('Allow microphone access, then tap 🎤 again');
+    toast('Allow microphone access to record');
     return;
   }
   navigator.mediaDevices.getUserMedia({audio: true})

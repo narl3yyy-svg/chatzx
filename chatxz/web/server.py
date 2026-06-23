@@ -40,6 +40,7 @@ from chatxz.core.rns_interfaces import (
 )
 from chatxz.utils.helpers import get_config_dir, get_data_dir, format_speed, media_type_for_filename
 from chatxz.utils.debug_log import debug_log_path
+from chatxz.utils.android_notify import show_message_notification
 from chatxz.utils.platform import (
     is_android,
     lan_ip as platform_lan_ip,
@@ -291,6 +292,7 @@ class ChatWebServer:
         self._shutting_down = False
         self._progress_last = {}
         self._progress_throttle_ms = 250
+        self._ui_state = {"viewing_peer": None, "hidden": False}
 
     @staticmethod
     def _clean_hash(h):
@@ -758,6 +760,7 @@ class ChatWebServer:
             on_progress=self._on_transfer_progress,
             on_link_established=self._on_link_established,
             on_link_closed=self._on_link_closed,
+            on_queue_sent=self._on_queue_sent,
             display_name=settings.get("name", ""),
             auto_announce=is_android(),
             receive_dir=received_dir,
@@ -837,6 +840,72 @@ class ChatWebServer:
         self._save_history()
         if self.debug:
             print(f"[chat] recv type={entry['type']} peer={entry.get('chat_peer', '')[:16]} msg_id={entry.get('msg_id', '')[:8]}")
+        if self.websockets and self._loop:
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast({"type": "message", "data": entry}),
+                self._loop
+            )
+        if sender_hash and sender_hash != "system" and self._should_android_notify(chat_peer, entry):
+            preview = self._notification_preview(entry)
+            name = self._contact_name_for(chat_peer) or chat_peer[:8]
+            show_message_notification(name, preview)
+
+    def _queue_target_hash(self):
+        return (
+            self._session_chat_peer()
+            or self._peer_dest_hash(self.active_peer)
+            or getattr(self.messaging, "_session_peer_hash", None)
+        )
+
+    def _contact_name_for(self, peer_hash):
+        for contact in list_contacts(self.config_dir):
+            if self._peers_equivalent(contact.get("hash"), peer_hash):
+                return contact.get("name") or ""
+        return ""
+
+    def _notification_preview(self, entry):
+        msg_type = entry.get("type", "text")
+        if msg_type in ("text", "emoji"):
+            return (entry.get("content") or "New message")[:120]
+        return entry.get("file_name") or msg_type or "New message"
+
+    def _should_android_notify(self, peer_hash, entry):
+        if not is_android() or entry.get("type") == "system":
+            return False
+        vp = self._ui_state.get("viewing_peer")
+        hidden = self._ui_state.get("hidden", True)
+        if vp and self._peers_equivalent(vp, peer_hash) and not hidden:
+            return False
+        return True
+
+    def _on_queue_sent(self, chat_msg, target_hash, queue_entry):
+        my_hash = self._my_sender_hash()
+        chat_peer = self._peer_dest_hash(target_hash) if target_hash else (
+            self._session_chat_peer() or self._peer_dest_hash(self.active_peer)
+        )
+        msg_id = chat_msg.msg_id or queue_entry.get("msg_id")
+        updated = False
+        for item in self.message_history:
+            if item.get("msg_id") == msg_id:
+                item["status"] = "sent"
+                item["timestamp"] = chat_msg.timestamp
+                updated = True
+                break
+        if not updated:
+            entry = self._enrich_message({
+                "type": chat_msg.msg_type,
+                "content": chat_msg.content,
+                "sender": my_hash,
+                "peer": chat_peer,
+                "chat_peer": chat_peer,
+                "timestamp": chat_msg.timestamp,
+                "msg_id": msg_id,
+                "status": "sent",
+            }, outgoing=True)
+            self.message_history.append(entry)
+        else:
+            entry = next(i for i in self.message_history if i.get("msg_id") == msg_id)
+        self._save_history()
         if self.websockets and self._loop:
             asyncio.run_coroutine_threadsafe(
                 self._broadcast({"type": "message", "data": entry}),
@@ -1758,12 +1827,15 @@ class ChatWebServer:
                     f.write(chunk)
                     size += len(chunk)
 
+            queue_target = self._queue_target_hash()
             if not self.messaging.active_link:
                 self.messaging.enqueue(msg_type, save_path,
+                                        target_hash=queue_target,
                                         file_name=fname, file_size=size, file_path=save_path)
                 return web.json_response({"status": "queued", "name": fname, "size": size})
             if self.messaging._has_active_transfer():
                 self.messaging.enqueue(msg_type, save_path,
+                                        target_hash=queue_target,
                                         file_name=fname, file_size=size, file_path=save_path)
                 return web.json_response({
                     "status": "queued",
@@ -1862,12 +1934,15 @@ class ChatWebServer:
             shutil.rmtree(tmpdir, ignore_errors=True)
             zsize = os.path.getsize(zip_path)
             print(f"[folder] Created {zip_name} ({zsize} bytes, {file_count} files)")
+            queue_target = self._queue_target_hash()
             if not self.messaging.active_link:
                 self.messaging.enqueue("file", zip_path,
+                                        target_hash=queue_target,
                                         file_name=zip_name, file_size=zsize, file_path=zip_path)
                 return web.json_response({"status": "queued", "name": zip_name, "size": zsize})
             if self.messaging._has_active_transfer():
                 self.messaging.enqueue("file", zip_path,
+                                        target_hash=queue_target,
                                         file_name=zip_name, file_size=zsize, file_path=zip_path)
                 return web.json_response({
                     "status": "queued",
@@ -1960,12 +2035,15 @@ class ChatWebServer:
             with open(voice_path, "wb") as f:
                 f.write(audio_bytes)
 
+            queue_target = self._queue_target_hash()
             if not self.messaging.active_link:
-                self.messaging.enqueue("voice", voice_path, file_name=os.path.basename(voice_path),
+                self.messaging.enqueue("voice", voice_path, target_hash=queue_target,
+                                        file_name=os.path.basename(voice_path),
                                         file_size=len(audio_bytes), file_path=voice_path)
                 return web.json_response({"status": "queued"})
             if self.messaging._has_active_transfer():
-                self.messaging.enqueue("voice", voice_path, file_name=os.path.basename(voice_path),
+                self.messaging.enqueue("voice", voice_path, target_hash=queue_target,
+                                        file_name=os.path.basename(voice_path),
                                         file_size=len(audio_bytes), file_path=voice_path)
                 return web.json_response({"status": "queued", "reason": "transfer in progress"})
 
@@ -2228,7 +2306,29 @@ class ChatWebServer:
                             print(f"[chat] send type={entry['type']} peer={chat_peer[:16]} msg_id={entry['msg_id'][:8]}")
                         await self._broadcast({"type": "message", "data": entry})
                 else:
-                    self.messaging.enqueue("text", text)
+                    peer_hint = data.get("peer") or data.get("hash") or ""
+                    target_hash = self._peer_dest_hash(peer_hint) if peer_hint else (
+                        self._session_chat_peer() or self._peer_dest_hash(self.active_peer)
+                    )
+                    if not target_hash and self.messaging._session_peer_hash:
+                        target_hash = self.messaging._session_peer_hash
+                    msg_id = str(uuid.uuid4())[:12]
+                    self.messaging.enqueue("text", text, target_hash=target_hash, msg_id=msg_id)
+                    my_hash = self._my_sender_hash()
+                    chat_peer = target_hash or self._session_chat_peer() or self._peer_dest_hash(self.active_peer)
+                    entry = self._enrich_message({
+                        "type": "text",
+                        "content": text,
+                        "sender": my_hash,
+                        "peer": chat_peer,
+                        "chat_peer": chat_peer,
+                        "timestamp": time.time(),
+                        "msg_id": msg_id,
+                        "status": "queued",
+                    }, outgoing=True)
+                    self.message_history.append(entry)
+                    self._save_history()
+                    await self._broadcast({"type": "message", "data": entry})
                     qsize = self.messaging.queue_size()
                     await ws.send_str(json.dumps({"type": "info", "data": f"Message queued ({qsize} pending)"}))
         elif msg_type == "connect":
@@ -2258,6 +2358,11 @@ class ChatWebServer:
                     await ws.send_str(json.dumps({"type": "connect_ok", "hash": clean}))
                 else:
                     await ws.send_str(json.dumps({"type": "connect_fail", "error": "connection failed"}))
+        elif msg_type == "viewing":
+            peer = data.get("peer") or ""
+            self._ui_state["viewing_peer"] = self._peer_dest_hash(peer) if peer else None
+        elif msg_type == "visibility":
+            self._ui_state["hidden"] = bool(data.get("hidden"))
         elif msg_type == "announce":
             ok, err = await self._wait_for_rns(timeout=30.0)
             if ok:

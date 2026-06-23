@@ -70,6 +70,7 @@ public class MainActivity extends AppCompatActivity {
     private UsbPermissionReceiver usbPermissionReceiver;
     private String serverUrl = "http://127.0.0.1:8742";
     private static boolean serverStarted = false;
+    private static boolean webViewLoaded = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -201,8 +202,15 @@ public class MainActivity extends AppCompatActivity {
             private int retryCount = 0;
 
             @Override
+            public void onPageFinished(WebView view, String url) {
+                if (url != null && url.startsWith(serverUrl)) {
+                    webViewLoaded = true;
+                }
+            }
+
+            @Override
             public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
-                if (retryCount < 15) {
+                if (retryCount < 15 && !webViewLoaded) {
                     retryCount++;
                     view.postDelayed(() -> view.loadUrl(serverUrl), 1500);
                 }
@@ -342,12 +350,32 @@ public class MainActivity extends AppCompatActivity {
             } else if (!granted) {
                 Toast.makeText(this, "Microphone permission denied", Toast.LENGTH_SHORT).show();
             }
+            if (granted) {
+                webView.post(() -> webView.evaluateJavascript(
+                        "window.onChatxzAudioPermissionGranted && window.onChatxzAudioPermissionGranted();",
+                        null));
+            }
         }
+    }
+
+    private void startForegroundService() {
+        try {
+            Intent intent = new Intent(this, ChatxzForegroundService.class);
+            intent.setAction(ChatxzForegroundService.ACTION_START);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent);
+            } else {
+                startService(intent);
+            }
+        } catch (Exception ignored) {}
     }
 
     private synchronized void startPythonServer() {
         if (serverStarted) {
-            webView.loadUrl(serverUrl);
+            if (!webViewLoaded) {
+                webView.loadUrl(serverUrl);
+            }
+            startForegroundService();
             return;
         }
         serverStarted = true;
@@ -365,7 +393,10 @@ public class MainActivity extends AppCompatActivity {
                 if (host != null && !host.equals("None")) {
                     serverUrl = "http://" + host + ":" + port;
                     runOnUiThread(() -> {
-                        webView.loadUrl(serverUrl);
+                        if (!webViewLoaded) {
+                            webView.loadUrl(serverUrl);
+                        }
+                        startForegroundService();
                         Toast.makeText(this, "chatxz ready", Toast.LENGTH_SHORT).show();
                     });
                 } else {
@@ -624,6 +655,28 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         notifyFolderPicked(path);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (webView != null) {
+            webView.onResume();
+            webView.evaluateJavascript(
+                    "if(typeof syncUiState==='function')syncUiState();",
+                    null);
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        if (webView != null) {
+            webView.evaluateJavascript(
+                    "if(typeof syncUiState==='function')syncUiState();",
+                    null);
+            webView.onPause();
+        }
+        super.onPause();
     }
 
     @Override

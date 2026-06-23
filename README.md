@@ -239,6 +239,17 @@ chatxz --daemon
 
 ## Changelog (recent)
 
+### v0.3.50
+- **Emoji picker** — stays open while selecting; closes on Send or click outside
+- **Offline queue UI** — queued messages appear in chat immediately (⏳) and drain reliably with target peer
+- **Android composer** — `+` opens camera; emoji/mic/files/folders in collapsible attach strip while typing
+- **Android background** — foreground service keeps RNS alive; WebView no longer reloads on every app reopen
+- **Notifications** — Python pushes Android notifications when not viewing that chat (incl. background/closed)
+- **Mic access** — auto-retry recording after permission grant on Android
+- **Sidebar** — hamburger closes Settings and shows contact list
+- **Transfer speed** — skip compression on APK/zip/media; pause LAN announces during active transfers
+- **Link stability** — stricter receipt-timeout failover (30s, 2+ pending) reduces false reconnects
+
 ### v0.3.49
 - **File transfer fix** — remove broken receive-busy flag that rejected all incoming resources (v0.3.48 regression)
 - **Transfer stability** — block link handoff and failover during active send/receive; migrate pending receives on path switch

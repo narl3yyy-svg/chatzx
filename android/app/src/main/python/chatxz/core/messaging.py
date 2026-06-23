@@ -39,7 +39,15 @@ QUICK_OUTBOUND_TIMEOUT_S = 6
 HTTP_WAKE_TIMEOUT_S = 1.5
 LINK_FAILOVER_GRACE_S = 12
 LINK_STALE_FAILOVER_IDLE_S = 90
-RECEIPT_FAILOVER_TIMEOUT_S = 10
+RECEIPT_FAILOVER_TIMEOUT_S = 30
+RECEIPT_FAILOVER_MIN_PENDING = 2
+_NO_COMPRESS_SUFFIXES = frozenset({
+    ".apk", ".zip", ".gz", ".bz2", ".xz", ".7z", ".rar",
+    ".mp4", ".mkv", ".webm", ".mov", ".m4v",
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic",
+    ".mp3", ".ogg", ".opus", ".wav", ".flac", ".aac",
+    ".pdf", ".deb", ".rpm", ".jar", ".aar",
+})
 
 MESSAGE_TYPE_TEXT = "text"
 MESSAGE_TYPE_FILE = "file"
@@ -97,7 +105,7 @@ class MessagingBackend:
     def __init__(self, identity, config_dir, on_message=None, on_file=None,
                  on_progress=None, on_link_established=None, on_link_closed=None,
                  display_name="", auto_announce=False,
-                 receive_dir=None, peer_resolver=None):
+                 receive_dir=None, peer_resolver=None, on_queue_sent=None):
         self.identity = identity
         self.config_dir = config_dir
         self.receive_dir = receive_dir or os.path.join(config_dir, "received")
@@ -106,6 +114,7 @@ class MessagingBackend:
         self.on_progress = on_progress
         self.on_link_established = on_link_established
         self.on_link_closed = on_link_closed
+        self.on_queue_sent = on_queue_sent
         self.display_name = display_name
         self.auto_announce = auto_announce
         self.announce_interval = 45 if is_android() else 30
@@ -414,10 +423,16 @@ class MessagingBackend:
         if att_fam == "serial" and not self._has_online_family("serial") and self._has_online_family("lan"):
             return True, "serial down, LAN available"
 
-        if self._pending_sends:
+        if len(self._pending_sends) >= RECEIPT_FAILOVER_MIN_PENDING:
             oldest = min(self._pending_sends.values())
             if (time.time() - oldest) > RECEIPT_FAILOVER_TIMEOUT_S:
-                return True, "send receipt timeout (link may be dead)"
+                try:
+                    if getattr(self.active_link, "status", None) == RNS.Link.STALE:
+                        return True, "send receipt timeout (link stale)"
+                except Exception:
+                    pass
+                if (time.time() - self._last_link_established_at) > LINK_FAILOVER_GRACE_S:
+                    return True, "send receipt timeout (link may be dead)"
 
         if not self._peer_has_path(peer) and not in_grace:
             alt = self._preferred_failover_family(peer, attached)
@@ -573,7 +588,7 @@ class MessagingBackend:
         except:
             pass
 
-    def enqueue(self, msg_type, content, target_hash=None, file_name=None, file_size=None, file_path=None):
+    def enqueue(self, msg_type, content, target_hash=None, file_name=None, file_size=None, file_path=None, msg_id=None):
         entry = {
             "type": msg_type,
             "content": content,
@@ -581,6 +596,7 @@ class MessagingBackend:
             "file_name": file_name,
             "file_size": file_size,
             "file_path": file_path,
+            "msg_id": msg_id or str(uuid.uuid4())[:12],
             "timestamp": time.time(),
         }
         self.message_queue.append(entry)
@@ -595,8 +611,17 @@ class MessagingBackend:
             if tgt is None or tgt == "" or tgt == target_hash:
                 try:
                     if entry["type"] in ("text", "emoji"):
-                        if self.send_message(entry["content"]):
+                        result = self.send_message(
+                            entry["content"],
+                            msg_id=entry.get("msg_id"),
+                        )
+                        if result:
                             sent += 1
+                            if self.on_queue_sent:
+                                try:
+                                    self.on_queue_sent(result, target_hash, entry)
+                                except Exception as e:
+                                    print(f"[queue] on_queue_sent error: {e}")
                     elif entry["type"] in ("file", "image", "video", "voice"):
                         fp = entry.get("file_path") or entry.get("content")
                         if fp and os.path.exists(fp):
@@ -843,6 +868,8 @@ class MessagingBackend:
                 if not self.running:
                     return
                 time.sleep(1)
+            if self._has_active_transfer():
+                continue
             self._announce()
 
     def stop(self):
@@ -1640,12 +1667,12 @@ class MessagingBackend:
             print("[connect] Peer not reachable")
             return False
 
-    def send_message(self, text, receipt_callback=None):
+    def send_message(self, text, receipt_callback=None, msg_id=None):
         link = self._outgoing_link()
         if not link:
             print("[messaging] send_message: no active link")
             return False
-        msg = ChatMessage(MESSAGE_TYPE_TEXT, text)
+        msg = ChatMessage(MESSAGE_TYPE_TEXT, text, msg_id=msg_id)
         data = msg.to_json().encode("utf-8")
         mtu = getattr(link, 'mtu', 500)
         try:
@@ -1749,9 +1776,11 @@ class MessagingBackend:
 
                 f = open(file_path, "rb")
                 self._file_handles[transfer_id] = f
+                ext = os.path.splitext(file_path)[1].lower()
                 compress = (
                     msg_type not in (MESSAGE_TYPE_IMAGE, MESSAGE_TYPE_VIDEO)
                     and fsize > 65536
+                    and ext not in _NO_COMPRESS_SUFFIXES
                 )
                 resource = RNS.Resource(f, link,
                              callback=self._resource_send_callback(fname, transfer_id, fsize),
