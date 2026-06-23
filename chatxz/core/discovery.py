@@ -26,6 +26,8 @@ def normalize_hash(h):
 
 def register_identity_from_beacon(data):
     """Cache peer identity from beacon pubkey so connect works without RNS announce."""
+    if not data:
+        return False
     pubkey_b64 = data.get("pubkey")
     if not pubkey_b64:
         return False
@@ -65,6 +67,15 @@ def register_identity_from_beacon(data):
         return True
     except Exception:
         return False
+
+
+def register_identity_from_peer(peer):
+    """Register RNS identity from a discovery peer record (beacon or RNS)."""
+    if not peer:
+        return False
+    if peer.get("pubkey"):
+        return register_identity_from_beacon(peer)
+    return False
 
 
 def message_dest_hash_for_identity(ident):

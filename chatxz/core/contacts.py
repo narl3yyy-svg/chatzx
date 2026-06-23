@@ -82,7 +82,8 @@ def contact_connect_meta(config_dir, peer_hash, peers_equivalent):
     clean = (peer_hash or "").strip().replace(":", "")
     for contact in list_contacts(config_dir):
         ch = (contact.get("hash") or "").replace(":", "")
-        if peers_equivalent(ch, clean):
+        ih = (contact.get("identity_hash") or "").replace(":", "")
+        if peers_equivalent(ch, clean) or (ih and peers_equivalent(ih, clean)):
             ip = (contact.get("ip") or "").strip() or None
             port = contact.get("port") or 8742
             if ip:
