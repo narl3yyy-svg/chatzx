@@ -35,6 +35,7 @@ from chatxz.core.rns_interfaces import (
     remove_serial_interfaces,
     list_serial_ports,
     android_standalone_needs_udp,
+    standalone_needs_udp,
     normalize_interface_list,
     render_rns_config,
     serial_port_accessible,
@@ -52,7 +53,7 @@ from chatxz.utils.helpers import (
     safe_path_under,
     safe_rel_path_under,
 )
-from chatxz.utils.debug_log import debug_log_path
+from chatxz.utils.debug_log import debug_log_path, debug_log_tail
 from chatxz.utils.android_notify import show_message_notification
 from chatxz.utils.platform import (
     is_android,
@@ -292,6 +293,7 @@ class ChatWebServer:
 
         self.websockets = set()
         self.message_history = self._load_history()
+        self._prune_ephemeral_history_disk()
 
         self.active_peer = None
         self.destination_hash = None
@@ -661,8 +663,14 @@ class ChatWebServer:
                 for key, val in defaults.items():
                     s.setdefault(key, val)
                 s = self._apply_hub_settings(s)
-                if is_android() and android_standalone_needs_udp(
+                needs_udp = standalone_needs_udp(
                     s.get("rns_interfaces"), s.get("hub_role", "off")
+                )
+                if needs_udp and (
+                    is_android()
+                    or sys.platform == "win32"
+                    or os.environ.get("CHATXZ_PORTABLE")
+                    or getattr(sys, "frozen", False)
                 ):
                     s["rns_interfaces"] = normalize_interface_list(None)
                     self.save_settings(s)
@@ -677,19 +685,46 @@ class ChatWebServer:
     def _history_file(self):
         return os.path.join(self.config_dir, "history.json")
 
+    def _history_peer(self, entry):
+        if not entry:
+            return ""
+        return self._peer_dest_hash(entry.get("chat_peer") or entry.get("peer"))
+
+    def _should_persist_history(self, peer_hash):
+        peer = self._peer_dest_hash(peer_hash)
+        if not peer or peer == "unknown":
+            return False
+        if peer == HUB_GROUP_PEER:
+            return True
+        return self._is_saved_contact(peer)
+
+    def _persisted_history_entries(self):
+        return [
+            m for m in self.message_history
+            if self._should_persist_history(self._history_peer(m))
+        ]
+
     def _load_history(self):
         try:
             with open(self._history_file()) as f:
-                return json.load(f)
+                loaded = json.load(f)
+            return [
+                m for m in loaded
+                if self._should_persist_history(self._history_peer(m))
+            ]
         except:
             return []
 
     def _save_history(self):
         try:
             with open(self._history_file(), "w") as f:
-                json.dump(self.message_history[-1000:], f)
+                json.dump(self._persisted_history_entries()[-1000:], f)
         except:
             pass
+
+    def _prune_ephemeral_history_disk(self):
+        """Drop non-contact chat history from disk (e.g. after app restart on Android)."""
+        self._save_history()
 
     def _apply_retention(self):
         retention = self.load_settings().get("history_retention", "never")
@@ -975,11 +1010,17 @@ class ChatWebServer:
             self._session_chat_peer() or self._peer_dest_hash(self.active_peer)
         )
         msg_id = chat_msg.msg_id or queue_entry.get("msg_id")
+        file_name = chat_msg.file_name or queue_entry.get("file_name")
+        file_size = chat_msg.file_size or queue_entry.get("file_size")
         updated = False
         for item in self.message_history:
             if item.get("msg_id") == msg_id:
                 item["status"] = "sent"
                 item["timestamp"] = chat_msg.timestamp
+                if file_name:
+                    item["file_name"] = file_name
+                if file_size:
+                    item["file_size"] = file_size
                 updated = True
                 break
         if not updated:
@@ -991,6 +1032,8 @@ class ChatWebServer:
                 "chat_peer": chat_peer,
                 "timestamp": chat_msg.timestamp,
                 "msg_id": msg_id,
+                "file_name": file_name,
+                "file_size": file_size,
                 "status": "sent",
             }, outgoing=True)
             self.message_history.append(entry)
@@ -1014,6 +1057,8 @@ class ChatWebServer:
     def _on_peer_discovered(self, peer):
         if not self.messaging:
             return
+        from chatxz.core.discovery import register_identity_from_peer
+        register_identity_from_peer(peer)
         dest = self._peer_dest_hash(peer.get("hash"))
         if peer.get("identity_hash"):
             self.messaging.register_peer_mapping(dest, peer.get("identity_hash"))
@@ -1285,7 +1330,21 @@ class ChatWebServer:
                 return web.json_response({"error": "hash required"}, status=400)
             peer_ip = (data.get("ip") or "").strip() or None
             peer_port = data.get("port") or 8742
+            self._enable_discovery(clear=False)
             resolved_hash = self._resolve_connect_target(peer_hash, peer_ip)
+            peer_info = self._discovery_peer_for_connect(peer_ip, resolved_hash)
+            if not peer_info:
+                peer_info = self._peer_in_discovery(resolved_hash, peer_ip)
+            if peer_info:
+                from chatxz.core.discovery import register_identity_from_peer
+                if register_identity_from_peer(peer_info):
+                    print(
+                        f"[connect] Pre-registered identity from discovery "
+                        f"({peer_info.get('ip', '?')})"
+                    )
+                if not peer_ip and peer_info.get("ip"):
+                    peer_ip = peer_info.get("ip")
+                    peer_port = peer_info.get("port") or peer_port
             peer_ip, peer_port = self._resolve_peer_connect_ip(resolved_hash, peer_ip, peer_port)
             caller_ip = detect_lan_ip() or (self.host if self.host not in ("127.0.0.1", "0.0.0.0") else "")
             if is_android() and not caller_ip:
@@ -1620,6 +1679,27 @@ class ChatWebServer:
                 serial_detach_sent = False
                 await self._run_blocking(ensure_runtime_serial, interfaces)
 
+    def _peer_in_discovery(self, peer_hash, peer_ip=None):
+        from chatxz.core.discovery import normalize_hash
+        if not self.discovery:
+            return None
+        clean = normalize_hash(peer_hash)
+        by_hash = None
+        by_ip = None
+        for p in self.discovery.get_peers():
+            ph = normalize_hash(p.get("hash"))
+            ih = normalize_hash(p.get("identity_hash"))
+            if peer_ip and p.get("ip") == peer_ip:
+                by_ip = p
+            if clean and (
+                ph == clean
+                or ih == clean
+                or self._peers_equivalent(ph, clean)
+                or (ih and self._peers_equivalent(ih, clean))
+            ):
+                by_hash = p
+        return by_hash or by_ip
+
     def _peer_connect_meta(self, peer_hash):
         peer_ip = None
         peer_port = 8742
@@ -1629,12 +1709,11 @@ class ChatWebServer:
         if stored_ip:
             peer_ip = stored_ip
             peer_port = stored_port or peer_port
-        for p in (self.discovery.get_peers() if self.discovery else []):
-            if not self._peers_equivalent(p.get("hash"), peer_hash):
-                continue
-            if p.get("ip"):
-                peer_ip = p.get("ip")
-            peer_port = p.get("port") or peer_port
+        peer = self._peer_in_discovery(peer_hash)
+        if peer:
+            if peer.get("ip"):
+                peer_ip = peer.get("ip")
+            peer_port = peer.get("port") or peer_port
         return peer_ip, peer_port
 
     def _resolve_peer_connect_ip(self, peer_hash, peer_ip=None, peer_port=8742):
@@ -1808,7 +1887,7 @@ class ChatWebServer:
                     await asyncio.to_thread(self.messaging.announce)
                     if self.lan_beacon:
                         beacon_sent = await asyncio.to_thread(
-                            self.lan_beacon.send, 3, is_android()
+                            self.lan_beacon.send, 3, True
                         )
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -2060,11 +2139,12 @@ class ChatWebServer:
         peers = self.discovery.get_peers() if self.discovery else []
         settings = self.load_settings()
         received_dir = settings.get("received_dir", os.path.join(self.config_dir, "received"))
-        return web.json_response({
+        payload = {
             "identity_hash": self.identity_mgr.get_hex_hash() if self.identity_mgr else None,
             "ws_clients": len(self.websockets),
             "discovered_peers": peers,
             "discovery_running": self.discovery.running if self.discovery else False,
+            "discovery_active": bool(self.discovery and self.discovery.accept_peers),
             "lan_beacon_port": BEACON_PORT,
             "lan_beacon_running": bool(self.lan_beacon and self.lan_beacon.running),
             "lan_beacon_targets": self.lan_beacon.last_send_targets if self.lan_beacon else [],
@@ -2076,7 +2156,13 @@ class ChatWebServer:
             "rns_interfaces": len(RNS.Transport.interfaces) if hasattr(RNS.Transport, 'interfaces') else "unknown",
             "received_files_dir": received_dir,
             "settings": settings,
-        })
+        }
+        if is_android():
+            payload["debug_log_path"] = debug_log_path()
+            tail = debug_log_tail()
+            if tail:
+                payload["debug_log_tail"] = tail
+        return web.json_response(payload)
 
     async def handle_file_upload(self, request):
         if not self.messaging:
@@ -2118,6 +2204,23 @@ class ChatWebServer:
                     file_name=fname, file_size=size, file_path=save_path,
                     msg_id=transfer_id,
                 )
+                my_hash = self._my_sender_hash()
+                chat_peer = self._peer_dest_hash(queue_target) or self._session_chat_peer()
+                entry = self._enrich_message({
+                    "type": msg_type,
+                    "content": save_path,
+                    "sender": my_hash,
+                    "peer": chat_peer,
+                    "chat_peer": chat_peer,
+                    "timestamp": time.time(),
+                    "file_name": fname,
+                    "file_size": size,
+                    "msg_id": transfer_id,
+                    "status": "queued",
+                }, outgoing=True)
+                self.message_history.append(entry)
+                self._save_history()
+                await self._broadcast({"type": "message", "data": entry})
                 return web.json_response({
                     "status": "queued",
                     "name": fname,
@@ -2235,13 +2338,35 @@ class ChatWebServer:
                 queue_target and self.messaging._peer_link_active(queue_target)
             )
             if not linked_to_target or self.messaging._has_active_transfer():
-                self.messaging.enqueue("file", zip_path,
-                                        target_hash=queue_target,
-                                        file_name=zip_name, file_size=zsize, file_path=zip_path)
+                transfer_id = str(uuid.uuid4())[:12]
+                self.messaging.enqueue(
+                    "file", zip_path,
+                    target_hash=queue_target,
+                    file_name=zip_name, file_size=zsize, file_path=zip_path,
+                    msg_id=transfer_id,
+                )
+                my_hash = self._my_sender_hash()
+                chat_peer = self._peer_dest_hash(queue_target) or self._session_chat_peer()
+                entry = self._enrich_message({
+                    "type": "file",
+                    "content": zip_path,
+                    "sender": my_hash,
+                    "peer": chat_peer,
+                    "chat_peer": chat_peer,
+                    "timestamp": time.time(),
+                    "file_name": zip_name,
+                    "file_size": zsize,
+                    "msg_id": transfer_id,
+                    "status": "queued",
+                }, outgoing=True)
+                self.message_history.append(entry)
+                self._save_history()
+                await self._broadcast({"type": "message", "data": entry})
                 return web.json_response({
                     "status": "queued",
                     "name": zip_name,
                     "size": zsize,
+                    "msg_id": transfer_id,
                     "reason": None if not linked_to_target else "transfer in progress",
                 })
             my_hash = self._my_sender_hash()
@@ -2340,11 +2465,34 @@ class ChatWebServer:
                 queue_target and self.messaging._peer_link_active(queue_target)
             )
             if not linked_to_target or self.messaging._has_active_transfer():
-                self.messaging.enqueue("voice", voice_path, target_hash=queue_target,
-                                        file_name=os.path.basename(voice_path),
-                                        file_size=len(audio_bytes), file_path=voice_path)
+                voice_name = os.path.basename(voice_path)
+                transfer_id = str(uuid.uuid4())[:12]
+                self.messaging.enqueue(
+                    "voice", voice_path, target_hash=queue_target,
+                    file_name=voice_name,
+                    file_size=len(audio_bytes), file_path=voice_path,
+                    msg_id=transfer_id,
+                )
+                my_hash = self._my_sender_hash()
+                chat_peer = self._peer_dest_hash(queue_target) or self._session_chat_peer()
+                entry = self._enrich_message({
+                    "type": "voice",
+                    "content": voice_path,
+                    "sender": my_hash,
+                    "peer": chat_peer,
+                    "chat_peer": chat_peer,
+                    "timestamp": time.time(),
+                    "file_name": voice_name,
+                    "file_size": len(audio_bytes),
+                    "msg_id": transfer_id,
+                    "status": "queued",
+                }, outgoing=True)
+                self.message_history.append(entry)
+                self._save_history()
+                await self._broadcast({"type": "message", "data": entry})
                 return web.json_response({
                     "status": "queued",
+                    "msg_id": transfer_id,
                     "reason": None if not linked_to_target else "transfer in progress",
                 })
 
@@ -2896,6 +3044,7 @@ class ChatWebServer:
         async def _embedded_startup(app):
             self._loop = asyncio.get_running_loop()
             self._reset_connection_state()
+            self._maybe_auto_reset_network_stats()
             asyncio.create_task(self._discovery_broadcaster())
             asyncio.create_task(self._embedded_init_rns(app))
             asyncio.create_task(self._queue_retry_loop())

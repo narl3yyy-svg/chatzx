@@ -1634,7 +1634,11 @@ function fetchIdentity() {
       }
       updatePeerHeader();
       const saved = localStorage.getItem(LS_VIEWING_PEER);
-      if (saved && !viewingPeer) openChat(saved, false);
+      const savedIsContact = saved && allContacts.some(c => peersMatch(c.hash, saved));
+      if (savedIsContact && !viewingPeer) openChat(saved, false);
+      else if (saved && !savedIsContact) {
+        try { localStorage.removeItem(LS_VIEWING_PEER); } catch (_) {}
+      }
     });
   pollQueue();
 }
@@ -2807,12 +2811,43 @@ function setLinkPeer(hash, linked) {
   renderDiscovered(window._discoveredPeers || []);
 }
 
+function closeChatView() {
+  if (!viewingPeer) return;
+  viewingPeer = null;
+  try { localStorage.removeItem(LS_VIEWING_PEER); } catch (_) {}
+  document.getElementById('messages').innerHTML = '';
+  document.getElementById('placeholder').style.display = 'flex';
+  document.getElementById('messages').style.display = 'none';
+  document.getElementById('peer-name').textContent = 'No chat selected';
+  document.getElementById('peer-status').textContent = 'Pick a contact or discovered peer';
+  document.getElementById('input-area').style.display = 'none';
+  document.getElementById('disconnect-btn').style.display = 'none';
+  syncUiState();
+  renderContacts(allContacts);
+  renderDiscovered(window._discoveredPeers || []);
+}
+
 function androidHandleBack() {
   if (document.body.classList.contains('sidebar-open')) {
     closeSidebar();
     return true;
   }
-  if (viewingPeer) return true;
+  if (actionShown) {
+    toggleActionPanel();
+    return true;
+  }
+  if (settingsShown) {
+    toggleSettings();
+    return true;
+  }
+  if (connectShown) {
+    toggleConnectPanel();
+    return true;
+  }
+  if (viewingPeer) {
+    closeChatView();
+    return true;
+  }
   return false;
 }
 
@@ -2820,7 +2855,12 @@ function openChat(hash, tryConnect, meta) {
   viewingPeer = (hash || '').replace(/:/g, '');
   if (hash === HUB_GROUP_PEER) viewingPeer = HUB_GROUP_PEER;
   clearUnread(viewingPeer);
-  try { localStorage.setItem(LS_VIEWING_PEER, viewingPeer); } catch (_) {}
+  const persistView = viewingPeer === HUB_GROUP_PEER
+    || allContacts.some(c => peersMatch(c.hash, viewingPeer));
+  try {
+    if (persistView) localStorage.setItem(LS_VIEWING_PEER, viewingPeer);
+    else localStorage.removeItem(LS_VIEWING_PEER);
+  } catch (_) {}
   document.getElementById('placeholder').style.display = 'none';
   document.getElementById('messages').style.display = 'flex';
   updatePeerHeader();

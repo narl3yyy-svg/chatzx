@@ -293,6 +293,7 @@ class ChatWebServer:
 
         self.websockets = set()
         self.message_history = self._load_history()
+        self._prune_ephemeral_history_disk()
 
         self.active_peer = None
         self.destination_hash = None
@@ -684,19 +685,46 @@ class ChatWebServer:
     def _history_file(self):
         return os.path.join(self.config_dir, "history.json")
 
+    def _history_peer(self, entry):
+        if not entry:
+            return ""
+        return self._peer_dest_hash(entry.get("chat_peer") or entry.get("peer"))
+
+    def _should_persist_history(self, peer_hash):
+        peer = self._peer_dest_hash(peer_hash)
+        if not peer or peer == "unknown":
+            return False
+        if peer == HUB_GROUP_PEER:
+            return True
+        return self._is_saved_contact(peer)
+
+    def _persisted_history_entries(self):
+        return [
+            m for m in self.message_history
+            if self._should_persist_history(self._history_peer(m))
+        ]
+
     def _load_history(self):
         try:
             with open(self._history_file()) as f:
-                return json.load(f)
+                loaded = json.load(f)
+            return [
+                m for m in loaded
+                if self._should_persist_history(self._history_peer(m))
+            ]
         except:
             return []
 
     def _save_history(self):
         try:
             with open(self._history_file(), "w") as f:
-                json.dump(self.message_history[-1000:], f)
+                json.dump(self._persisted_history_entries()[-1000:], f)
         except:
             pass
+
+    def _prune_ephemeral_history_disk(self):
+        """Drop non-contact chat history from disk (e.g. after app restart on Android)."""
+        self._save_history()
 
     def _apply_retention(self):
         retention = self.load_settings().get("history_retention", "never")
@@ -982,11 +1010,17 @@ class ChatWebServer:
             self._session_chat_peer() or self._peer_dest_hash(self.active_peer)
         )
         msg_id = chat_msg.msg_id or queue_entry.get("msg_id")
+        file_name = chat_msg.file_name or queue_entry.get("file_name")
+        file_size = chat_msg.file_size or queue_entry.get("file_size")
         updated = False
         for item in self.message_history:
             if item.get("msg_id") == msg_id:
                 item["status"] = "sent"
                 item["timestamp"] = chat_msg.timestamp
+                if file_name:
+                    item["file_name"] = file_name
+                if file_size:
+                    item["file_size"] = file_size
                 updated = True
                 break
         if not updated:
@@ -998,6 +1032,8 @@ class ChatWebServer:
                 "chat_peer": chat_peer,
                 "timestamp": chat_msg.timestamp,
                 "msg_id": msg_id,
+                "file_name": file_name,
+                "file_size": file_size,
                 "status": "sent",
             }, outgoing=True)
             self.message_history.append(entry)
@@ -2168,6 +2204,23 @@ class ChatWebServer:
                     file_name=fname, file_size=size, file_path=save_path,
                     msg_id=transfer_id,
                 )
+                my_hash = self._my_sender_hash()
+                chat_peer = self._peer_dest_hash(queue_target) or self._session_chat_peer()
+                entry = self._enrich_message({
+                    "type": msg_type,
+                    "content": save_path,
+                    "sender": my_hash,
+                    "peer": chat_peer,
+                    "chat_peer": chat_peer,
+                    "timestamp": time.time(),
+                    "file_name": fname,
+                    "file_size": size,
+                    "msg_id": transfer_id,
+                    "status": "queued",
+                }, outgoing=True)
+                self.message_history.append(entry)
+                self._save_history()
+                await self._broadcast({"type": "message", "data": entry})
                 return web.json_response({
                     "status": "queued",
                     "name": fname,
@@ -2285,13 +2338,35 @@ class ChatWebServer:
                 queue_target and self.messaging._peer_link_active(queue_target)
             )
             if not linked_to_target or self.messaging._has_active_transfer():
-                self.messaging.enqueue("file", zip_path,
-                                        target_hash=queue_target,
-                                        file_name=zip_name, file_size=zsize, file_path=zip_path)
+                transfer_id = str(uuid.uuid4())[:12]
+                self.messaging.enqueue(
+                    "file", zip_path,
+                    target_hash=queue_target,
+                    file_name=zip_name, file_size=zsize, file_path=zip_path,
+                    msg_id=transfer_id,
+                )
+                my_hash = self._my_sender_hash()
+                chat_peer = self._peer_dest_hash(queue_target) or self._session_chat_peer()
+                entry = self._enrich_message({
+                    "type": "file",
+                    "content": zip_path,
+                    "sender": my_hash,
+                    "peer": chat_peer,
+                    "chat_peer": chat_peer,
+                    "timestamp": time.time(),
+                    "file_name": zip_name,
+                    "file_size": zsize,
+                    "msg_id": transfer_id,
+                    "status": "queued",
+                }, outgoing=True)
+                self.message_history.append(entry)
+                self._save_history()
+                await self._broadcast({"type": "message", "data": entry})
                 return web.json_response({
                     "status": "queued",
                     "name": zip_name,
                     "size": zsize,
+                    "msg_id": transfer_id,
                     "reason": None if not linked_to_target else "transfer in progress",
                 })
             my_hash = self._my_sender_hash()
@@ -2390,11 +2465,34 @@ class ChatWebServer:
                 queue_target and self.messaging._peer_link_active(queue_target)
             )
             if not linked_to_target or self.messaging._has_active_transfer():
-                self.messaging.enqueue("voice", voice_path, target_hash=queue_target,
-                                        file_name=os.path.basename(voice_path),
-                                        file_size=len(audio_bytes), file_path=voice_path)
+                voice_name = os.path.basename(voice_path)
+                transfer_id = str(uuid.uuid4())[:12]
+                self.messaging.enqueue(
+                    "voice", voice_path, target_hash=queue_target,
+                    file_name=voice_name,
+                    file_size=len(audio_bytes), file_path=voice_path,
+                    msg_id=transfer_id,
+                )
+                my_hash = self._my_sender_hash()
+                chat_peer = self._peer_dest_hash(queue_target) or self._session_chat_peer()
+                entry = self._enrich_message({
+                    "type": "voice",
+                    "content": voice_path,
+                    "sender": my_hash,
+                    "peer": chat_peer,
+                    "chat_peer": chat_peer,
+                    "timestamp": time.time(),
+                    "file_name": voice_name,
+                    "file_size": len(audio_bytes),
+                    "msg_id": transfer_id,
+                    "status": "queued",
+                }, outgoing=True)
+                self.message_history.append(entry)
+                self._save_history()
+                await self._broadcast({"type": "message", "data": entry})
                 return web.json_response({
                     "status": "queued",
+                    "msg_id": transfer_id,
                     "reason": None if not linked_to_target else "transfer in progress",
                 })
 

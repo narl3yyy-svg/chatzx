@@ -72,6 +72,7 @@ public class MainActivity extends AppCompatActivity {
     private String serverUrl = "http://127.0.0.1:8742";
     private static boolean serverStarted = false;
     private static boolean webViewLoaded = false;
+    private static boolean debugMode = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -354,10 +355,18 @@ public class MainActivity extends AppCompatActivity {
         }
 
         if (needed.isEmpty()) {
-            showStartModeDialog();
+            resumeOrStart();
         } else {
             ActivityCompat.requestPermissions(this, needed.toArray(new String[0]), PERM_REQUEST);
         }
+    }
+
+    private void resumeOrStart() {
+        if (serverStarted) {
+            startPythonServer(debugMode);
+            return;
+        }
+        showStartModeDialog();
     }
 
     private void showStartModeDialog() {
@@ -375,7 +384,7 @@ public class MainActivity extends AppCompatActivity {
                                            @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == PERM_REQUEST) {
-            showStartModeDialog();
+            resumeOrStart();
             return;
         }
         if (requestCode == REQ_AUDIO) {
@@ -420,11 +429,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private synchronized void startPythonServer(boolean debug) {
+        debugMode = debug;
         if (serverStarted) {
-            if (!webViewLoaded) {
+            runOnUiThread(() -> {
                 webView.loadUrl(serverUrl);
-            }
-            startForegroundService();
+                startForegroundService();
+            });
             return;
         }
         serverStarted = true;
@@ -751,11 +761,7 @@ public class MainActivity extends AppCompatActivity {
             + "return 'false';})()",
             value -> {
                 if (!"true".equals(value)) {
-                    if (webView.canGoBack()) {
-                        webView.goBack();
-                    } else {
-                        super.onBackPressed();
-                    }
+                    moveTaskToBack(true);
                 }
             }
         );
