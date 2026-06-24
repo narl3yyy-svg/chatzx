@@ -28,7 +28,11 @@ from chatxz.core.lan_rns import (
     wait_for_peer_path,
 )
 from chatxz.utils.platform import is_android
-from chatxz.core.rns_interfaces import prune_dead_serial_interfaces
+from chatxz.core.rns_interfaces import (
+    lan_discovery_configured,
+    load_settings_interfaces,
+    prune_dead_serial_interfaces,
+)
 
 APP_NAME = "chatxz"
 LINK_CONNECT_TIMEOUT_S = 12
@@ -928,7 +932,10 @@ class MessagingBackend:
         self.destination.announce(app_data=announce_data)
         if unicast_subnet is None:
             unicast_subnet = True
-        lan_ok = lan_ip_reachable()
+        lan_ok = (
+            lan_ip_reachable()
+            and lan_discovery_configured(load_settings_interfaces(self.config_dir))
+        )
         if peer_ip or (unicast_subnet and lan_ok):
             packet = build_announce_packet(self.destination, announce_data)
             sent = unicast_announce_packet(
@@ -946,6 +953,8 @@ class MessagingBackend:
             print(f"[messaging] Announced on RNS (serial/other — LAN disconnected)")
 
     def _lan_transport_ready(self):
+        if not lan_discovery_configured(load_settings_interfaces(self.config_dir)):
+            return False
         if is_android():
             return lan_mesh_has_peer() or bool(online_interfaces(family="udp"))
         if not lan_ip_reachable():
@@ -1268,7 +1277,11 @@ class MessagingBackend:
                 remaining = int(deadline - now)
                 print(f"[connect] Waiting for peer identity ({remaining}s left)...")
                 last_log = now
-            request_path_for_hash(clean)
+            if not lan_discovery_configured(load_settings_interfaces(self.config_dir)):
+                self._silent_announce()
+                request_paths_for_hash(clean, family="serial")
+            else:
+                request_path_for_hash(clean)
             time.sleep(0.5)
 
         return None, clean

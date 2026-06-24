@@ -159,6 +159,46 @@ def _new_id():
     return uuid.uuid4().hex[:8]
 
 
+def load_settings_interfaces(config_dir=None):
+    """Load rns_interfaces from settings.json (best-effort)."""
+    try:
+        from chatxz.utils.helpers import get_config_dir
+        import json
+
+        root = config_dir or get_config_dir()
+        path = os.path.join(root, "settings.json")
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data.get("rns_interfaces")
+    except Exception:
+        return None
+
+
+def configured_udp_lan_enabled(interfaces=None, config_dir=None):
+    """True when UDP LAN preset is present and enabled in settings."""
+    items = normalize_interface_list(interfaces or load_settings_interfaces(config_dir))
+    return any(
+        i.get("type") == "UDPInterface" and i.get("enabled", True)
+        for i in items
+    )
+
+
+def configured_serial_enabled(interfaces=None, config_dir=None):
+    """True when a serial port is configured and accessible."""
+    items = normalize_interface_list(interfaces or load_settings_interfaces(config_dir))
+    for iface in items:
+        if iface.get("preset") != "serial" and iface.get("type") != "SerialInterface":
+            continue
+        if iface.get("enabled", True) and serial_runtime_active(iface):
+            return True
+    return False
+
+
+def lan_discovery_configured(interfaces=None, config_dir=None):
+    """True when LAN discovery/beacon/AutoInterface should be active."""
+    return configured_udp_lan_enabled(interfaces, config_dir)
+
+
 def user_has_serial_group_access():
     """True if the current user belongs to a group that can access serial ports."""
     try:
@@ -668,8 +708,12 @@ def render_rns_config(interfaces, broadcast_ip=None, android=False, log=print):
             if iface.get("ifac_size"):
                 lines.append(f"    ifac_size = {iface.get('ifac_size')}")
         lines.append("")
-    # AutoInterface uses multicast and is unreliable on Windows (firewall / virtual adapters).
-    if not android and sys.platform != "win32":
+    # AutoInterface only when UDP LAN is configured — serial-only setups stay on serial.
+    has_udp_lan = any(
+        i.get("type") == "UDPInterface" and i.get("enabled", True)
+        for i in normalized
+    )
+    if has_udp_lan and not android and sys.platform != "win32":
         lines.extend([
             "  [[Default Interface]]",
             "    type = AutoInterface",

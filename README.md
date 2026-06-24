@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.75
+**Current version:** 0.3.76
 
 ## Download
 
@@ -141,6 +141,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.76** — Respect configured interfaces only: delete UDP → no LAN beacon/AutoInterface/unicast; serial-only mode for USB chat; restart after changing presets
 - **v0.3.75** — LAN carrier detection (shows **disconnected** when cable/Wi-Fi unplugged); serial-only announces when LAN is down; network panel auto-refreshes every 5s; fix WebSocket client count leak on Android restarts; tap Microphone row in Network settings to request permission; Android USB grant triggers serial hot-add
 - **v0.3.74** — Serial failover: prune stale LAN paths when ethernet drops; serial-first reconnect; hot-add serial on settings Apply; link-active requires healthy transport
 - **v0.3.73** — CI: macOS DMG build accepts VERSION env var from workflow

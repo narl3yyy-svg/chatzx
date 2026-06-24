@@ -36,6 +36,9 @@ from chatxz.core.rns_interfaces import (
     configured_serial_port,
     delete_interface,
     ensure_runtime_serial,
+    lan_discovery_configured,
+    configured_serial_enabled,
+    configured_udp_lan_enabled,
     remove_serial_interfaces,
     list_serial_ports,
     android_standalone_needs_udp,
@@ -827,9 +830,13 @@ class ChatWebServer:
             if self.embedded:
                 raise RuntimeError(f"RNS init failed: {e}") from e
             raise
-        patch_udp_interface_unicast()
-        self.identity = self.identity_mgr.load_or_create()
         settings = self.load_settings()
+        interfaces = settings.get("rns_interfaces")
+        if configured_udp_lan_enabled(interfaces):
+            patch_udp_interface_unicast()
+        else:
+            print("[network] UDP LAN not configured — skipping LAN beacon/unicast helpers")
+        self.identity = self.identity_mgr.load_or_create()
         my_ip = detect_lan_ip()
         if my_ip:
             print(f"[network] Detected LAN IP: {my_ip}")
@@ -868,18 +875,22 @@ class ChatWebServer:
                 identity_pubkey = self.identity.get_public_key()
             except Exception:
                 identity_pubkey = None
-        self.lan_beacon = LanBeacon(
-            self.discovery,
-            my_dest_clean,
-            display_name=settings.get("name", ""),
-            ip=my_ip,
-            port=self.port,
-            periodic=False,
-            identity_hash=self.identity_mgr.get_hex_hash(),
-            identity_pubkey=identity_pubkey,
-            on_periodic=None,
-        )
-        self.lan_beacon.start()
+        if lan_discovery_configured(interfaces):
+            self.lan_beacon = LanBeacon(
+                self.discovery,
+                my_dest_clean,
+                display_name=settings.get("name", ""),
+                ip=my_ip,
+                port=self.port,
+                periodic=False,
+                identity_hash=self.identity_mgr.get_hex_hash(),
+                identity_pubkey=identity_pubkey,
+                on_periodic=None,
+            )
+            self.lan_beacon.start()
+        else:
+            self.lan_beacon = None
+            print("[network] Serial/other-only mode — LAN beacon disabled")
         print("[network] One startup announce; manual Announce or Connect after that")
 
         serial_hot = ensure_runtime_serial(settings.get("rns_interfaces"))
@@ -890,8 +901,14 @@ class ChatWebServer:
             from chatxz.core.lan_rns import prune_stale_lan_paths
             prune_stale_lan_paths()
             self.messaging._silent_announce()
-            if lan_ip_reachable() and self.lan_beacon:
+            if (
+                lan_discovery_configured(interfaces)
+                and lan_ip_reachable()
+                and self.lan_beacon
+            ):
                 self.lan_beacon.send(1, subnet_probe=False)
+            elif configured_serial_enabled(interfaces):
+                print("[network] Startup RNS announce on configured serial path")
             print("[network] Startup announce sent once (tap Announce for more)")
         except Exception as exc:
             print(f"[network] Startup announce failed: {exc}")
@@ -1872,7 +1889,10 @@ class ChatWebServer:
                             pass
                         break
         port, _ = configured_serial_port(self.load_settings().get("rns_interfaces"))
-        lan_up = lan_connected()
+        settings = self.load_settings()
+        configured = settings.get("rns_interfaces")
+        lan_discovery = lan_discovery_configured(configured)
+        lan_up = lan_connected() if lan_discovery else False
         lan_ip_value = detect_lan_ip() if lan_up else None
         return web.json_response({
             "platform": self._platform_name(),
@@ -1884,8 +1904,16 @@ class ChatWebServer:
             "rns_udp_port": 4242,
             "beacon_udp_port": BEACON_PORT,
             "lan_connected": lan_up,
-            "lan_ip": lan_ip_value,
-            "broadcast": lan_broadcast() if lan_up else None,
+            "lan_discovery_configured": lan_discovery,
+            "serial_only_mode": (
+                configured_serial_enabled(configured) and not lan_discovery
+            ),
+            "lan_ip": lan_ip_value if lan_discovery else (
+                "not configured" if not lan_discovery else None
+            ),
+            "broadcast": lan_broadcast() if lan_up else (
+                "not configured" if not lan_discovery else None
+            ),
             "interfaces": list_network_interfaces(),
             "rns_ready": bool(self.messaging and self.messaging.destination),
             "rns_error": self.rns_init_error,
@@ -1947,10 +1975,20 @@ class ChatWebServer:
                     self._last_announce_at = now
                     self._enable_discovery(clear=False)
                     await asyncio.to_thread(self.messaging._silent_announce)
-                    if lan_ip_reachable() and self.lan_beacon:
+                    settings = self.load_settings()
+                    configured = settings.get("rns_interfaces")
+                    if (
+                        lan_discovery_configured(configured)
+                        and lan_ip_reachable()
+                        and self.lan_beacon
+                    ):
                         beacon_sent = await asyncio.to_thread(
                             self.lan_beacon.send, 3, True
                         )
+                    elif configured_serial_enabled(configured):
+                        print("[network] RNS announce on configured serial (no LAN beacon)")
+                    elif not lan_discovery_configured(configured):
+                        print("[network] No UDP LAN configured — RNS announce on active paths only")
                     elif not lan_ip_reachable():
                         print("[network] LAN disconnected — RNS announce on serial/other paths only")
         except Exception as e:

@@ -2664,11 +2664,28 @@ function refreshNetworkStatus(silent) {
       html += row('Platform', platform);
       html += row('HTTP bind', d.http_webview ? `${d.http_bind} (WebView ${d.http_webview})` : d.http_bind);
       html += row('Discovery listening', d.discovery_active ? 'yes' : 'no (tap Announce)', !!d.discovery_active);
+      if (d.lan_discovery_configured === false) {
+        html += row('LAN beacon', 'off (no UDP interface configured)', false);
+      }
       html += row('RNS UDP', d.rns_udp_port ? d.rns_udp_port + ' (required for chat)' : '4242', true);
       html += row('Beacon UDP', d.beacon_udp_port || 8743);
-      const lanConnected = d.lan_connected !== false && !!d.lan_ip;
-      html += row('LAN IP', lanConnected ? d.lan_ip : 'disconnected', lanConnected);
-      html += row('Broadcast', lanConnected ? (d.broadcast || 'none') : 'disconnected', lanConnected);
+      const lanDiscovery = d.lan_discovery_configured !== false;
+      const serialOnly = !!d.serial_only_mode;
+      const lanConnected = lanDiscovery && d.lan_connected !== false && !!d.lan_ip
+        && d.lan_ip !== 'not configured';
+      if (serialOnly) {
+        html += row('LAN IP', 'not configured (serial only)', false);
+        html += row('Broadcast', 'not configured (serial only)', false);
+      } else if (!lanDiscovery) {
+        html += row('LAN IP', 'not configured', false);
+        html += row('Broadcast', 'not configured', false);
+      } else {
+        html += row('LAN IP', lanConnected ? d.lan_ip : 'disconnected', lanConnected);
+        html += row('Broadcast', lanConnected ? (d.broadcast || 'none') : 'disconnected', lanConnected);
+      }
+      if (serialOnly) {
+        html += row('Transport mode', 'serial only — add UDP LAN preset for Wi-Fi/Ethernet', false);
+      }
       html += row('RNS ready', d.rns_ready ? 'yes' : 'no', d.rns_ready);
       if (d.rns_error) html += row('RNS error', d.rns_error, false);
       html += row('Link active', d.link_active ? 'yes — encrypted chat session' : 'no — not connected to a peer', d.link_active);
