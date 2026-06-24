@@ -388,6 +388,25 @@ def _filter_interfaces_for_lan(entries):
     }]
 
 
+def physical_lan_reachable():
+    """True when a non-VPN NIC has link and IPv4 (RJ45/Wi-Fi), not VPN-only."""
+    if is_android():
+        for entry in _java_enumerate_interfaces():
+            if entry.get("kind") == "vpn":
+                continue
+            if entry.get("up") and entry.get("ip") not in (None, "disconnected"):
+                if not str(entry.get("ip", "")).startswith("169.254."):
+                    return True
+        return False
+    for entry in _linux_enumerate_interfaces():
+        if entry.get("kind") == "vpn":
+            continue
+        if entry.get("up") and entry.get("ip") not in (None, "disconnected"):
+            if not str(entry.get("ip", "")).startswith("169.254."):
+                return True
+    return False
+
+
 def lan_connected():
     """True when a physical LAN link is up (carrier), not merely a stale IP."""
     if is_android():

@@ -22,6 +22,7 @@ from chatxz.core.contacts import (
 )
 from chatxz.core.lan_rns import (
     lan_ip_reachable,
+    physical_lan_reachable,
     patch_udp_interface_unicast,
     serial_interface_online,
 )
@@ -304,6 +305,8 @@ class ChatWebServer:
         self._reverse_connect_last = {}
         self._session_resume_last = 0.0
         self._shutting_down = False
+        self._failover_task = None
+        self._background_tasks = []
         self._progress_last = {}
         self._progress_throttle_ms = 250
         self._ui_state = {"viewing_peer": None, "hidden": False}
@@ -326,6 +329,9 @@ class ChatWebServer:
         self._shutting_down = True
         if self.messaging:
             self.messaging.shutdown_requested = True
+            self.messaging.running = False
+        for task in list(self._background_tasks):
+            task.cancel()
 
     async def _on_cleanup(self, app):
         self._shutting_down = True
@@ -334,6 +340,7 @@ class ChatWebServer:
             self.messaging.running = False
             try:
                 self.messaging._teardown_active_link()
+                self.messaging.stop()
             except Exception:
                 pass
         for ws in list(self.websockets):
@@ -861,7 +868,7 @@ class ChatWebServer:
             on_link_closed=self._on_link_closed,
             on_queue_sent=self._on_queue_sent,
             display_name=settings.get("name", ""),
-            auto_announce=False,
+            auto_announce=configured_serial_enabled(interfaces),
             receive_dir=received_dir,
             peer_resolver=self._resolve_incoming_peer,
         )
@@ -1809,13 +1816,17 @@ class ChatWebServer:
 
     async def _link_failover_loop(self):
         """Detect dead or migrated RNS paths and reconnect without server restart."""
-        while True:
-            await asyncio.sleep(8)
+        while not self._shutting_down:
+            try:
+                await asyncio.sleep(8)
+            except asyncio.CancelledError:
+                break
             if self._shutting_down or not self.messaging:
                 continue
             from chatxz.core.lan_rns import clear_paths_on_family, prune_stale_lan_paths
-            await self._run_blocking(prune_dead_serial_interfaces)
-            await self._run_blocking(clear_paths_on_family, "serial")
+            if not serial_interface_online():
+                await self._run_blocking(prune_dead_serial_interfaces)
+                await self._run_blocking(clear_paths_on_family, "serial")
             await self._run_blocking(prune_stale_lan_paths)
             peer = self._peer_dest_hash(
                 self.messaging.active_peer_hash
@@ -1836,13 +1847,17 @@ class ChatWebServer:
             await self._run_blocking(ensure_runtime_serial, interfaces)
 
             peer_ip, peer_port = self._peer_connect_meta(peer)
+            if not physical_lan_reachable() and configured_serial_enabled(interfaces):
+                peer_ip = None
             if (
                 configured_udp_lan_enabled(interfaces)
-                and lan_ip_reachable()
+                and physical_lan_reachable()
                 and self.lan_beacon
             ):
                 await self._run_blocking(self.lan_beacon.send, 1, False)
             print(f"[connect] Failover triggered: {reason}")
+            if self._shutting_down:
+                continue
 
             result = await self._run_blocking(
                 self.messaging.reconnect_active_peer,
@@ -3105,21 +3120,28 @@ class ChatWebServer:
         self._reset_connection_state()
         self._maybe_auto_reset_network_stats()
         print(f"[startup] Event loop captured: {self._loop}")
-        asyncio.create_task(self._discovery_broadcaster())
+        for coro in (
+            self._discovery_broadcaster(),
+            self._history_maintenance_loop(),
+            self._link_failover_loop(),
+            self._serial_watchdog_loop(),
+            self._queue_retry_loop(),
+        ):
+            task = asyncio.create_task(coro)
+            self._background_tasks.append(task)
         self._prune_stale_session_system_messages()
         retention = self.load_settings().get("history_retention", "never")
         if retention == "on_restart":
             self.message_history = []
             self._save_history()
             print("[history] Cleared on restart")
-        asyncio.create_task(self._history_maintenance_loop())
-        asyncio.create_task(self._link_failover_loop())
-        asyncio.create_task(self._serial_watchdog_loop())
-        asyncio.create_task(self._queue_retry_loop())
 
     async def _queue_retry_loop(self):
-        while True:
-            await asyncio.sleep(5)
+        while not self._shutting_down:
+            try:
+                await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                break
             if self._shutting_down or not self.messaging:
                 continue
             if not self.messaging.message_queue or not self.messaging.peer_links:
@@ -3205,10 +3227,14 @@ class ChatWebServer:
             self._loop = asyncio.get_running_loop()
             self._reset_connection_state()
             self._maybe_auto_reset_network_stats()
-            asyncio.create_task(self._discovery_broadcaster())
-            asyncio.create_task(self._embedded_init_rns(app))
-            asyncio.create_task(self._queue_retry_loop())
-            asyncio.create_task(self._link_failover_loop())
+            for coro in (
+                self._discovery_broadcaster(),
+                self._embedded_init_rns(app),
+                self._queue_retry_loop(),
+                self._link_failover_loop(),
+            ):
+                task = asyncio.create_task(coro)
+                self._background_tasks.append(task)
             retention = self.load_settings().get("history_retention", "never")
             if retention == "on_restart":
                 self.message_history = []

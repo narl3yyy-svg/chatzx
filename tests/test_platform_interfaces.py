@@ -62,5 +62,18 @@ class LinuxInterfaceHelpers(unittest.TestCase):
             plat.set_lan_interface_preference(None)
 
 
+    def test_physical_lan_skips_vpn(self):
+        with patch.object(plat, "is_android", return_value=False):
+            with patch.object(plat, "_linux_enumerate_interfaces") as mock_enum:
+                mock_enum.return_value = [
+                    {"name": "wg0", "kind": "vpn", "ip": "10.10.100.12", "up": True},
+                    {"name": "enp2s0", "kind": "ethernet", "ip": "disconnected", "up": False},
+                ]
+                self.assertFalse(plat.physical_lan_reachable())
+                mock_enum.return_value[1]["ip"] = "10.0.30.112"
+                mock_enum.return_value[1]["up"] = True
+                self.assertTrue(plat.physical_lan_reachable())
+
+
 if __name__ == "__main__":
     unittest.main()

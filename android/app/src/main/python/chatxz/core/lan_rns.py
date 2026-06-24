@@ -293,10 +293,13 @@ def wait_for_peer_path(hash_hex, family=None, timeout_s=12.0, poll_s=0.25):
     return wait_for_peer_path_families(hash_hex, families=families, timeout_s=timeout_s, poll_s=poll_s)
 
 
-def wait_for_peer_path_families(hash_hex, families=(None,), timeout_s=12.0, poll_s=0.25):
+def wait_for_peer_path_families(hash_hex, families=(None,), timeout_s=12.0, poll_s=0.25,
+                                should_stop=None):
     """Wait until peer path exists on any of the requested transport families."""
     deadline = time.time() + timeout_s
     while time.time() < deadline:
+        if should_stop and should_stop():
+            return None
         scrub_peer_path(hash_hex)
         _, path_iface = peer_path_entry(hash_hex)
         if path_iface and interface_is_healthy(path_iface):

@@ -141,6 +141,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.81** — Failover overhaul: serial-first when RJ45/Wi-Fi down (VPN no longer masquerades as LAN); no HTTP wake to unreachable peers; RNS-only serial auto-announce; faster Ctrl+C shutdown; stop clearing live serial paths
 - **v0.3.80** — LAN interface picker lists VPN tunnels (WireGuard, OpenVPN, Tailscale, tun/tap); auto mode prefers physical Ethernet/Wi-Fi over VPN
 - **v0.3.79** — Serial→LAN failover: prefer UDP paths when USB unplugged; clear stale serial paths; wake peer and prime UDP during failover; queue sends when link transport is offline
 - **v0.3.78** — Serial-only fixes: Android transport enabled with serial; burst RNS announces on USB; longer serial connect/identity wait; clearer serial-only UI hints
