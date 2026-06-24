@@ -1477,7 +1477,6 @@ function pollLinkStatus() {
         updatePeerHeader();
       } else if (d.link_active && d.active_peer) {
         setLinkPeer(d.active_peer, true);
-        registerPeerAliases(d.active_peer, d.session_peer, viewingPeer);
         updatePeerHeader();
       } else if (linkedPeers.size && (d.session_peer || d.active_peer)) {
         setLinkStatus('disconnected', 'Reconnecting…');
@@ -1634,7 +1633,6 @@ function fetchIdentity() {
         syncLinkedPeers(d.linked_peers);
       } else if (d.connected) {
         setLinkPeer(d.connected, true);
-        registerPeerAliases(d.connected, viewingPeer);
       } else {
         linkedPeers.clear();
         linkPeer = null;
@@ -1704,7 +1702,7 @@ function handleWSMessage(msg) {
   } else if (msg.type === 'link_established') {
     if (msg.data?.hash) {
       const h = msg.data.hash;
-      registerPeerAliases(h, viewingPeer, ...(msg.data.aliases || []));
+      registerPeerAliases(h, ...(msg.data.aliases || []));
       setLinkPeer(h, true);
       if (msg.data.linked_peers) syncLinkedPeers(msg.data.linked_peers);
       const now = Date.now();
@@ -1753,6 +1751,7 @@ function handleWSMessage(msg) {
       toast('Sent ' + msg.data.sent + ' queued item(s)');
     }
   } else if (msg.type === 'network_reset') {
+    peerAliasGroups.clear();
     linkPeer = null;
     linkedPeers.clear();
     updatePeerHeader();
@@ -1937,13 +1936,19 @@ function pollCpu() {
 }
 
 function pollQueue() {
-  fetch('/api/queue')
+  const peerQ = viewingPeer ? ('?peer=' + encodeURIComponent(viewingPeer)) : '';
+  fetch('/api/queue' + peerQ)
     .then(r => r.json())
     .then(q => {
       var el = document.getElementById('queue-count');
-      if (q.count > 0) {
+      const count = q.count || 0;
+      const total = q.total || count;
+      if (count > 0) {
         el.style.display = 'block';
-        el.textContent = 'Queue: ' + q.count + ' pending (tap to clear)';
+        el.textContent = 'Queue: ' + count + ' pending for this chat (tap to clear)';
+      } else if (!viewingPeer && total > 0) {
+        el.style.display = 'block';
+        el.textContent = 'Queue: ' + total + ' pending (other chats)';
       } else {
         el.style.display = 'none';
       }
@@ -1966,8 +1971,15 @@ function clearQueue() {
     .catch(() => toast('Failed to clear queue'));
 }
 
+function seedPeerAliasesFromContacts(contacts) {
+  (contacts || []).forEach(c => {
+    if (c.identity_hash) registerPeerAliases(c.hash, c.identity_hash);
+  });
+}
+
 function renderContacts(contacts) {
   if (contacts === allContacts || !document.getElementById('contact-search')?.value) allContacts = contacts;
+  seedPeerAliasesFromContacts(contacts);
   const el = document.getElementById('contacts-list');
   el.innerHTML = '';
   contacts.forEach(c => {
@@ -2185,7 +2197,7 @@ function connectTo(hash, ip, port) {
   }).then(r => r.json()).then(d => {
     if (d.status === 'ok') {
       const connected = d.hash || hash;
-      registerPeerAliases(connected, hash, viewingPeer);
+      if (connected !== hash) registerPeerAliases(connected, hash);
       setLinkPeer(connected, true);
       if (d.linked_peers) syncLinkedPeers(d.linked_peers);
       if (viewingPeer && peersMatch(viewingPeer, connected)) updatePeerHeader();
@@ -2810,7 +2822,6 @@ function setLinkPeer(hash, linked) {
   }
   if (viewingPeer && isPeerLinked(viewingPeer)) {
     linkPeer = peerKey(viewingPeer);
-    registerPeerAliases(linkPeer, viewingPeer);
   } else {
     linkPeer = null;
   }
@@ -2875,6 +2886,7 @@ function openChat(hash, tryConnect, meta) {
   syncUiState();
   updateHubUi();
   loadHistoryForPeer(viewingPeer);
+  pollQueue();
   renderContacts(allContacts);
   renderDiscovered(window._discoveredPeers || []);
   if (tryConnect && !isPeerLinked(viewingPeer)) {
@@ -2994,6 +3006,7 @@ function peerKey(hash) {
 function isPeerLinked(hash) {
   const k = peerKey(hash);
   if (!k) return false;
+  if (linkedPeers.has(k)) return true;
   for (const lp of linkedPeers) {
     if (peersMatch(lp, k)) return true;
   }
@@ -3009,6 +3022,8 @@ function syncLinkedPeers(list) {
 }
 
 function registerPeerAliases(...hashes) {
+  // Only merge alternate hashes for the SAME peer (identity vs message dest).
+  // Never pass viewingPeer or unrelated contact hashes here.
   const keys = [...new Set(hashes.map(peerKey).filter(Boolean))];
   if (keys.length < 2) return;
   let group = null;
@@ -3038,11 +3053,9 @@ function messageBelongsToPeer(data) {
   const active = peerKey(viewingPeer);
   if (active === HUB_GROUP_PEER && (data.hub_group || peerKey(data.chat_peer || data.peer) === HUB_GROUP_PEER)) return true;
   const chatPeer = peerKey(data.chat_peer || data.peer);
-  if (chatPeer && peersMatch(chatPeer, active)) return true;
-  const sender = peerKey(data.sender);
-  if (sender && peersMatch(sender, active) && data.sender !== 'system') return true;
-  if (data.type === 'system' && peersMatch(chatPeer, active)) return true;
-  return false;
+  if (chatPeer) return peersMatch(chatPeer, active);
+  if (data.sender && data.sender !== 'system') return peersMatch(data.sender, active);
+  return data.type === 'system';
 }
 
 function pickFiles() {

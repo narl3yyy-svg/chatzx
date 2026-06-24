@@ -830,6 +830,28 @@ class MessagingBackend:
     def queue_size(self):
         return len(self.message_queue)
 
+    def queue_size_for(self, target_hash=None):
+        if not target_hash:
+            return len(self.message_queue)
+        return sum(
+            1 for entry in self.message_queue
+            if self._queue_matches_target(entry, target_hash)
+        )
+
+    def prune_stale_queue(self, sent_msg_ids=None):
+        """Drop queue rows already marked sent in chat history."""
+        sent = set(sent_msg_ids or [])
+        if not sent:
+            return 0
+        before = len(self.message_queue)
+        self.message_queue = [
+            e for e in self.message_queue
+            if e.get("msg_id") not in sent
+        ]
+        if len(self.message_queue) != before:
+            self._save_queue()
+        return before - len(self.message_queue)
+
     def start(self):
         self.destination = RNS.Destination(
             self.identity,

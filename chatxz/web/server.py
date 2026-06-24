@@ -858,6 +858,13 @@ class ChatWebServer:
         )
         self.voice_recorder = VoiceRecorder(self.config_dir)
         dest = self.messaging.start()
+        sent_ids = [
+            m.get("msg_id") for m in self.message_history
+            if m.get("msg_id") and m.get("status") == "sent"
+        ]
+        pruned = self.messaging.prune_stale_queue(sent_ids)
+        if pruned:
+            print(f"[queue] Pruned {pruned} stale item(s) already marked sent")
 
         my_hash = RNS.hexrep(dest.hash)
         my_dest_clean = my_hash.replace(":", "")
@@ -1034,6 +1041,13 @@ class ChatWebServer:
             asyncio.run_coroutine_threadsafe(
                 self._broadcast({"type": "message", "data": entry}),
                 self._loop
+            )
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast({
+                    "type": "queue_cleared",
+                    "data": {"count": self.messaging.queue_size() if self.messaging else 0},
+                }),
+                self._loop,
             )
 
     async def _broadcast(self, data):
@@ -2586,10 +2600,23 @@ class ChatWebServer:
 
     async def handle_queue(self, request):
         if not self.messaging:
-            return web.json_response({"count": 0, "items": []})
+            return web.json_response({"count": 0, "total": 0, "items": []})
+        total = self.messaging.queue_size()
+        peer = request.query.get("peer", "").strip()
+        if peer:
+            peer_clean = self._peer_dest_hash(peer)
+            count = self.messaging.queue_size_for(peer_clean)
+            items = [
+                e for e in self.messaging.message_queue
+                if self.messaging._queue_matches_target(e, peer_clean)
+            ]
+        else:
+            count = total
+            items = self.messaging.message_queue[-20:]
         return web.json_response({
-            "count": self.messaging.queue_size(),
-            "items": self.messaging.message_queue[-20:],
+            "count": count,
+            "total": total,
+            "items": items[-20:],
         })
 
     async def handle_queue_clear(self, request):
@@ -2609,7 +2636,7 @@ class ChatWebServer:
                 self.messaging.clear_queue(self._peer_dest_hash(peer))
             else:
                 self.messaging.clear_queue()
-            cleared = before
+            cleared = before - self.messaging.queue_size()
             if cleared:
                 self.message_history = [
                     m for m in self.message_history if m.get("status") != "queued"
