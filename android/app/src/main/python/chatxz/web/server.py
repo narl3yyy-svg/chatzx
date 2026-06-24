@@ -890,11 +890,21 @@ class ChatWebServer:
             on_periodic=None,
         )
         self.lan_beacon.start()
-        print("[network] Manual announce only - use Announce button or peer connect wake")
+        print("[network] One startup announce; manual Announce or Connect after that")
 
         serial_hot = ensure_runtime_serial(settings.get("rns_interfaces"))
         if serial_hot:
             print(f"[serial] Runtime serial interface active on {getattr(serial_hot, 'port', '?')}")
+
+        try:
+            from chatxz.core.lan_rns import prune_stale_lan_paths
+            prune_stale_lan_paths()
+            self.messaging._silent_announce()
+            if my_ip and self.lan_beacon:
+                self.lan_beacon.send(1, subnet_probe=False)
+            print("[network] Startup announce sent once (tap Announce for more)")
+        except Exception as exc:
+            print(f"[network] Startup announce failed: {exc}")
 
         return my_hash
 
@@ -1564,16 +1574,23 @@ class ChatWebServer:
                 ensure_runtime_serial, settings.get("rns_interfaces")
             )
             if serial_hot and self.messaging:
-                await self._run_blocking(self.messaging.announce)
-            msg = "Interface updated."
-            if is_android():
-                msg = (
-                    "Serial interface attached to RNS."
-                    if serial_hot
-                    else "Settings saved. Select a USB port and grant access if needed."
+                from chatxz.core.lan_rns import prune_stale_lan_paths
+                await self._run_blocking(prune_stale_lan_paths)
+                await self._run_blocking(self.messaging._silent_announce)
+                peer = (
+                    self.messaging.active_peer_hash
+                    or getattr(self.messaging, "_session_peer_hash", None)
                 )
+                if peer:
+                    await self._run_blocking(
+                        self.messaging._prime_serial_path, peer, 12.0
+                    )
+            if serial_hot:
+                msg = "Serial interface attached to RNS (no restart needed)."
+            elif is_android():
+                msg = "Settings saved. Select a USB port and grant access if needed."
             else:
-                msg = "Interface updated. Restart chatxz to apply."
+                msg = "Interface updated."
             return web.json_response({
                 "status": "ok",
                 "interfaces": self._interfaces_for_api(settings["rns_interfaces"]),
@@ -1753,6 +1770,8 @@ class ChatWebServer:
             await asyncio.sleep(8)
             if self._shutting_down or not self.messaging:
                 continue
+            from chatxz.core.lan_rns import prune_stale_lan_paths
+            await self._run_blocking(prune_stale_lan_paths)
             peer = self._peer_dest_hash(
                 self.messaging.active_peer_hash
                 or getattr(self.messaging, "_session_peer_hash", None)
@@ -1801,19 +1820,47 @@ class ChatWebServer:
             pass
         peers = self.discovery.get_peers() if self.discovery else []
         linked_peers = self.messaging.linked_peers() if self.messaging else []
-        link_active = bool(linked_peers) or bool(self.messaging and self.messaging.active_link)
+        link_active = False
         active_peer = None
         link_rns_interface = None
-        if self.messaging and self.messaging.active_link:
-            active_peer = self.active_peer or self.messaging.active_peer_hash
-            try:
-                iface = self.messaging._link_attached_interface(self.messaging.active_link)
-                if iface:
-                    link_rns_interface = type(iface).__name__
-            except Exception:
-                pass
-        elif linked_peers:
-            active_peer = linked_peers[0]
+        if self.messaging:
+            if self.messaging.active_link:
+                try:
+                    import RNS
+                    healthy = self.messaging._link_interface_healthy(
+                        self.messaging.active_link
+                    )
+                    link_active = (
+                        healthy
+                        and self.messaging.active_link.status == RNS.Link.ACTIVE
+                    )
+                except Exception:
+                    link_active = False
+                if link_active:
+                    active_peer = self.active_peer or self.messaging.active_peer_hash
+                    try:
+                        iface = self.messaging._link_attached_interface(
+                            self.messaging.active_link
+                        )
+                        if iface:
+                            link_rns_interface = type(iface).__name__
+                    except Exception:
+                        pass
+            if not link_active:
+                for p in linked_peers:
+                    if not self.messaging._peer_link_active(p):
+                        continue
+                    link = self.messaging._link_for_peer(p)
+                    if link and self.messaging._link_interface_healthy(link):
+                        link_active = True
+                        active_peer = p
+                        try:
+                            iface = self.messaging._link_attached_interface(link)
+                            if iface:
+                                link_rns_interface = type(iface).__name__
+                        except Exception:
+                            pass
+                        break
         port, _ = configured_serial_port(self.load_settings().get("rns_interfaces"))
         return web.json_response({
             "platform": self._platform_name(),

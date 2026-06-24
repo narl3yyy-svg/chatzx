@@ -11,6 +11,15 @@ from chatxz.utils.platform import is_android, lan_ip, list_network_interfaces
 RNS_PORT = 4242
 
 
+def lan_ip_reachable():
+    """True when this host has a routable non-loopback IPv4 address for LAN chat."""
+    try:
+        ip = lan_ip()
+        return bool(ip and not ip.startswith("127."))
+    except Exception:
+        return False
+
+
 def unicast_announce_packet(packet, peer_ip=None, port=RNS_PORT, subnet_probe=None):
     """Send a packed RNS announce directly to peer IP and/or subnet hosts."""
     if packet is None:
@@ -102,6 +111,8 @@ def interface_is_healthy(iface):
     if getattr(iface, "detached", False):
         return False
     if hasattr(iface, "online") and not iface.online:
+        return False
+    if interface_family(iface) == "udp" and not is_android() and not lan_ip_reachable():
         return False
     owner = getattr(iface, "owner", None)
     if owner is not None:
@@ -206,6 +217,24 @@ def scrub_peer_path(hash_hex):
     if path_iface and not interface_is_healthy(path_iface):
         return clear_peer_path(hash_hex)
     return False
+
+
+def prune_stale_lan_paths():
+    """Drop cached UDP/LAN paths when ethernet/Wi-Fi is not reachable."""
+    removed = 0
+    try:
+        with RNS.Transport.path_table_lock:
+            for dest_bytes, entry in list(RNS.Transport.path_table.items()):
+                if not entry or len(entry) <= 5:
+                    continue
+                iface = entry[5]
+                fam = interface_family(iface)
+                if fam in ("udp", "lan") and not interface_is_healthy(iface):
+                    RNS.Transport.path_table.pop(dest_bytes, None)
+                    removed += 1
+    except Exception:
+        pass
+    return removed
 
 
 def detach_unhealthy_interfaces():

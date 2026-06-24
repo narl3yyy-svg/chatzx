@@ -13,10 +13,12 @@ from chatxz.core.lan_rns import (
     detach_unhealthy_interfaces,
     interface_family,
     interface_is_healthy,
+    lan_ip_reachable,
     lan_mesh_has_peer,
     online_interfaces,
     peer_path_entry,
     peer_path_on_family,
+    prune_stale_lan_paths,
     request_path_for_hash,
     request_paths_for_hash,
     scrub_peer_path,
@@ -425,8 +427,8 @@ class MessagingBackend:
     def _has_online_family(self, family):
         if family == "serial":
             return serial_interface_online() is not None
-        if family == "lan":
-            return lan_mesh_has_peer() or bool(online_interfaces(family="udp"))
+        if family in ("lan", "udp"):
+            return self._lan_transport_ready()
         return bool(online_interfaces(family=family))
 
     def _preferred_failover_family(self, peer, attached=None):
@@ -458,6 +460,9 @@ class MessagingBackend:
 
     def _prepare_failover_path(self, peer, prefer_family=None, peer_ip=None):
         prune_dead_serial_interfaces()
+        pruned = prune_stale_lan_paths()
+        if pruned:
+            print(f"[connect] Cleared {pruned} stale LAN path(s)")
         _, path_iface = peer_path_entry(peer)
         if path_iface and not interface_is_healthy(path_iface):
             clear_peer_path(peer)
@@ -519,11 +524,15 @@ class MessagingBackend:
             if self._has_online_family("serial"):
                 return True, "LAN down, serial available"
 
-        if att_fam == "udp" and not bool(online_interfaces(family="udp")):
+        if att_fam == "udp" and not self._lan_transport_ready():
+            if self._has_online_family("serial"):
+                return True, "LAN down, serial available"
             if lan_mesh_has_peer():
                 return True, "UDP down, AutoInterface available"
-            if self._has_online_family("serial"):
-                return True, "UDP down, serial available"
+
+        if att_fam == "udp" and not lan_ip_reachable() and self._has_online_family("serial"):
+            if not in_grace:
+                return True, "ethernet down, serial available"
 
         if att_fam == "serial" and not self._has_online_family("serial") and self._has_online_family("lan"):
             return True, "serial down, LAN available"
@@ -562,8 +571,12 @@ class MessagingBackend:
         if not peer or peer == "unknown":
             return False, ""
         if self._peer_link_active(peer):
-            if self.active_link and self._link_interface_healthy(self.active_link):
-                return self.link_needs_failover()
+            if self.active_link and not self._link_interface_healthy(self.active_link):
+                return True, "link interface offline"
+            if self.active_link:
+                needs, reason = self.link_needs_failover()
+                if needs:
+                    return needs, reason
             return False, ""
         if self._failover_in_progress:
             return False, ""
@@ -929,6 +942,10 @@ class MessagingBackend:
         print(f"[messaging] Announced on LAN (name={self.display_name or 'none'})")
 
     def _lan_transport_ready(self):
+        if is_android():
+            return lan_mesh_has_peer() or bool(online_interfaces(family="udp"))
+        if not lan_ip_reachable():
+            return lan_mesh_has_peer()
         return lan_mesh_has_peer() or bool(online_interfaces(family="udp"))
 
     def _serial_transport_ready(self):
@@ -1845,6 +1862,8 @@ class MessagingBackend:
         self._failover_in_progress = True
         try:
             prefer = self._preferred_failover_family(peer)
+            if prefer in ("udp", "lan") and not self._lan_transport_ready():
+                prefer = "serial" if self._has_online_family("serial") else prefer
             if prefer == "serial" and not self._has_online_family("serial"):
                 prefer = "udp" if self._has_online_family("udp") else (
                     "lan" if lan_mesh_has_peer() else prefer
@@ -1965,6 +1984,7 @@ class MessagingBackend:
             lan_ready = self._lan_transport_ready()
             serial_ready = self._serial_transport_ready()
             serial_only = serial_ready and not lan_ready
+            prune_stale_lan_paths()
 
             if serial_only:
                 print("[connect] Serial-only mode (no LAN) — skipping HTTP wake")
@@ -2011,6 +2031,10 @@ class MessagingBackend:
                     print("[connect] Link established (inbound after wake)")
                     return True
                 print("[connect] Peer did not connect back — trying outbound fallback...")
+            elif serial_ready and peer_ip and not lan_ready:
+                print("[connect] LAN unreachable — using serial only (no HTTP wake)")
+                peer_ip = None
+                self._prime_serial_path(dest_hex)
             elif peer_ip and respond_to_wake:
                 print(
                     f"[connect] Outbound to caller at {peer_ip}:{peer_port or 8742} "
