@@ -426,10 +426,30 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception ignored) {}
     }
 
+    private void closeWebSocketBeforeReload() {
+        if (webView == null) {
+            return;
+        }
+        webView.evaluateJavascript(
+                "if(typeof closeWS==='function')closeWS();",
+                null);
+    }
+
+    public void onUsbPermissionGranted(String deviceName) {
+        if (webView == null) {
+            return;
+        }
+        runOnUiThread(() -> webView.evaluateJavascript(
+                "if(typeof refreshNetworkStatus==='function')refreshNetworkStatus(true);"
+                        + "if(typeof loadRnsInterfaces==='function')loadRnsInterfaces();",
+                null));
+    }
+
     private synchronized void startPythonServer(boolean debug) {
         debugMode = debug;
         if (serverStarted) {
             runOnUiThread(() -> {
+                closeWebSocketBeforeReload();
                 webView.loadUrl(serverUrl);
                 startForegroundService();
             });
@@ -453,6 +473,7 @@ public class MainActivity extends AppCompatActivity {
                     serverUrl = "http://" + host + ":" + port;
                     runOnUiThread(() -> {
                         if (!webViewLoaded) {
+                            closeWebSocketBeforeReload();
                             webView.loadUrl(serverUrl);
                         }
                         startForegroundService();
@@ -742,6 +763,7 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        closeWebSocketBeforeReload();
         if (usbPermissionReceiver != null) {
             try {
                 unregisterReceiver(usbPermissionReceiver);

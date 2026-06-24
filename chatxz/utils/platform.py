@@ -140,8 +140,106 @@ def _java_lan_addresses():
         return []
 
 
+def _linux_iface_ipv4(ifname):
+    """IPv4 address assigned to a Linux network interface, or None."""
+    import fcntl
+    import socket
+    import struct
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        ifreq = struct.pack("256s", ifname.encode()[:15])
+        res = fcntl.ioctl(sock.fileno(), 0x8915, ifreq)  # SIOCGIFADDR
+        ip = socket.inet_ntoa(res[20:24])
+        sock.close()
+        if ip and not ip.startswith("127."):
+            return ip
+    except OSError:
+        pass
+    return None
+
+
+def _linux_iface_link_up(ifname):
+    """True when the NIC reports link carrier (cable/Wi-Fi connected)."""
+    if not ifname or ifname == "lo":
+        return False
+    carrier_path = f"/sys/class/net/{ifname}/carrier"
+    try:
+        with open(carrier_path) as fh:
+            return fh.read().strip() == "1"
+    except OSError:
+        oper_path = f"/sys/class/net/{ifname}/operstate"
+        try:
+            with open(oper_path) as fh:
+                return fh.read().strip() in ("up", "unknown")
+        except OSError:
+            return False
+
+
+def _linux_skip_iface(ifname):
+    return ifname.startswith(("docker", "br-", "veth", "virbr", "wg", "tun", "tap"))
+
+
+def _linux_lan_ip():
+    """LAN IP from the first link-up interface (ignores stale addresses after unplug)."""
+    best = None
+    try:
+        for ifname in sorted(os.listdir("/sys/class/net")):
+            if ifname == "lo" or _linux_skip_iface(ifname):
+                continue
+            if not _linux_iface_link_up(ifname):
+                continue
+            ip = _linux_iface_ipv4(ifname)
+            if not ip or ip.startswith("169.254."):
+                continue
+            if not ip.startswith("10.") and not ip.startswith("192.168.") and not ip.startswith("172."):
+                best = best or ip
+                continue
+            return ip
+    except OSError:
+        pass
+    return best
+
+
+def _linux_enumerate_interfaces():
+    entries = []
+    try:
+        for ifname in sorted(os.listdir("/sys/class/net")):
+            if ifname == "lo" or _linux_skip_iface(ifname):
+                continue
+            link_up = _linux_iface_link_up(ifname)
+            ip = _linux_iface_ipv4(ifname) if link_up else None
+            if not link_up and not ip:
+                continue
+            parts = (ip or "").split(".")
+            subnet = (
+                f"{parts[0]}.{parts[1]}.{parts[2]}.255"
+                if len(parts) == 4 and not ip.startswith("169.254.")
+                else None
+            )
+            entries.append({
+                "name": ifname,
+                "ip": ip if link_up and ip else "disconnected",
+                "broadcast": subnet if link_up else None,
+                "subnet_broadcast": subnet if link_up else None,
+                "up": bool(link_up and ip),
+            })
+    except OSError:
+        pass
+    return entries
+
+
+def lan_connected():
+    """True when a physical LAN link is up (carrier), not merely a stale IP."""
+    if is_android():
+        if _java_lan_addresses():
+            return True
+        return _android_connectivity_ip() is not None
+    return _linux_lan_ip() is not None
+
+
 def lan_ip():
-    """Best-effort LAN IP for direct file transfers."""
+    """Best-effort LAN IP for direct file transfers (None when unplugged/offline)."""
     import socket
 
     if is_android():
@@ -150,24 +248,21 @@ def lan_ip():
         connectivity_ip = _android_connectivity_ip()
         if connectivity_ip:
             return connectivity_ip
-        for probe in ("10.10.100.1", "192.168.1.1", "10.0.0.1", "192.168.0.1"):
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.settimeout(0.4)
-                s.connect((probe, 80))
-                ip = s.getsockname()[0]
-                s.close()
-                if ip and not ip.startswith("127."):
-                    return ip
-            except OSError:
-                pass
+        return None
+
+    ip = _linux_lan_ip()
+    if ip:
+        return ip
+
+    if not lan_connected():
+        return None
 
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(0.5)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(0.5)
+        sock.connect(("8.8.8.8", 80))
+        ip = sock.getsockname()[0]
+        sock.close()
         if ip and not ip.startswith("127."):
             return ip
     except OSError:
@@ -197,6 +292,11 @@ def list_network_interfaces():
                 entries.append(entry)
         if entries:
             return entries
+        return entries
+
+    linux_entries = _linux_enumerate_interfaces()
+    if linux_entries:
+        return linux_entries
 
     ip = lan_ip()
     if ip:

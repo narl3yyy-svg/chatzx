@@ -20,7 +20,11 @@ from chatxz.core.contacts import (
     list_contacts,
     save_contact,
 )
-from chatxz.core.lan_rns import patch_udp_interface_unicast, serial_interface_online
+from chatxz.core.lan_rns import (
+    lan_ip_reachable,
+    patch_udp_interface_unicast,
+    serial_interface_online,
+)
 from chatxz.core.rns_interfaces import (
     INTERFACE_PRESETS,
     SERIAL_BAUD_RATES,
@@ -57,6 +61,7 @@ from chatxz.utils.debug_log import debug_log_path, debug_log_tail
 from chatxz.utils.android_notify import show_message_notification
 from chatxz.utils.platform import (
     is_android,
+    lan_connected,
     lan_ip as platform_lan_ip,
     lan_broadcast,
     android_storage_dirs,
@@ -119,22 +124,7 @@ def _patch_rns_forward_ip(config_text, broadcast_ip):
 
 
 def detect_lan_ip():
-    if is_android():
-        return platform_lan_ip()
-    s = None
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(0.5)
-        s.connect(("10.255.255.255", 1))
-        return s.getsockname()[0]
-    except OSError:
-        return None
-    finally:
-        if s is not None:
-            try:
-                s.close()
-            except OSError:
-                pass
+    return platform_lan_ip()
 
 def cleanup_rns_stale():
     if is_android():
@@ -900,7 +890,7 @@ class ChatWebServer:
             from chatxz.core.lan_rns import prune_stale_lan_paths
             prune_stale_lan_paths()
             self.messaging._silent_announce()
-            if my_ip and self.lan_beacon:
+            if lan_ip_reachable() and self.lan_beacon:
                 self.lan_beacon.send(1, subnet_probe=False)
             print("[network] Startup announce sent once (tap Announce for more)")
         except Exception as exc:
@@ -1060,12 +1050,25 @@ class ChatWebServer:
                 self._loop,
             )
 
+    def _prune_websockets(self):
+        """Drop closed sockets (Android WebView reloads leave zombie connections)."""
+        dead = [ws for ws in list(self.websockets) if ws.closed]
+        for ws in dead:
+            self.websockets.discard(ws)
+        return len(self.websockets)
+
+    def _ws_client_count(self):
+        return self._prune_websockets()
+
     async def _broadcast(self, data):
         msg = json.dumps(data)
         for ws in self.websockets.copy():
+            if ws.closed:
+                self.websockets.discard(ws)
+                continue
             try:
                 await ws.send_str(msg)
-            except:
+            except Exception:
                 self.websockets.discard(ws)
 
     def _on_peer_discovered(self, peer):
@@ -1808,6 +1811,13 @@ class ChatWebServer:
                 print(f"[connect] Failover attempt failed ({reason})")
 
     async def handle_network_status(self, request):
+        try:
+            settings = self.load_settings()
+            await self._run_blocking(
+                ensure_runtime_serial, settings.get("rns_interfaces")
+            )
+        except Exception:
+            pass
         rns_interfaces = []
         try:
             for iface in getattr(RNS.Transport, "interfaces", []) or []:
@@ -1862,6 +1872,8 @@ class ChatWebServer:
                             pass
                         break
         port, _ = configured_serial_port(self.load_settings().get("rns_interfaces"))
+        lan_up = lan_connected()
+        lan_ip_value = detect_lan_ip() if lan_up else None
         return web.json_response({
             "platform": self._platform_name(),
             "embedded": self.embedded,
@@ -1871,8 +1883,9 @@ class ChatWebServer:
             "discovery_active": bool(self.discovery and self.discovery.accept_peers),
             "rns_udp_port": 4242,
             "beacon_udp_port": BEACON_PORT,
-            "lan_ip": detect_lan_ip(),
-            "broadcast": lan_broadcast(),
+            "lan_connected": lan_up,
+            "lan_ip": lan_ip_value,
+            "broadcast": lan_broadcast() if lan_up else None,
             "interfaces": list_network_interfaces(),
             "rns_ready": bool(self.messaging and self.messaging.destination),
             "rns_error": self.rns_init_error,
@@ -1890,7 +1903,7 @@ class ChatWebServer:
             "beacon": self.lan_beacon.status() if self.lan_beacon else None,
             "discovered_peers": peers,
             "discovered_count": len(peers),
-            "ws_clients": len(self.websockets),
+            "ws_clients": self._ws_client_count(),
             "link_active": link_active,
             "linked_peers": linked_peers,
             "active_peer": active_peer,
@@ -1933,11 +1946,13 @@ class ChatWebServer:
                 else:
                     self._last_announce_at = now
                     self._enable_discovery(clear=False)
-                    await asyncio.to_thread(self.messaging.announce)
-                    if self.lan_beacon:
+                    await asyncio.to_thread(self.messaging._silent_announce)
+                    if lan_ip_reachable() and self.lan_beacon:
                         beacon_sent = await asyncio.to_thread(
                             self.lan_beacon.send, 3, True
                         )
+                    elif not lan_ip_reachable():
+                        print("[network] LAN disconnected — RNS announce on serial/other paths only")
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -2190,7 +2205,7 @@ class ChatWebServer:
         received_dir = settings.get("received_dir", os.path.join(self.config_dir, "received"))
         payload = {
             "identity_hash": self.identity_mgr.get_hex_hash() if self.identity_mgr else None,
-            "ws_clients": len(self.websockets),
+            "ws_clients": self._ws_client_count(),
             "discovered_peers": peers,
             "discovery_running": self.discovery.running if self.discovery else False,
             "discovery_active": bool(self.discovery and self.discovery.accept_peers),
@@ -2750,10 +2765,11 @@ class ChatWebServer:
         return web.json_response(rows)
 
     async def handle_websocket(self, request):
-        ws = web.WebSocketResponse()
+        self._prune_websockets()
+        ws = web.WebSocketResponse(heartbeat=30.0)
         await ws.prepare(request)
         self.websockets.add(ws)
-        print(f"[ws] Client connected ({len(self.websockets)} total)")
+        print(f"[ws] Client connected ({self._ws_client_count()} total)")
 
         await self._send_peers_to(ws)
         if self.messaging:
@@ -2785,7 +2801,7 @@ class ChatWebServer:
             pass
         finally:
             self.websockets.discard(ws)
-            print(f"[ws] Client disconnected ({len(self.websockets)} total)")
+            print(f"[ws] Client disconnected ({self._ws_client_count()} total)")
         return ws
 
     async def _history_maintenance_loop(self):
@@ -2804,8 +2820,9 @@ class ChatWebServer:
                 continue
             peers = self.discovery.get_peers()
             count = len(peers)
+            self._prune_websockets()
             if count != last_count:
-                print(f"[broadcaster] {count} peer(s), {len(self.websockets)} ws client(s)")
+                print(f"[broadcaster] {count} peer(s), {self._ws_client_count()} ws client(s)")
                 last_count = count
             if peers:
                 await self._broadcast({"type": "peers", "data": peers})

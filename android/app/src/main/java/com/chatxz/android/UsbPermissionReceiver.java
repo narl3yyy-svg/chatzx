@@ -21,6 +21,9 @@ public class UsbPermissionReceiver extends BroadcastReceiver {
         String name = device.getDeviceName();
         if (granted) {
             Toast.makeText(context, "USB access granted for " + name, Toast.LENGTH_SHORT).show();
+            if (context instanceof MainActivity) {
+                ((MainActivity) context).onUsbPermissionGranted(name);
+            }
         } else {
             Toast.makeText(context, "USB access denied for " + name, Toast.LENGTH_SHORT).show();
         }

@@ -928,18 +928,22 @@ class MessagingBackend:
         self.destination.announce(app_data=announce_data)
         if unicast_subnet is None:
             unicast_subnet = True
-        if peer_ip or unicast_subnet:
+        lan_ok = lan_ip_reachable()
+        if peer_ip or (unicast_subnet and lan_ok):
             packet = build_announce_packet(self.destination, announce_data)
             sent = unicast_announce_packet(
                 packet,
                 peer_ip=peer_ip,
-                subnet_probe=unicast_subnet,
+                subnet_probe=unicast_subnet and lan_ok,
             )
             if sent:
                 hint = f" + {sent} unicast" if sent else ""
                 print(f"[messaging] Announced on LAN (name={self.display_name or 'none'}{hint})")
                 return
-        print(f"[messaging] Announced on LAN (name={self.display_name or 'none'})")
+        if lan_ok:
+            print(f"[messaging] Announced on LAN (name={self.display_name or 'none'})")
+        else:
+            print(f"[messaging] Announced on RNS (serial/other — LAN disconnected)")
 
     def _lan_transport_ready(self):
         if is_android():

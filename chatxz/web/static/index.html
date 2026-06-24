@@ -742,6 +742,8 @@ body.modal-open #save-contact-dialog * { pointer-events: auto; user-select: auto
   padding: 6px 0; border-bottom: 1px solid var(--border);
 }
 .net-row:last-child { border-bottom: none; }
+.net-row-action { cursor: pointer; }
+.net-row-action:hover .net-value { text-decoration: underline; }
 .net-label { color: var(--text3); flex-shrink: 0; }
 .net-value { color: var(--text); text-align: right; word-break: break-all; }
 .net-iface {
@@ -1244,6 +1246,9 @@ body.sidebar-open #sidebar-backdrop { display: block; }
 
 <script>
 let ws = null;
+let wsGen = 0;
+let wsReconnectTimer = null;
+let networkRefreshTimer = null;
 let myHash = '';
 let viewingPeer = null;
 let linkPeer = null;
@@ -1648,16 +1653,34 @@ function fetchIdentity() {
   pollQueue();
 }
 
+function closeWS() {
+  wsGen++;
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+  }
+  if (!ws) return;
+  const old = ws;
+  ws = null;
+  old.onclose = null;
+  old.onerror = null;
+  try { old.close(1000, 'client closing'); } catch (_) {}
+}
+
 function connectWS() {
+  closeWS();
+  const gen = wsGen;
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(proto + '//' + location.host + '/ws');
   ws.onopen = () => {
+    if (gen !== wsGen) return;
     console.log('[ws] Connected');
     setWsStatus('connected', 'Connected');
     fetchIdentity();
     syncUiState();
   };
   ws.onmessage = e => {
+    if (gen !== wsGen) return;
     console.log('[ws] Received:', e.data.substring(0, 200));
     try {
       const msg = JSON.parse(e.data);
@@ -1665,15 +1688,20 @@ function connectWS() {
     } catch(_) {}
   };
   ws.onclose = () => {
+    if (gen !== wsGen) return;
+    ws = null;
     console.log('[ws] Disconnected, reconnecting...');
     setWsStatus('disconnected', 'Offline');
     setLinkStatus('disconnected', 'Inactive');
-    setTimeout(connectWS, 2000);
+    wsReconnectTimer = setTimeout(connectWS, 2000);
   };
   ws.onerror = (e) => {
+    if (gen !== wsGen) return;
     console.error('[ws] Error:', e);
   };
 }
+
+window.addEventListener('pagehide', closeWS);
 
 function handleWSMessage(msg) {
   console.log('[ws] Message type:', msg.type);
@@ -2600,10 +2628,31 @@ function saveNetworkAutoReset() {
   }).catch(() => {});
 }
 
-function refreshNetworkStatus() {
+function startNetworkAutoRefresh() {
+  stopNetworkAutoRefresh();
+  networkRefreshTimer = setInterval(() => {
+    if (settingsShown) refreshNetworkStatus(true);
+  }, 5000);
+}
+
+function stopNetworkAutoRefresh() {
+  if (networkRefreshTimer) {
+    clearInterval(networkRefreshTimer);
+    networkRefreshTimer = null;
+  }
+}
+
+function requestMicFromNetworkPanel() {
+  if (window.chatxzAndroid) {
+    window.chatxzAndroid.requestAudioPermission();
+    toast('Allow microphone access to record voice notes');
+  }
+}
+
+function refreshNetworkStatus(silent) {
   const panel = document.getElementById('network-status-panel');
   if (!panel) return;
-  panel.textContent = 'Loading...';
+  if (!silent) panel.textContent = 'Loading...';
   fetch('/api/network-status')
     .then(r => r.json())
     .then(d => {
@@ -2617,8 +2666,9 @@ function refreshNetworkStatus() {
       html += row('Discovery listening', d.discovery_active ? 'yes' : 'no (tap Announce)', !!d.discovery_active);
       html += row('RNS UDP', d.rns_udp_port ? d.rns_udp_port + ' (required for chat)' : '4242', true);
       html += row('Beacon UDP', d.beacon_udp_port || 8743);
-      html += row('LAN IP', d.lan_ip || 'none', !!d.lan_ip);
-      html += row('Broadcast', d.broadcast || 'none', !!d.broadcast);
+      const lanConnected = d.lan_connected !== false && !!d.lan_ip;
+      html += row('LAN IP', lanConnected ? d.lan_ip : 'disconnected', lanConnected);
+      html += row('Broadcast', lanConnected ? (d.broadcast || 'none') : 'disconnected', lanConnected);
       html += row('RNS ready', d.rns_ready ? 'yes' : 'no', d.rns_ready);
       if (d.rns_error) html += row('RNS error', d.rns_error, false);
       html += row('Link active', d.link_active ? 'yes — encrypted chat session' : 'no — not connected to a peer', d.link_active);
@@ -2635,7 +2685,11 @@ function refreshNetworkStatus() {
       html += row('WS clients', (d.ws_clients ?? 0) + ' (browser tabs on this device)', true);
       if (platform === 'android' && window.chatxzAndroid) {
         const micOk = window.chatxzAndroid.hasAudioPermission();
-        html += row('Microphone', micOk ? 'allowed' : 'denied — tap 🎤 to request', micOk);
+        if (micOk) {
+          html += row('Microphone', 'allowed', true);
+        } else {
+          html += '<div class="net-row net-row-action" onclick="requestMicFromNetworkPanel()"><span class="net-label">Microphone</span><span class="net-value net-bad">denied — tap to request</span></div>';
+        }
       }
       if (d.beacon) {
         html += row('Beacon mode', (d.beacon.interval_sec ? 'auto' : 'manual only'), !d.beacon.interval_sec);
@@ -2716,6 +2770,7 @@ function toggleSettings() {
     panel.classList.add('open');
     btn?.classList.add('active');
     refreshNetworkStatus();
+    startNetworkAutoRefresh();
     loadRnsInterfaces();
     fetch('/api/settings')
       .then(r => r.json())
@@ -2740,6 +2795,7 @@ function toggleSettings() {
   } else {
     panel.classList.remove('open');
     btn?.classList.remove('active');
+    stopNetworkAutoRefresh();
   }
 }
 

@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.72
+**Current version:** 0.3.75
 
 ## Download
 
@@ -34,7 +34,7 @@ Your identity, chats, and received files live in **`chatxz-data\`** next to the 
 
 1. Download the **`.apk`** from [Releases](https://github.com/narl3yyy-svg/chatxz/releases).
 2. Install and open chatxz.
-3. Grant notification permission when asked. Microphone is requested when you tap 🎤 to record a voice note.
+3. Grant notification permission when asked. Microphone is requested when you tap 🎤 to record a voice note, or tap **Microphone** in Settings → Network.
 
 Reinstalling the app creates a **new identity** — update saved contacts after reinstall.
 
@@ -141,6 +141,9 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.75** — LAN carrier detection (shows **disconnected** when cable/Wi-Fi unplugged); serial-only announces when LAN is down; network panel auto-refreshes every 5s; fix WebSocket client count leak on Android restarts; tap Microphone row in Network settings to request permission; Android USB grant triggers serial hot-add
+- **v0.3.74** — Serial failover: prune stale LAN paths when ethernet drops; serial-first reconnect; hot-add serial on settings Apply; link-active requires healthy transport
+- **v0.3.73** — CI: macOS DMG build accepts VERSION env var from workflow
 - **v0.3.72** — Fix cross-talk: stop merging unrelated contacts into one alias group; route messages strictly by `chat_peer`; per-peer queue counter; prune stale queue entries
 - **v0.3.71** — Fix multi-peer chat routing (messages no longer leak into wrong peer thread); keep chat history when links drop; persist all peer threads to disk; Android notification tap opens the correct chat
 - **v0.3.70** — macOS portable `.dmg` + `.app` (CI build); `scripts/install-macos.sh`; source workflow `./run.sh web --share` on Mac

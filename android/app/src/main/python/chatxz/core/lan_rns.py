@@ -6,16 +6,15 @@ import time
 import RNS
 
 from chatxz.core.lan_targets import directed_broadcasts, efficient_unicast_hosts
-from chatxz.utils.platform import is_android, lan_ip, list_network_interfaces
+from chatxz.utils.platform import is_android, lan_connected, lan_ip, list_network_interfaces
 
 RNS_PORT = 4242
 
 
 def lan_ip_reachable():
-    """True when this host has a routable non-loopback IPv4 address for LAN chat."""
+    """True when a live LAN link exists (carrier up), not a stale unplugged address."""
     try:
-        ip = lan_ip()
-        return bool(ip and not ip.startswith("127."))
+        return bool(lan_connected())
     except Exception:
         return False
 
