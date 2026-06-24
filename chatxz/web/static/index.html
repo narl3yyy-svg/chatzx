@@ -1050,7 +1050,7 @@ body.sidebar-open #sidebar-backdrop { display: block; }
           <div class="settings-section">
             <label>LAN network interface</label>
             <select id="settings-lan-interface" onchange="saveLanInterface()">
-              <option value="">Auto (first link-up)</option>
+              <option value="">Auto (Ethernet/Wi-Fi before VPN)</option>
             </select>
             <p class="field-hint">Pick which NIC chatxz uses for LAN IP, beacon, and UDP discovery — including <strong>VPN tunnels</strong> (WireGuard, OpenVPN, Tailscale). Use <strong>Auto</strong> to prefer physical Ethernet/Wi-Fi over VPN. Restart chatxz after changing if peers stop seeing you.</p>
           </div>
@@ -2639,7 +2639,7 @@ function populateLanInterfaceSelect(interfaces, selected) {
   const sel = document.getElementById('settings-lan-interface');
   if (!sel) return;
   const pinned = selected !== undefined ? selected : sel.value;
-  let html = '<option value="">Auto (first link-up)</option>';
+  let html = '<option value="">Auto (Ethernet/Wi-Fi before VPN)</option>';
   (interfaces || []).forEach(iface => {
     const name = iface.name || 'iface';
     const ip = iface.ip && iface.ip !== 'disconnected' ? iface.ip : 'offline';
