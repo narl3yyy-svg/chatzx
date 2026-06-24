@@ -446,6 +446,27 @@ def list_serial_ports():
     return [by_device[k] for k in sorted(by_device)]
 
 
+def tcp_client_target_is_local(target_host):
+    host = (target_host or "").strip().lower()
+    if not host or host in ("127.0.0.1", "localhost", "0.0.0.0"):
+        return True
+    try:
+        from chatxz.utils.platform import local_ipv4_addresses
+        return host in {ip.lower() for ip in local_ipv4_addresses()}
+    except Exception:
+        return False
+
+
+def tcp_client_target_warning(target_host):
+    if not tcp_client_target_is_local(target_host):
+        return None
+    return (
+        "TCP Client target is this machine. For LAN peers, use TCP Hub Server here "
+        "and TCP Client on the remote device (or rely on UDP LAN when both sides "
+        "have UDP Interface enabled)."
+    )
+
+
 def update_interface(items, iface_id, updates):
     items = normalize_interface_list(items)
     if not iface_id:

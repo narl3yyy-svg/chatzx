@@ -51,6 +51,7 @@ from chatxz.core.rns_interfaces import (
     serial_port_status,
     serial_runtime_active,
     update_interface,
+    tcp_client_target_warning,
     user_has_serial_group_access,
 )
 from chatxz.utils.helpers import (
@@ -1652,11 +1653,18 @@ class ChatWebServer:
                 msg = "Settings saved. Select a USB port and grant access if needed."
             else:
                 msg = "Interface updated."
+            warning = None
+            for iface in settings.get("rns_interfaces") or []:
+                if iface.get("type") == "TCPClientInterface":
+                    warning = tcp_client_target_warning(iface.get("target_host"))
+                    if warning:
+                        break
             return web.json_response({
                 "status": "ok",
                 "interfaces": self._interfaces_for_api(settings["rns_interfaces"]),
                 "serial_hot_added": bool(serial_hot),
                 "message": msg,
+                "warning": warning,
             })
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
@@ -2289,12 +2297,15 @@ class ChatWebServer:
         if is_android():
             return web.json_response({"status": "restarting", "android": True})
         import sys, os
-        args = [sys.executable]
-        if sys.argv and (sys.argv[0].endswith('.py') or os.sep in sys.argv[0]):
-            args.append(sys.argv[0])
+        if getattr(sys, "frozen", False):
+            args = [sys.executable]
         else:
-            args += ["-m", "chatxz.web.server"]
-        args += sys.argv[1:]
+            args = [sys.executable]
+            if sys.argv and (sys.argv[0].endswith('.py') or os.sep in sys.argv[0]):
+                args.append(sys.argv[0])
+            else:
+                args += ["-m", "chatxz.web.server"]
+            args += sys.argv[1:]
         print(f"[restart] Re-exec'ing: {args}")
         asyncio.get_event_loop().call_later(0.3, lambda: (sys.stdout.flush(), os.execv(sys.executable, args)))
         return web.json_response({"status": "restarting"})

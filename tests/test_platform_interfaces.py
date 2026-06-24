@@ -75,5 +75,59 @@ class LinuxInterfaceHelpers(unittest.TestCase):
                 self.assertTrue(plat.physical_lan_reachable())
 
 
+class WindowsInterfaceHelpers(unittest.TestCase):
+    def test_windows_enumerate_parses_powershell_json(self):
+        payload = (
+            '[{"name":"Ethernet 2","ip":"10.0.47.37","up":true,"gateway_iface":true},'
+            '{"name":"Tailscale","ip":"100.64.0.2","up":true,"gateway_iface":false}]'
+        )
+        with patch.object(plat.subprocess, "run") as mock_run:
+            mock_run.return_value.stdout = payload
+            mock_run.return_value.returncode = 0
+            entries = plat._windows_enumerate_interfaces()
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0]["ip"], "10.0.47.37")
+        self.assertEqual(entries[0]["broadcast"], "10.0.47.255")
+        self.assertEqual(entries[1]["kind"], "vpn")
+
+    def test_desktop_lan_ip_prefers_gateway_interface(self):
+        entries = [
+            {"name": "Tailscale", "kind": "vpn", "ip": "100.64.0.2", "up": True},
+            {
+                "name": "Ethernet 2",
+                "kind": "ethernet",
+                "ip": "10.0.47.37",
+                "up": True,
+                "gateway_iface": True,
+            },
+            {
+                "name": "Ethernet 2",
+                "kind": "ethernet",
+                "ip": "192.168.1.37",
+                "up": True,
+                "gateway_iface": False,
+            },
+        ]
+        with patch.object(plat, "get_lan_interface_preference", return_value=None):
+            with patch.object(plat, "_desktop_enumerate_interfaces", return_value=entries):
+                self.assertEqual(plat._desktop_lan_ip(), "10.0.47.37")
+
+    def test_physical_lan_true_on_windows_entries(self):
+        entries = [
+            {
+                "name": "Ethernet 2",
+                "kind": "ethernet",
+                "ip": "10.0.47.37",
+                "up": True,
+                "gateway_iface": True,
+            },
+        ]
+        with patch.object(plat, "is_android", return_value=False):
+            with patch.object(plat.sys, "platform", "win32"):
+                with patch.object(plat, "_desktop_enumerate_interfaces", return_value=entries):
+                    self.assertTrue(plat.physical_lan_reachable())
+                    self.assertTrue(plat.lan_connected())
+
+
 if __name__ == "__main__":
     unittest.main()

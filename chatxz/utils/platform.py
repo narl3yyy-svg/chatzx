@@ -1,6 +1,9 @@
 """Platform detection and storage paths (desktop vs Android/Chaquopy)."""
 
+import json
 import os
+import re
+import subprocess
 import sys
 
 _android = None
@@ -364,10 +367,221 @@ def _linux_enumerate_interfaces():
     return entries
 
 
+def _host_ipv4_broadcast(ip):
+    parts = (ip or "").split(".")
+    if len(parts) != 4 or ip.startswith("169.254."):
+        return None
+    return f"{parts[0]}.{parts[1]}.{parts[2]}.255"
+
+
+def _windows_is_vpn_iface(name):
+    low = (name or "").lower()
+    return any(token in low for token in (
+        "wireguard", "wg", "tailscale", "nordlynx", "openvpn", "tap", "tun",
+        "zerotier", "zt", "proton", "vpn", "wintun",
+    ))
+
+
+def _windows_iface_kind(name):
+    if _windows_is_vpn_iface(name):
+        return "vpn"
+    low = (name or "").lower()
+    if "wi-fi" in low or "wifi" in low or "wireless" in low or low.startswith("wlan"):
+        return "wifi"
+    if "ethernet" in low or low.startswith("eth"):
+        return "ethernet"
+    return "other"
+
+
+def _windows_enumerate_interfaces():
+    """Enumerate IPv4 interfaces on Windows via PowerShell (Win10+)."""
+    script = r"""
+$gwIndex = $null
+try {
+  $route = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+    Where-Object { $_.NextHop -and $_.NextHop -ne '0.0.0.0' } |
+    Sort-Object RouteMetric, InterfaceMetric |
+    Select-Object -First 1
+  if ($route) { $gwIndex = $route.InterfaceIndex }
+} catch {}
+
+$rows = @()
+$addrs = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' }
+foreach ($addr in $addrs) {
+  $adapter = Get-NetAdapter -InterfaceIndex $addr.InterfaceIndex -ErrorAction SilentlyContinue
+  $up = $false
+  if ($adapter) { $up = ($adapter.Status -eq 'Up') }
+  $rows += [PSCustomObject]@{
+    name = $addr.InterfaceAlias
+    ip = $addr.IPAddress
+    up = $up
+    gateway_iface = ($addr.InterfaceIndex -eq $gwIndex)
+  }
+}
+if ($rows.Count -eq 0) { '[]' } else { $rows | ConvertTo-Json -Compress }
+"""
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+        raw = (proc.stdout or "").strip()
+        if not raw:
+            return []
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            data = [data]
+    except Exception:
+        return []
+
+    entries = []
+    for row in data or []:
+        name = str(row.get("name") or "").strip()
+        ip = str(row.get("ip") or "").strip()
+        up = bool(row.get("up"))
+        if not name or not ip:
+            continue
+        subnet = _host_ipv4_broadcast(ip) if up else None
+        entries.append({
+            "name": name,
+            "kind": _windows_iface_kind(name),
+            "ip": ip if up else "disconnected",
+            "broadcast": subnet if up else None,
+            "subnet_broadcast": subnet if up else None,
+            "up": up,
+            "gateway_iface": bool(row.get("gateway_iface")),
+        })
+    return entries
+
+
+def _darwin_is_vpn_iface(name):
+    low = (name or "").lower()
+    return any(token in low for token in (
+        "utun", "tun", "tap", "ppp", "ipsec", "wg", "tailscale", "zerotier", "vpn",
+    ))
+
+
+def _darwin_iface_kind(name):
+    if _darwin_is_vpn_iface(name):
+        return "vpn"
+    low = (name or "").lower()
+    if low.startswith(("en", "eth")):
+        return "ethernet"
+    if low.startswith(("wl", "wlan", "wifi")):
+        return "wifi"
+    return "other"
+
+
+def _darwin_enumerate_interfaces():
+    """Enumerate IPv4 interfaces on macOS via ifconfig."""
+    try:
+        proc = subprocess.run(
+            ["ifconfig"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+        text = proc.stdout or ""
+    except Exception:
+        return []
+
+    entries = []
+    current = None
+    for line in text.splitlines():
+        if line and not line.startswith(("\t", " ")):
+            current = line.split(":")[0].strip()
+            continue
+        if not current or current == "lo0":
+            continue
+        match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", line)
+        if not match:
+            continue
+        ip = match.group(1)
+        if ip.startswith("127.") or ip.startswith("169.254."):
+            continue
+        flags = line.strip()
+        up = "status: active" in flags or "<UP" in flags or "UP," in flags
+        subnet = _host_ipv4_broadcast(ip) if up else None
+        entries.append({
+            "name": current,
+            "kind": _darwin_iface_kind(current),
+            "ip": ip if up else "disconnected",
+            "broadcast": subnet if up else None,
+            "subnet_broadcast": subnet if up else None,
+            "up": up,
+        })
+    return entries
+
+
+def _desktop_enumerate_interfaces():
+    if sys.platform == "win32":
+        entries = _windows_enumerate_interfaces()
+        if entries:
+            return entries
+    elif sys.platform == "darwin":
+        entries = _darwin_enumerate_interfaces()
+        if entries:
+            return entries
+    return _linux_enumerate_interfaces()
+
+
+def _desktop_iface_auto_priority(entry):
+    if entry.get("kind") == "vpn":
+        return 10
+    ip = str(entry.get("ip") or "")
+    if ip.startswith("169.254."):
+        return 20
+    if entry.get("gateway_iface"):
+        return 120
+    if ip.startswith(("10.", "192.168.", "172.")):
+        return 100
+    return 50
+
+
+def _desktop_lan_ip_from_name(ifname):
+    for entry in _desktop_enumerate_interfaces():
+        if entry.get("name") != ifname:
+            continue
+        if entry.get("up") and entry.get("ip") not in (None, "disconnected"):
+            ip = str(entry.get("ip") or "")
+            if not ip.startswith("169.254."):
+                return ip
+    return None
+
+
+def _desktop_lan_ip():
+    pref = get_lan_interface_preference()
+    if pref:
+        return _desktop_lan_ip_from_name(pref)
+
+    best_ip = None
+    best_score = -1
+    for entry in _desktop_enumerate_interfaces():
+        if entry.get("kind") == "vpn":
+            continue
+        if not entry.get("up"):
+            continue
+        ip = entry.get("ip")
+        if not ip or ip == "disconnected" or str(ip).startswith("169.254."):
+            continue
+        score = _desktop_iface_auto_priority(entry)
+        if score > best_score:
+            best_score = score
+            best_ip = ip
+    return best_ip
+
+
 def enumerate_lan_interfaces():
     """All local NICs for the LAN interface picker (ignores preference)."""
     if is_android():
         return _java_enumerate_interfaces()
+    if sys.platform in ("win32", "darwin"):
+        return _desktop_enumerate_interfaces()
     return _linux_enumerate_interfaces()
 
 
@@ -398,7 +612,12 @@ def physical_lan_reachable():
                 if not str(entry.get("ip", "")).startswith("169.254."):
                     return True
         return False
-    for entry in _linux_enumerate_interfaces():
+    entries = (
+        _desktop_enumerate_interfaces()
+        if sys.platform in ("win32", "darwin")
+        else _linux_enumerate_interfaces()
+    )
+    for entry in entries:
         if entry.get("kind") == "vpn":
             continue
         if entry.get("up") and entry.get("ip") not in (None, "disconnected"):
@@ -419,6 +638,8 @@ def lan_connected():
         if _java_lan_addresses():
             return True
         return _android_connectivity_ip() is not None
+    if sys.platform in ("win32", "darwin"):
+        return _desktop_lan_ip() is not None
     return _linux_lan_ip() is not None
 
 
@@ -440,9 +661,14 @@ def lan_ip():
             return connectivity_ip
         return None
 
-    ip = _linux_lan_ip()
-    if ip:
-        return ip
+    if sys.platform in ("win32", "darwin"):
+        ip = _desktop_lan_ip()
+        if ip:
+            return ip
+    else:
+        ip = _linux_lan_ip()
+        if ip:
+            return ip
 
     if not lan_connected():
         return None
@@ -465,6 +691,11 @@ def list_network_interfaces():
     if is_android():
         return _filter_interfaces_for_lan(_java_enumerate_interfaces())
 
+    if sys.platform in ("win32", "darwin"):
+        desktop_entries = _desktop_enumerate_interfaces()
+        if desktop_entries:
+            return _filter_interfaces_for_lan(desktop_entries)
+
     linux_entries = _linux_enumerate_interfaces()
     if linux_entries:
         return _filter_interfaces_for_lan(linux_entries)
@@ -482,6 +713,20 @@ def list_network_interfaces():
             "up": True,
         }]
     return []
+
+
+def local_ipv4_addresses():
+    """All non-loopback IPv4 addresses on this host."""
+    found = set()
+    for entry in enumerate_lan_interfaces():
+        ip = entry.get("ip")
+        if entry.get("up") and ip and ip != "disconnected":
+            if not str(ip).startswith(("127.", "169.254.")):
+                found.add(str(ip))
+    if found:
+        return sorted(found)
+    ip = lan_ip()
+    return [ip] if ip else []
 
 
 def lan_broadcast():

@@ -147,6 +147,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.89** — Windows/macOS LAN detection: enumerate NICs via PowerShell/ifconfig (fixes false "LAN disconnected" on Windows portable); prefer default-gateway subnet IP on multi-homed hosts; frozen exe restart no longer breaks when install path contains spaces; warn when TCP Client targets this machine
 - **v0.3.88** — Inbound link fixes: resolve peer from link remote identity (not blind discovery guess); adopt existing inbound links before outbound connect; promote inbound sessions when peer hash was unknown; fixes split-brain startup where one side queued messages for minutes
 - **v0.3.87** — Dual-path serial failover fixes: restore serial in RNS config when port accessible; detect peer LAN down (HTTP wake timeout) and switch to serial even when local LAN is up; accept incoming serial links during failover; stop premature UDP upgrade when peer path is still serial; serial retry after LAN connect failure; eager runtime serial ensure on failover/startup
 - **v0.3.86** — LAN-primary failover: prefer UDP when RJ45/Wi-Fi up, serial when down; register outbound links even if poll misses ACTIVE; pick best healthy link per send; serial hot-add only (no duplicate config interface)
