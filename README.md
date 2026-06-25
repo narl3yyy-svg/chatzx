@@ -2,31 +2,40 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.114
+**Current version:** 0.3.115
 
 ## Download
 
-Pre-built binaries are on **[GitHub Releases](https://github.com/narl3yyy-svg/chatxz/releases)**.
+**Android APK** builds are on **[GitHub Releases](https://github.com/narl3yyy-svg/chatxz/releases)**. Windows, macOS, and Linux run from a **git clone** (same workflow everywhere).
 
-| Platform | File | Install |
-|----------|------|---------|
-| **Windows 11** | `chatxz-X.Y.Z-windows-portable.zip` | Unzip → double-click `chatxz.exe` |
-| **macOS** | `chatxz-X.Y.Z-macos.zip` *(optional)* | Unzip → open `chatxz.app`, **or** clone repo and `./run.sh web --share` (same as Linux) |
-| **Android** | `chatxz-X.Y.Z.apk` | Sideload (arm64) |
-| **Linux / macOS (source)** | Git clone | `./run.sh web --share` |
-
-Portable Windows, macOS, and Android builds are published automatically on every `v*` tag (or workflow dispatch).
+| Platform | Install |
+|----------|---------|
+| **Android** | `chatxz-X.Y.Z.apk` from Releases — sideload (arm64) |
+| **Windows** | `git clone` → `install-windows.ps1` → `.\run.ps1 web --share` |
+| **macOS** | `git clone` → `install-macos.sh` → `./run.sh web --share` |
+| **Linux** | `git clone` → `install-arch.sh` / `install-debian.sh` → `./run.sh web --share` |
 
 ---
 
-## Windows (portable)
+## Windows (from source)
 
-1. Download **`chatxz-0.3.110-windows-portable.zip`** from [Releases](https://github.com/narl3yyy-svg/chatxz/releases).
-2. Unzip anywhere (e.g. `C:\Users\You\chatxz`).
-3. Open the `chatxz` folder and double-click **`chatxz.exe`**.
-4. Browser opens at **http://127.0.0.1:8742**. Allow Windows Firewall on **private** networks if prompted (UDP 4242, TCP 8742).
+1. Install [Git for Windows](https://git-scm.com/download/win) and ensure **Python 3.10+** is on PATH ([python.org](https://www.python.org/downloads/windows/) — check **Add python.exe to PATH**), or let the installer use `winget`.
+2. Clone and install:
 
-Your identity, chats, and received files live in **`chatxz-data\`** next to the exe — back up or move that whole folder to relocate.
+```powershell
+git clone https://github.com/narl3yyy-svg/chatxz.git
+cd chatxz
+powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
+.\run.ps1 web --share
+```
+
+Or double-click **`install-windows.cmd`** once, then run `.\run.ps1 web --share` from PowerShell in the repo folder.
+
+3. Browser opens at **http://127.0.0.1:8742**. Allow Windows Firewall on **private** networks (UDP 4242, 8743; TCP 8742).
+
+**Data:** `%USERPROFILE%\.config\chatxz\` (same layout as Linux). For repo-local data like the old portable exe, set `CHATXZ_PORTABLE` to the repo folder before starting.
+
+**Update:** `git pull` then `.\run.ps1 web --share` (re-run `install-windows.ps1` only if dependencies changed).
 
 ---
 
@@ -40,15 +49,7 @@ Reinstalling the app creates a **new identity** — update saved contacts after 
 
 ---
 
-## macOS (portable .zip)
-
-1. Download **`chatxz-X.Y.Z-macos.zip`** from [Releases](https://github.com/narl3yyy-svg/chatxz/releases).
-2. Unzip and double-click **chatxz.app** — a Terminal window opens and your browser loads **http://127.0.0.1:8742**.
-3. If Gatekeeper blocks the app: right-click → **Open** (first launch only).
-
-Your identity, chats, and received files live in **`chatxz-data/`** next to the app (same layout as Windows portable). LAN access is enabled by default (like `./run.sh web --share`).
-
-**From source (Arch-style on Mac):**
+## macOS
 
 ```bash
 git clone https://github.com/narl3yyy-svg/chatxz.git
@@ -56,6 +57,8 @@ cd chatxz
 bash scripts/install-macos.sh
 ./run.sh web --share
 ```
+
+Open **http://localhost:8742**. Config in `~/.config/chatxz/`.
 
 ---
 
@@ -120,8 +123,8 @@ Chat and file payloads never leave the RNS encrypted link. Port 8742 serves only
 
 | Platform | Config & history |
 |----------|------------------|
-| Linux | `~/.config/chatxz/` |
-| Windows portable | `chatxz-data\` beside `chatxz.exe` |
+| Linux / macOS / Windows (source) | `~/.config/chatxz/` (or `%USERPROFILE%\.config\chatxz\`) |
+| Portable / `CHATXZ_PORTABLE` | `chatxz-data/` beside app or env path |
 | Android | App private storage |
 
 ---
@@ -129,16 +132,11 @@ Chat and file payloads never leave the RNS encrypted link. Port 8742 serves only
 ## Development
 
 ```bash
-./run.sh web --share --verbose   # RNS debug logs
+./run.sh web --share --verbose   # RNS debug logs (Linux/macOS)
 ./run.sh web --share --debug     # Extreme RNS + chat trace
+.\run.ps1 web --share --verbose  # Windows
 ./scripts/bump-version.sh 0.3.52 # Bump version
 bash scripts/sync-android.sh     # Before Android builds
-```
-
-**Build Windows zip locally** (on Windows):
-
-```powershell
-powershell -ExecutionPolicy Bypass -File packaging\windows\build-portable.ps1
 ```
 
 **Build Android APK locally:**
@@ -153,6 +151,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.115** — Windows/macOS desktop: **source-only** (`run.ps1` / `run.sh`); `scripts/install-windows.ps1` + `install-windows.cmd`; CI releases **Android APK only** (no Windows exe zip, no macOS zip)
 - **v0.3.114** — Windows: setup wizard **Get started** no longer hangs (single config write, lighter announce); IPv4 picker lists **every address** on each adapter (custom aliases included), stored as `NIC|ip`; faster first-run interface scan
 - **v0.3.113** — Mac/Windows: auto-repair duplicate UDP LAN interfaces on startup (`Address already in use` / errno 48); beacon broadcasts scoped to pinned/default NIC (fixes multi-subnet spam freeze); UI error banner + **Repair interfaces** button; block adding duplicate UDP/TCP LAN presets
 - **v0.3.112** — Windows crash fix: dedupe duplicate UDP LAN interfaces (two on port 4242 killed RNS after ~12s); RNS init errors no longer `sys.exit` the whole server; Windows stale `chatxz.exe` cleanup via `netstat`/`taskkill`; safer Windows restart (spawn new process instead of `execv`)

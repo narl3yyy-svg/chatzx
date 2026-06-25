@@ -65,7 +65,8 @@ case "${1:-}" in
         echo "  ./run.sh web --share    # Linux / macOS LAN access"
         echo "  ./run.sh cli --daemon"
         echo
-        echo "macOS portable: see GitHub Releases (.zip) or: bash scripts/install-macos.sh"
+        echo "Windows: powershell -ExecutionPolicy Bypass -File scripts/install-windows.ps1  then  .\\run.ps1 web --share"
+        echo "macOS: bash scripts/install-macos.sh  then  ./run.sh web --share"
         echo "  ./run.sh cli --connect <hash> --send hello"
         ;;
 esac

@@ -1,5 +1,5 @@
-# Builds chatxz releases on version tags: Android APK + Windows portable + macOS zip.
-name: Build Releases
+# Builds chatxz Android APK on version tags (desktop: clone repo + run.sh / run.ps1).
+name: Build Android APK
 
 on:
   push:
@@ -82,121 +82,14 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           name: chatxz v${{ steps.version.outputs.version }}
           body: |
-            ## Downloads
+            ## Download
 
-            | Platform | File |
-            |----------|------|
-            | Android | `${{ steps.version.outputs.apk }}` |
-            | Windows 11 portable | `chatxz-${{ steps.version.outputs.version }}-windows-portable.zip` |
-            | macOS | `chatxz-${{ steps.version.outputs.version }}-macos.zip` |
+            | Platform | Install |
+            |----------|---------|
+            | **Android** | `${{ steps.version.outputs.apk }}` — sideload (arm64) |
+            | **Windows** | `git clone` → `powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1` → `.\run.ps1 web --share` |
+            | **macOS / Linux** | `git clone` → `bash scripts/install-macos.sh` or `install-arch.sh` → `./run.sh web --share` |
 
-            **Windows:** unzip, double-click `chatxz.exe`. Data in `chatxz-data\` beside the exe.
-
-            **macOS:** unzip, open `chatxz.app`, double-click to start. Data in `chatxz-data/` beside the app. From source: `./run.sh web --share`.
+            Desktop builds are **source-only** (no portable exe / mac zip). Releases ship the Android APK only.
           files: ${{ steps.version.outputs.apk }}
           make_latest: true
-
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - name: Determine release version
-        id: version
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-            TAG="${GITHUB_REF_NAME}"
-          else
-            INPUT="${{ github.event.inputs.version }}"
-            if [ -n "$INPUT" ]; then
-              VERSION="${INPUT#v}"
-            else
-              VERSION=$(grep '__version__' chatxz/_version.py | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-            fi
-            TAG="v${VERSION}"
-          fi
-          ZIP="chatxz-${VERSION}-windows-portable.zip"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "zip=${ZIP}" >> "$GITHUB_OUTPUT"
-
-      - name: Build portable zip
-        shell: pwsh
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install "rns>=1.3.0" "aiohttp>=3.9.0" pyinstaller
-          python -m pip install -e .
-          pyinstaller --noconfirm packaging/windows/chatxz-portable.spec
-          Copy-Item packaging/windows/README-PORTABLE.txt dist/chatxz/ -Force
-          $zip = "${{ steps.version.outputs.zip }}"
-          Compress-Archive -Path dist/chatxz -DestinationPath "dist/$zip" -Force
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: chatxz-${{ steps.version.outputs.version }}-windows-portable
-          path: dist/${{ steps.version.outputs.zip }}
-
-      - name: Publish Windows zip to GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          files: dist/${{ steps.version.outputs.zip }}
-          append_body: true
-          make_latest: false
-
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - name: Determine release version
-        id: version
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-            TAG="${GITHUB_REF_NAME}"
-          else
-            INPUT="${{ github.event.inputs.version }}"
-            if [ -n "$INPUT" ]; then
-              VERSION="${INPUT#v}"
-            else
-              VERSION=$(grep '__version__' chatxz/_version.py | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-            fi
-            TAG="v${VERSION}"
-          fi
-          ZIP="chatxz-${VERSION}-macos.zip"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "zip=${ZIP}" >> "$GITHUB_OUTPUT"
-
-      - name: Build macOS .app and zip
-        shell: bash
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          chmod +x packaging/macos/build-portable.sh
-          bash packaging/macos/build-portable.sh
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: chatxz-${{ steps.version.outputs.version }}-macos
-          path: dist/${{ steps.version.outputs.zip }}
-
-      - name: Publish macOS zip to GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          files: dist/${{ steps.version.outputs.zip }}
-          append_body: true
-          make_latest: false
