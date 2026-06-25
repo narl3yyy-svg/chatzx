@@ -602,6 +602,29 @@ body::before {
   width: 100%; height: 40px; border-radius: var(--radius-md);
   border: 1px solid var(--border); background: var(--surface2);
   color: var(--text); padding: 0 12px; font-family: inherit;
+  color-scheme: dark;
+}
+.setup-step select {
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text2) 50%),
+    linear-gradient(135deg, var(--text2) 50%, transparent 50%);
+  background-position: calc(100% - 18px) calc(50% + 2px), calc(100% - 12px) calc(50% + 2px);
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+  padding-right: 32px;
+}
+.setup-step select option {
+  background: var(--surface2);
+  color: var(--text);
+}
+.setup-step .field-row {
+  display: flex; gap: 8px; align-items: stretch;
+}
+.setup-step .field-row input { flex: 1; min-width: 0; }
+.setup-step .field-row button {
+  width: auto; white-space: nowrap; padding: 0 12px; height: 40px;
+  border-radius: var(--radius-md); border: 1px solid var(--border);
+  background: var(--surface2); color: var(--text); cursor: pointer;
 }
 .setup-toggle {
   display: flex; align-items: flex-start; gap: 10px;
@@ -997,8 +1020,29 @@ body.sidebar-open #sidebar-backdrop { display: block; }
       </select>
     </div>
     <div class="setup-step">
+      <label for="setup-retention">Chat history retention</label>
+      <select id="setup-retention">
+        <option value="1d">1 day</option>
+        <option value="1w">1 week</option>
+        <option value="1m">1 month</option>
+        <option value="6m">6 months</option>
+        <option value="12m">1 year</option>
+        <option value="never" selected>Forever</option>
+        <option value="on_restart">Until restart</option>
+        <option value="on_close">Until close</option>
+      </select>
+    </div>
+    <div class="setup-step">
+      <label for="setup-received-dir">Received files folder</label>
+      <div class="field-row">
+        <input id="setup-received-dir" placeholder="/home/user/Downloads/chatxz" spellcheck="false">
+        <button type="button" onclick="pickSetupReceivedDir()">Select folder</button>
+      </div>
+      <p class="field-hint" id="setup-received-hint">Where incoming files are saved. You can change this later in Settings.</p>
+    </div>
+    <div class="setup-step">
       <label class="setup-toggle">
-        <input type="checkbox" id="setup-auto-announce">
+        <input type="checkbox" id="setup-auto-announce" checked>
         <span><strong>Auto-announce</strong>Periodically broadcast your presence on the LAN. Leave off to announce manually with the 📡 button.</span>
       </label>
     </div>
@@ -1107,8 +1151,9 @@ body.sidebar-open #sidebar-backdrop { display: block; }
               <option value="1d">1 day</option>
               <option value="1w">1 week</option>
               <option value="1m">1 month</option>
-              <option value="1y">1 year</option>
-              <option value="forever">Forever</option>
+              <option value="6m">6 months</option>
+              <option value="12m">1 year</option>
+              <option value="never">Forever</option>
               <option value="on_restart">Until restart</option>
               <option value="on_close">Until close</option>
             </select>
@@ -1490,18 +1535,56 @@ function init() {
   setupVisibilitySync();
 }
 
+function mergeInterfaceLists(...lists) {
+  const byName = {};
+  lists.flat().filter(Boolean).forEach(iface => {
+    const name = iface?.name;
+    if (name) byName[name] = iface;
+  });
+  return Object.values(byName);
+}
+
+function loadSetupInterfacesWithRetry(attempt, settings) {
+  fetch('/api/network-status')
+    .then(r => r.json())
+    .then(d => {
+      const ifaces = mergeInterfaceLists(d.available_interfaces, d.interfaces);
+      populateLanInterfaceSelect(ifaces, settings?.lan_interface);
+      populateSetupLanSelect(ifaces, settings?.lan_interface);
+      if (ifaces.length === 0 && attempt < 10) {
+        setTimeout(() => loadSetupInterfacesWithRetry(attempt + 1, settings), 500);
+      }
+    })
+    .catch(() => {
+      if (attempt < 10) {
+        setTimeout(() => loadSetupInterfacesWithRetry(attempt + 1, settings), 500);
+      }
+    });
+}
+
 function openSetupWizard(settings) {
   const wiz = document.getElementById('setup-wizard');
   if (!wiz) return;
+  settings = settings || {};
   const nameEl = document.getElementById('setup-name');
-  if (nameEl) nameEl.value = (settings && settings.name) || '';
+  if (nameEl) nameEl.value = settings.name || '';
+  const retentionEl = document.getElementById('setup-retention');
+  if (retentionEl) retentionEl.value = settings.history_retention || 'never';
+  const receivedEl = document.getElementById('setup-received-dir');
+  if (receivedEl) receivedEl.value = settings.received_dir || '';
   const autoEl = document.getElementById('setup-auto-announce');
-  if (autoEl) autoEl.checked = !!(settings && settings.auto_announce);
-  fetch('/api/network-status').then(r => r.json()).then(d => {
-    const ifaces = d.available_interfaces || d.interfaces || [];
-    populateLanInterfaceSelect(ifaces, settings?.lan_interface);
-    populateSetupLanSelect(ifaces, settings?.lan_interface);
-  }).catch(() => {});
+  if (autoEl) {
+    autoEl.checked = settings.auto_announce !== undefined
+      ? !!settings.auto_announce
+      : true;
+  }
+  const recvHint = document.getElementById('setup-received-hint');
+  if (recvHint) {
+    recvHint.textContent = (window.chatxzAndroid?.isAndroid?.() || appPlatform === 'android')
+      ? 'Tap Select folder to choose where received files are saved.'
+      : 'Choose where incoming files are saved. You can change this later in Settings.';
+  }
+  loadSetupInterfacesWithRetry(0, settings);
   wiz.classList.add('open');
 }
 
@@ -1514,6 +1597,8 @@ function completeSetupWizard() {
   }
   const lan_interface = document.getElementById('setup-lan-interface')?.value || '';
   const auto_announce = !!document.getElementById('setup-auto-announce')?.checked;
+  const history_retention = document.getElementById('setup-retention')?.value || 'never';
+  const received_dir = document.getElementById('setup-received-dir')?.value.trim() || '';
   fetch('/api/settings', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -1521,6 +1606,8 @@ function completeSetupWizard() {
       name,
       lan_interface,
       auto_announce,
+      history_retention,
+      received_dir,
       setup_complete: true,
     }),
   }).then(r => r.json()).then(d => {
@@ -1529,9 +1616,13 @@ function completeSetupWizard() {
       return;
     }
     window._appSettings = d.settings || {};
+    window._hubRole = d.settings?.hub_role || 'off';
+    updateHubUi();
     document.getElementById('setup-wizard')?.classList.remove('open');
     toast('Setup complete — discovering peers…');
     announceSelf();
+    setTimeout(announceSelf, 1500);
+    if (appPlatform === 'android') setTimeout(announceSelf, 4500);
   }).catch(() => toast('Setup failed'));
 }
 
@@ -2238,7 +2329,17 @@ function renderContacts(contacts) {
 
 function renderDiscovered(peers) {
   console.log('[render] Discovered peers:', peers);
-  window._discoveredPeers = peers || [];
+  peers = peers || [];
+  const prev = window._discoveredPeers || [];
+  if (!peers.length && prev.length) {
+    const age = Date.now() - (window._discoveredPeersAt || 0);
+    if (age < 45000) {
+      console.log('[render] Keeping discovered peers during transient empty poll');
+      return;
+    }
+  }
+  if (peers.length) window._discoveredPeersAt = Date.now();
+  window._discoveredPeers = peers;
   const el = document.getElementById('discovered-list');
   el.innerHTML = '';
   let hasLink = linkedPeers.size > 0;
@@ -2470,6 +2571,13 @@ function announceSelf() {
 
 window.onChatxzFolderPicked = function(path) {
   if (!path) return;
+  if (window._folderPickTarget === 'setup') {
+    const el = document.getElementById('setup-received-dir');
+    if (el) el.value = path;
+    window._folderPickTarget = null;
+    toast('Folder selected');
+    return;
+  }
   document.getElementById('settings-received-dir').value = path;
   toast('Folder selected — click Save to apply');
 };
@@ -3741,7 +3849,8 @@ function closeFolderPicker() {
   document.getElementById('folder-picker-dialog')?.classList.remove('open');
 }
 
-function showFolderOptionsDialog(options) {
+function showFolderOptionsDialog(options, targetId) {
+  window._receivedDirTargetId = targetId || 'settings-received-dir';
   const list = document.getElementById('folder-picker-list');
   if (!list) return;
   list.innerHTML = '';
@@ -3757,6 +3866,8 @@ function showFolderOptionsDialog(options) {
 }
 
 async function selectReceivedDir(path) {
+  const targetId = window._receivedDirTargetId || 'settings-received-dir';
+  const setupTarget = targetId === 'setup-received-dir';
   try {
     const r = await fetch('/api/browse-dir', {
       method: 'POST',
@@ -3765,14 +3876,49 @@ async function selectReceivedDir(path) {
     });
     const d = await r.json();
     if (r.ok && d.path) {
-      document.getElementById('settings-received-dir').value = d.path;
+      const el = document.getElementById(targetId);
+      if (el) el.value = d.path;
       closeFolderPicker();
-      toast('Folder selected — click Save to apply');
+      toast(setupTarget ? 'Folder selected' : 'Folder selected — click Save to apply');
       return;
     }
     toast('Browse failed: ' + (d.error || 'unknown'));
   } catch (_) {
     toast('Browse failed');
+  }
+}
+
+async function pickSetupReceivedDir() {
+  if (window.chatxzAndroid?.pickFolder) {
+    window._folderPickTarget = 'setup';
+    window.chatxzAndroid.pickFolder();
+    return;
+  }
+  try {
+    const r = await fetch('/api/browse-dir');
+    const d = await r.json();
+    if (d.platform === 'android' && Array.isArray(d.options) && d.options.length) {
+      showFolderOptionsDialog(d.options, 'setup-received-dir');
+      return;
+    }
+    if (r.ok && d.path) {
+      document.getElementById('setup-received-dir').value = d.path;
+      toast('Folder selected');
+      return;
+    }
+    if (d.error && d.error !== 'cancelled') toast('Browse failed: ' + d.error);
+  } catch (_) {
+    toast('Browse failed');
+  }
+  if (window.showDirectoryPicker) {
+    try {
+      const handle = await window.showDirectoryPicker();
+      document.getElementById('setup-received-dir').value = handle.name;
+      toast('Enter the full absolute path if needed.');
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+    }
   }
 }
 

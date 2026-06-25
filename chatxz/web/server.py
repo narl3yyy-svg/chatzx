@@ -444,7 +444,44 @@ class ChatWebServer:
             return None
         if not lan_discovery_configured(settings.get("rns_interfaces")):
             return None
+        pinned = (settings.get("lan_interface") or "").strip()
+        if not pinned:
+            return None
+        for entry in enumerate_lan_interfaces():
+            if entry.get("name") == pinned:
+                ip = entry.get("ip")
+                if ip and ip != "disconnected":
+                    return ip
         return detect_lan_ip()
+
+    def _interfaces_for_picker(self):
+        """All local NICs for setup/settings dropdowns (unfiltered)."""
+        by_name = {}
+        for entry in enumerate_lan_interfaces():
+            name = entry.get("name")
+            if name:
+                by_name[name] = entry
+        for entry in list_network_interfaces():
+            name = entry.get("name")
+            if name and name not in by_name:
+                by_name[name] = entry
+        if is_android():
+            ip = detect_lan_ip()
+            if ip and "active" not in by_name:
+                parts = ip.split(".")
+                subnet = (
+                    f"{parts[0]}.{parts[1]}.{parts[2]}.255"
+                    if len(parts) == 4 else None
+                )
+                by_name["active"] = {
+                    "name": "active",
+                    "kind": "wifi",
+                    "ip": ip,
+                    "broadcast": subnet,
+                    "subnet_broadcast": subnet,
+                    "up": True,
+                }
+        return [by_name[k] for k in sorted(by_name)]
 
     def _scoped_peers(self):
         if not self.discovery:
@@ -727,6 +764,34 @@ class ChatWebServer:
                 client["enabled"] = True
         settings["rns_interfaces"] = normalize_interface_list(interfaces)
         return settings
+
+    def _schedule_android_lan_announce_retries(self):
+        """Wi-Fi may come up after WebView loads — retry beacon/RNS announce."""
+        if not is_android():
+            return
+
+        def attempt(label):
+            if self._shutting_down or not self.messaging:
+                return
+            settings = self.load_settings()
+            if not lan_discovery_configured(settings.get("rns_interfaces")):
+                return
+            if not lan_ip_reachable():
+                return
+            try:
+                if self.discovery:
+                    self.discovery.enable_discovery(clear=False)
+                self.messaging._silent_announce()
+                if self.lan_beacon:
+                    self.lan_beacon.send(2, True)
+                print(f"[network] Android LAN announce retry ({label})")
+            except Exception as exc:
+                print(f"[network] Android announce retry failed ({label}): {exc}")
+
+        for delay, label in ((2.0, "2s"), (5.0, "5s"), (12.0, "12s")):
+            timer = threading.Timer(delay, attempt, args=(label,))
+            timer.daemon = True
+            timer.start()
 
     def _apply_hub_runtime(self, settings=None):
         """Hot-apply hub interfaces on a running RNS instance (Android/desktop)."""
@@ -1088,6 +1153,8 @@ class ChatWebServer:
             print(f"[network] Startup announce failed: {exc}")
 
         self._apply_hub_runtime(settings)
+        if is_android() and lan_discovery_configured(interfaces):
+            self._schedule_android_lan_announce_retries()
         if settings.get("hub_role") == "server":
             hub_hash = my_dest_clean
             if settings.get("hub_server_hash") != hub_hash:
@@ -2415,7 +2482,7 @@ class ChatWebServer:
             lan_up = lan_connected() if lan_discovery else False
             lan_ip_value = detect_lan_ip() if lan_up else None
             bcast_value = lan_broadcast() if lan_up else None
-            avail_ifaces = enumerate_lan_interfaces()
+            avail_ifaces = self._interfaces_for_picker()
         return web.json_response({
             "platform": self._platform_name(),
             "embedded": self.embedded,

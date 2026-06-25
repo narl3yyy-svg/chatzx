@@ -138,6 +138,42 @@ class HubPeerTests(unittest.TestCase):
         self.assertTrue(is_hub_peer_hash("__hub_group__"))
         self.assertFalse(is_hub_peer_hash("deadbeefdeadbeefdeadbeefdeadbeef"))
 
+    def test_discovery_auto_mode_shows_all_subnets(self):
+        disc = PeerDiscovery()
+        disc.accept_peers = True
+        now = __import__("time").time()
+        disc.peers["a"] = {
+            "hash": "a" * 32,
+            "ip": "10.0.30.101",
+            "last_seen": now,
+            "via": "beacon",
+        }
+        disc.peers["b"] = {
+            "hash": "b" * 32,
+            "ip": "10.10.100.4",
+            "last_seen": now,
+            "via": "beacon",
+        }
+        scoped_none = disc.get_peers(scope_ip=None)
+        ips = {p.get("ip") for p in scoped_none}
+        self.assertIn("10.0.30.101", ips)
+        self.assertIn("10.10.100.4", ips)
+
+    def test_discovery_scope_ip_unpinned_is_none(self):
+        from chatxz.web.server import ChatWebServer
+
+        server = ChatWebServer.__new__(ChatWebServer)
+        server.config_dir = "/tmp/chatxz-test"
+        from unittest.mock import patch
+        with patch.object(
+            ChatWebServer, "load_settings", return_value={
+                "hub_role": "off",
+                "lan_interface": "",
+                "rns_interfaces": ri.default_interface_list(),
+            }
+        ):
+            self.assertIsNone(server._discovery_scope_ip())
+
     def test_discovery_subnet_scope(self):
         disc = PeerDiscovery()
         disc.accept_peers = True

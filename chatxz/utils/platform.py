@@ -705,7 +705,44 @@ def _desktop_lan_ip():
 def enumerate_lan_interfaces():
     """All local NICs for the LAN interface picker (ignores preference)."""
     if is_android():
-        return _java_enumerate_interfaces()
+        entries = _java_enumerate_interfaces()
+        if not entries:
+            ip = _android_connectivity_ip()
+            if ip:
+                parts = ip.split(".")
+                subnet = (
+                    f"{parts[0]}.{parts[1]}.{parts[2]}.255"
+                    if len(parts) == 4 else None
+                )
+                entries = [{
+                    "name": "active",
+                    "kind": "wifi",
+                    "ip": ip,
+                    "broadcast": subnet,
+                    "subnet_broadcast": subnet,
+                    "up": True,
+                }]
+        else:
+            seen_ips = {
+                e.get("ip") for e in entries
+                if e.get("ip") and e.get("ip") != "disconnected"
+            }
+            ip = _android_connectivity_ip()
+            if ip and ip not in seen_ips:
+                parts = ip.split(".")
+                subnet = (
+                    f"{parts[0]}.{parts[1]}.{parts[2]}.255"
+                    if len(parts) == 4 else None
+                )
+                entries.append({
+                    "name": "active",
+                    "kind": "wifi",
+                    "ip": ip,
+                    "broadcast": subnet,
+                    "subnet_broadcast": subnet,
+                    "up": True,
+                })
+        return entries
     if sys.platform in ("win32", "darwin"):
         return _desktop_enumerate_interfaces()
     return _linux_enumerate_interfaces()
