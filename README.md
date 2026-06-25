@@ -193,6 +193,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.129** — Windows: graceful **Ctrl+C** shutdown (no traceback, no “Terminate batch job”, in-flight transfers cancelled cleanly)
 - **v0.3.128** — LAN file speed: HTTP fast path for files 2MB+ with `--share`; RNS link MTU raised to 1064 + `link_mtu_discovery` (fixes 500B links and 114 slow segments)
 - **v0.3.127** — macOS/Linux: `scripts/stop-chatxz.sh` + `lsof` port cleanup (fixes errno 48 / port 4242 in use); settings display name shows instantly after restart (no 5s wait)
 - **v0.3.126** — Windows: beacon broadcasts scoped to default-route NIC (fixes slowness on PCs with many virtual adapters); **v0.3.125** restart fix included

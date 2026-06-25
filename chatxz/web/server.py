@@ -501,6 +501,7 @@ class ChatWebServer:
         if self.messaging:
             self.messaging.shutdown_requested = True
             self.messaging.running = False
+            self.messaging.cancel_all_transfers()
         for task in list(self._background_tasks):
             task.cancel()
 
@@ -4497,7 +4498,7 @@ class ChatWebServer:
             time.sleep(0.25)
 
     def run(self):
-        from aiohttp.web_runner import GracefulExit
+        from aiohttp.web_runner import GracefulExit, AppRunner, TCPSite
 
         self._prepare_listen_ports()
 
@@ -4512,10 +4513,53 @@ class ChatWebServer:
         print("[startup] HTTP listening — RNS/network stack starting in background")
         print("Press Ctrl+C to stop")
 
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        runner = AppRunner(app, access_log=None)
+        stopping = False
+
+        async def _start():
+            await runner.setup()
+            site = TCPSite(runner, self.host, self.port, reuse_address=True)
+            await site.start()
+
+        def _stop_loop():
+            nonlocal stopping
+            if stopping:
+                return
+            stopping = True
+            loop.call_soon_threadsafe(loop.stop)
+
+        if sys.platform != "win32":
+            try:
+                loop.add_signal_handler(signal.SIGINT, _stop_loop)
+                loop.add_signal_handler(signal.SIGTERM, _stop_loop)
+            except (NotImplementedError, RuntimeError, ValueError):
+                pass
+
         try:
-            web.run_app(app, host=self.host, port=self.port, print=lambda _: None)
-        except GracefulExit:
-            pass
+            loop.run_until_complete(_start())
+            try:
+                loop.run_forever()
+            except KeyboardInterrupt:
+                stopping = True
+        except (GracefulExit, KeyboardInterrupt):
+            stopping = True
+        finally:
+            if not stopping:
+                stopping = True
+            try:
+                loop.run_until_complete(runner.cleanup())
+            except Exception:
+                try:
+                    self._teardown_network_stack()
+                except Exception:
+                    pass
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                pass
+            loop.close()
 
 
 def main():
@@ -4538,7 +4582,11 @@ def main():
     args = parser.parse_args()
     host = "0.0.0.0" if args.share else args.host
     server = ChatWebServer(host=host, port=args.port, verbose=args.verbose, debug=args.debug, force=args.force)
-    server.run()
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        pass
+    raise SystemExit(0)
 
 
 if __name__ == "__main__":

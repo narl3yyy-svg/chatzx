@@ -2341,8 +2341,18 @@ class MessagingBackend:
             prune_dead_serial_interfaces()
             self._silent_announce()
 
+    def cancel_all_transfers(self):
+        """Abort in-flight file sends/receives during shutdown."""
+        self.shutdown_requested = True
+        for tid in list(self._active_resources.keys()):
+            self.cancel_transfer(transfer_id=tid)
+        if self._current_transfer_id:
+            self.cancel_transfer(transfer_id=self._current_transfer_id)
+
     def stop(self):
         self.running = False
+        self.shutdown_requested = True
+        self.cancel_all_transfers()
         for link_id, link in self.links.items():
             try:
                 link.teardown()
@@ -3996,7 +4006,7 @@ class MessagingBackend:
     def _resource_send_callback(self, fname, transfer_id=None, fsize=0):
         def callback(resource):
             self._cleanup_transfer(transfer_id)
-            if transfer_id in self._cancelled_transfers:
+            if self.shutdown_requested or transfer_id in self._cancelled_transfers:
                 self._cancelled_transfers.discard(transfer_id)
                 print(f"[messaging] File transfer cancelled: {fname}")
                 self._emit_progress(fname, 0, fsize, status="cancelled", direction="send", transfer_id=transfer_id)

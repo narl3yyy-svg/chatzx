@@ -1,6 +1,7 @@
 @echo off
 REM Run chatxz from this git clone folder in cmd. Ctrl+C stops everything.
 setlocal EnableExtensions EnableDelayedExpansion
+break off
 cd /d "%~dp0"
 set "CHATXZ_ROOT=%CD%"
 set "PYTHONPATH=%CD%"
@@ -54,7 +55,14 @@ set "CHATXZ_MODULE=chatxz.web.server"
 "%CHATXZ_PYTHON%" -u -m %CHATXZ_MODULE% %2 %3 %4 %5 %6 %7 %8 %9
 set "EXIT_CODE=%ERRORLEVEL%"
 call "%~dp0scripts\stop-chatxz.bat"
-if "%EXIT_CODE%"=="0" echo [stopped] Server and ports closed.
+if "%EXIT_CODE%"=="0" (
+  echo [stopped] Server and ports closed.
+) else if "%EXIT_CODE%"=="130" (
+  echo [stopped] Server and ports closed.
+  set "EXIT_CODE=0"
+) else (
+  echo [stopped] Server stopped ^(exit %EXIT_CODE%^). Ports cleaned up.
+)
 exit /b %EXIT_CODE%
 
 :resolve_python
