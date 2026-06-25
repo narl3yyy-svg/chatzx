@@ -13,8 +13,8 @@ def pick_folder(start_dir=None):
 
     if sys.platform == "win32":
         for picker in (
-            _pick_folder_windows_powershell,
             _pick_folder_windows_ctypes,
+            _pick_folder_windows_powershell,
         ):
             picked = picker(start)
             if picked:

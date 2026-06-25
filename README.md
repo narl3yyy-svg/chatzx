@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.123
+**Current version:** 0.3.124
 
 ## Download
 
@@ -33,6 +33,12 @@ run.bat web --share
 Open **http://127.0.0.1:8742**. Logs stay in that cmd window.
 
 **Stop:** **Ctrl+C** — server exits and **all ports close** (8742, 4242, 8743). Nothing keeps listening after `run.bat` ends.
+
+**Restart** (Settings button): reloads network stack **in the same cmd window** — does not close `run.bat`.
+
+**Select folder** (received files): opens Windows Explorer — pick a folder, then click **Save settings**.
+
+**Tip:** `--debug` is very slow on Windows; use it only when troubleshooting.
 
 | File | Purpose |
 |------|---------|
@@ -174,6 +180,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.124** — Windows: fix settings save, Explorer folder picker, in-process restart (cmd stays open); faster NIC scan (ipconfig default); ↻ refresh spins
 - **v0.3.123** — Windows: **Ctrl+C releases all ports** (`stop-chatxz.bat` + RNS teardown); README/docs: **cmd + `run.bat` only** (no PowerShell install/run)
 - **v0.3.122** — Windows: fix `run.bat` cmd parsing (`xz.web.server` error); restart from UI uses `run.bat` on Windows
 - **v0.3.121** — Windows: faster **`run.bat`** (skip deps when `.venv` ready); removed `install.bat` and all PowerShell runners; Mac fix: no AutoInterface + UDP LAN duplicate (errno 48); restart no longer crashes on port 8742

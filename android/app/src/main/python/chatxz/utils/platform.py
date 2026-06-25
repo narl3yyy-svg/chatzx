@@ -34,7 +34,7 @@ def format_lan_interface_value(name, ip):
     if name and ip and ip != "disconnected":
         return f"{name}|{ip}"
     return name or ip or ""
-_desktop_if_cache = {"entries": None, "expires": 0.0}
+_desktop_if_cache = {"entries": None, "expires": 0.0, "powershell": False}
 _desktop_if_cache_lock = threading.Lock()
 DESKTOP_IF_CACHE_TTL = 45.0
 
@@ -45,10 +45,11 @@ def _subprocess_flags():
     return 0
 
 
-def invalidate_desktop_interface_cache():
+def invalidate_desktop_interface_cache(use_powershell=False):
     with _desktop_if_cache_lock:
         _desktop_if_cache["entries"] = None
         _desktop_if_cache["expires"] = 0.0
+        _desktop_if_cache["powershell"] = bool(use_powershell)
 
 
 def patch_embedded_signals():
@@ -704,8 +705,10 @@ def _windows_merge_interface_entries(*groups):
     return merged
 
 
-def _windows_enumerate_interfaces():
+def _windows_enumerate_interfaces(include_powershell=False):
     ipconfig_entries = _windows_enumerate_interfaces_ipconfig()
+    if not include_powershell:
+        return ipconfig_entries
     ps_entries = _windows_enumerate_interfaces_powershell()
     return _windows_merge_interface_entries(ps_entries, ipconfig_entries)
 
@@ -779,7 +782,11 @@ def _darwin_enumerate_interfaces():
 
 def _desktop_enumerate_interfaces_uncached():
     if sys.platform == "win32":
-        entries = _windows_enumerate_interfaces()
+        use_ps = False
+        with _desktop_if_cache_lock:
+            use_ps = bool(_desktop_if_cache.get("powershell"))
+            _desktop_if_cache["powershell"] = False
+        entries = _windows_enumerate_interfaces(include_powershell=use_ps)
         if entries:
             return entries
     elif sys.platform == "darwin":

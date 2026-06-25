@@ -625,7 +625,7 @@ class ChatWebServer:
     def _interfaces_for_picker(self, refresh=False):
         """All local NICs/IPv4 addresses for setup/settings dropdowns (unfiltered)."""
         if refresh:
-            invalidate_desktop_interface_cache()
+            invalidate_desktop_interface_cache(use_powershell=sys.platform == "win32")
         seen = set()
         entries = []
         for entry in enumerate_lan_interfaces():
@@ -1049,7 +1049,8 @@ class ChatWebServer:
             return dict(defaults)
 
     def save_settings(self, settings):
-        with open(SETTINGS_FILE, "w") as f:
+        os.makedirs(self.config_dir, exist_ok=True)
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(settings, f, indent=2)
 
     def _history_file(self):
@@ -1147,6 +1148,10 @@ class ChatWebServer:
         return rns_config_path
 
     def _log_serial_diagnostics(self):
+        settings = self.load_settings()
+        if not configured_serial_enabled(settings.get("rns_interfaces")):
+            if sys.platform == "win32":
+                return
         try:
             import grp
             names = sorted(grp.getgrgid(g).gr_name for g in os.getgroups())
@@ -2958,14 +2963,44 @@ class ChatWebServer:
         if self.messaging:
             self.messaging.receive_dir = path
 
-    def _pick_directory_native(self):
-        if is_android():
-            return None
+    def _pick_directory_start(self):
         settings = self.load_settings()
         start = settings.get("received_dir", os.path.join(self.config_dir, "received"))
         start = os.path.expanduser(start)
         if not os.path.isdir(start):
             start = os.path.expanduser("~")
+        return start
+
+    def _pick_directory_subprocess(self):
+        """Run folder picker in a child process (keeps asyncio responsive on Windows)."""
+        start = self._pick_directory_start()
+        root = os.environ.get("CHATXZ_ROOT") or os.getcwd()
+        script = os.path.join(root, "scripts", "pick-folder.py")
+        if not os.path.isfile(script):
+            return self._pick_directory_native()
+        try:
+            flags = _win_subprocess_flags()
+            if sys.platform == "win32":
+                flags = 0
+            result = subprocess.run(
+                [sys.executable, script, start],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                cwd=root,
+                creationflags=flags,
+            )
+            picked = (result.stdout or "").strip()
+            if result.returncode == 0 and picked:
+                return os.path.normpath(picked)
+        except Exception as exc:
+            print(f"[browse] Folder picker subprocess failed: {exc}")
+        return None
+
+    def _pick_directory_native(self):
+        if is_android():
+            return None
+        start = self._pick_directory_start()
 
         if sys.platform in ("win32", "darwin"):
             try:
@@ -3024,7 +3059,7 @@ class ChatWebServer:
                 })
 
             if sys.platform == "win32":
-                picked = self._pick_directory_native()
+                picked = await asyncio.to_thread(self._pick_directory_subprocess)
             else:
                 picked = await asyncio.to_thread(self._pick_directory_native)
             if not picked:
@@ -3050,10 +3085,14 @@ class ChatWebServer:
                 if data["history_retention"] in valid:
                     settings["history_retention"] = data["history_retention"]
             if "received_dir" in data:
-                path, err = self._normalize_received_dir(data["received_dir"])
-                if err:
-                    return web.json_response({"error": err}, status=400)
-                settings["received_dir"] = path
+                raw_dir = (data.get("received_dir") or "").strip()
+                if not raw_dir:
+                    settings["received_dir"] = os.path.join(self.config_dir, "received")
+                else:
+                    path, err = self._normalize_received_dir(raw_dir)
+                    if err:
+                        return web.json_response({"error": err}, status=400)
+                    settings["received_dir"] = path
             if "network_stats_auto_reset" in data:
                 settings["network_stats_auto_reset"] = bool(data["network_stats_auto_reset"])
             if "hub_role" in data:
@@ -3206,6 +3245,16 @@ class ChatWebServer:
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
 
+    async def _reload_server_runtime(self):
+        settings = self.load_settings()
+        await asyncio.to_thread(self._write_rns_config, settings)
+        await asyncio.to_thread(self._apply_hub_runtime, settings)
+        self._apply_auto_announce_settings(settings)
+        if self.messaging:
+            self.messaging.display_name = settings.get("name", "")
+        if self.lan_beacon:
+            self.lan_beacon.display_name = settings.get("name", "")
+
     async def handle_restart(self, request):
         if is_android():
             settings = self.load_settings()
@@ -3216,6 +3265,18 @@ class ChatWebServer:
                 "android": True,
                 "rns_reloaded": True,
             })
+        if not getattr(sys, "frozen", False):
+            try:
+                await self._reload_server_runtime()
+                print("[restart] Reloaded network stack in-process (run.bat stays open)")
+                return web.json_response({
+                    "status": "ok",
+                    "restarting": True,
+                    "reloaded": True,
+                    "message": "Network stack reloaded — refresh the page",
+                })
+            except Exception as e:
+                return web.json_response({"error": str(e)}, status=400)
         import sys, os
         if getattr(sys, "frozen", False) and sys.platform == "win32":
             exe = sys.executable

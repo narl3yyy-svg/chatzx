@@ -769,6 +769,8 @@ body::before {
 .input-btn:hover { background: rgba(255,255,255,0.06); color: var(--text); }
 .input-btn.recording { color: var(--danger); background: var(--danger-soft); animation: pulse 1s infinite; }
 @keyframes pulse { 50% { opacity: 0.5; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinning { animation: spin 0.75s linear infinite; opacity: 0.85; }
 #send-btn {
   background: linear-gradient(135deg, #7c6aef, #6b7fd7);
   color: #fff; width: 42px; height: 42px; border-radius: 14px;
@@ -1219,7 +1221,7 @@ body.sidebar-open #sidebar-backdrop { display: block; }
               <select id="settings-lan-interface" onchange="saveLanInterface()">
                 <option value="">Auto — prefer Wi-Fi / Ethernet over VPN</option>
               </select>
-              <button type="button" class="btn-block" onclick="refreshLanInterfaces(true)" style="width:auto;white-space:nowrap;padding:0 12px;height:40px" title="Rescan IPv4 addresses">↻</button>
+              <button type="button" id="lan-refresh-btn" class="btn-block" onclick="refreshLanInterfaces(true, this)" style="width:auto;white-space:nowrap;padding:0 12px;height:40px" title="Rescan IPv4 addresses">↻</button>
             </div>
             <div id="lan-interface-summary" class="field-hint" style="margin-top:8px"></div>
             <p class="field-hint">Each IPv4 on your PC is listed separately. Choose <strong>Auto</strong> on most PCs, or pin a specific address (including VPN/custom aliases).</p>
@@ -1686,7 +1688,12 @@ function renderLanInterfaceSummary(interfaces) {
   el.innerHTML = lines.map(l => `<div>${escapeHtml(l)}</div>`).join('');
 }
 
-function refreshLanInterfaces(showToast) {
+function refreshLanInterfaces(showToast, btn) {
+  const el = btn || document.getElementById('lan-refresh-btn');
+  if (el) {
+    el.classList.add('spinning');
+    el.disabled = true;
+  }
   return fetch('/api/interfaces?refresh=1')
     .then(r => r.json())
     .then(d => {
@@ -1696,12 +1703,18 @@ function refreshLanInterfaces(showToast) {
       populateLanInterfaceSelect(ifaces, pinned);
       populateSetupLanSelect(ifaces, document.getElementById('setup-lan-interface')?.value || '');
       renderLanInterfaceSummary(ifaces);
-      if (showToast) toast(ifaces.length ? `Found ${ifaces.length} network card(s)` : 'No network cards found');
+      if (showToast) toast(ifaces.length ? `Refreshed — ${ifaces.length} network card(s)` : 'Refreshed — no network cards found');
       return ifaces;
     })
     .catch(() => {
       if (showToast) toast('Failed to refresh network cards');
       return [];
+    })
+    .finally(() => {
+      if (el) {
+        el.classList.remove('spinning');
+        el.disabled = false;
+      }
     });
 }
 
@@ -4301,18 +4314,27 @@ function applyIdentityChange(newHash, identityHash, oldHash) {
 function restartServer() {
   const msg = appPlatform === 'android'
     ? 'Restart the app to apply network/serial settings?'
-    : 'Restart the server? The web interface will be unavailable for a few seconds.';
+    : 'Reload network stack? The cmd window stays open.';
   if (!confirm(msg)) return;
   fetch('/api/restart', {method: 'POST'})
-    .then(r => r.json())
-    .then(d => {
+    .then(async r => {
+      const d = await r.json();
+      if (!r.ok && d.status !== 'ok' && d.status !== 'restarting') {
+        toast('Restart failed: ' + (d.error || 'unknown'));
+        return;
+      }
       if (d.android && window.chatxzAndroid?.restartApp) {
         toast('Restarting app...');
         window.chatxzAndroid.restartApp();
         return;
       }
+      if (d.reloaded) {
+        toast(d.message || 'Server reloaded');
+        setTimeout(() => location.reload(), 600);
+        return;
+      }
       toast('Server restarting...');
-      setTimeout(() => { location.reload(); }, 3000);
+      setTimeout(() => location.reload(), 3000);
     })
     .catch(() => toast('Restart failed'));
 }
