@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.122
+**Current version:** 0.3.123
 
 ## Download
 
@@ -16,9 +16,13 @@ Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum
 
 ---
 
-## Windows (cmd + `run.bat` only)
+## Windows
 
-**Use Command Prompt (cmd)** — not PowerShell, not `run.ps1` (removed). Clone the repo, `cd` into it, run one command:
+**Command Prompt (cmd) only.** Removed: `run.ps1`, `install-windows.ps1`, `install-windows.cmd`, `install.bat`.
+
+1. Install [Python 3.10+](https://www.python.org/downloads/windows/) — check **Add python.exe to PATH**
+2. Install [Git](https://git-scm.com/download/win)
+3. Open **cmd** in the repo folder:
 
 ```cmd
 git clone https://github.com/narl3yyy-svg/chatxz.git
@@ -26,36 +30,25 @@ cd chatxz
 run.bat web --share
 ```
 
-That starts the server in the **same cmd window** with live logs. Open **http://127.0.0.1:8742** in your browser. Press **Ctrl+C** to stop.
+Open **http://127.0.0.1:8742**. Logs stay in that cmd window.
+
+**Stop:** **Ctrl+C** — server exits and **all ports close** (8742, 4242, 8743). Nothing keeps listening after `run.bat` ends.
 
 | File | Purpose |
 |------|---------|
-| `run.bat` | **Start here** — runs chatxz from the clone folder (first run only: fetches `rns` + `aiohttp` into `.venv`) |
-| `uninstall.bat` | Stop server, remove `.venv`, optionally delete identity/chats |
-
-**Prerequisite:** [Python 3.10+](https://www.python.org/downloads/windows/) with **Add python.exe to PATH** checked during install.
-
-Debug logs:
+| `run.bat` | Start server from this folder |
+| `uninstall.bat` | Force-stop, remove `.venv`, optional data wipe |
+| `scripts\stop-chatxz.bat` | Kill stray chatxz processes (used automatically) |
 
 ```cmd
 run.bat web --share --debug
-```
-
-If a previous server is still running:
-
-```cmd
 run.bat web --share --force
-```
-
-Remove everything chatxz put in this folder:
-
-```cmd
 uninstall.bat
 ```
 
-**Update after `git pull`:** just `run.bat web --share` again (no reinstall unless you ran `uninstall.bat`).
+**Update:** `git pull` then `run.bat web --share`
 
-**Firewall:** allow **private** networks — UDP 4242, 8743; TCP 8742.
+**Firewall (private):** UDP 4242, 8743 — TCP 8742
 
 **Data:** `%USERPROFILE%\.config\chatxz\`
 
@@ -155,14 +148,13 @@ Chat and file payloads never leave the RNS encrypted link. Port 8742 serves only
 ## Development
 
 ```bash
-./run.sh web --share --verbose   # Linux / macOS / Git Bash
-./run.sh web --share --debug     # Extreme RNS + chat trace
+./run.sh web --share --verbose   # Linux / macOS
+./run.sh web --share --debug
 ```
 
 ```cmd
-install.bat                      # Windows (cmd) — first time
-run.bat web --share --debug
-uninstall.bat                    # remove venv + optional data
+run.bat web --share --debug      # Windows (cmd)
+uninstall.bat
 ```
 
 ```bash
@@ -182,6 +174,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.123** — Windows: **Ctrl+C releases all ports** (`stop-chatxz.bat` + RNS teardown); README/docs: **cmd + `run.bat` only** (no PowerShell install/run)
 - **v0.3.122** — Windows: fix `run.bat` cmd parsing (`xz.web.server` error); restart from UI uses `run.bat` on Windows
 - **v0.3.121** — Windows: faster **`run.bat`** (skip deps when `.venv` ready); removed `install.bat` and all PowerShell runners; Mac fix: no AutoInterface + UDP LAN duplicate (errno 48); restart no longer crashes on port 8742
 - **v0.3.120** — Windows: **`run.bat web --share`** only — runs from git clone folder, no separate install step; first run auto-fetches deps into local `.venv`

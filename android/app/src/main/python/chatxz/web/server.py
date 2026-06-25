@@ -166,6 +166,31 @@ def cleanup_rns_stale():
             pass
 
 
+def shutdown_rns_stack():
+    """Release RNS UDP/TCP interfaces so ports 4242/8743 are not left open."""
+    if is_android():
+        return
+    try:
+        import RNS
+        for iface in list(getattr(RNS.Transport, "interfaces", []) or []):
+            try:
+                RNS.Transport.remove_interface(iface)
+            except Exception:
+                pass
+        inst = RNS.Reticulum.get_instance()
+        if inst is not None:
+            for attr in ("shutdown", "stop", "close"):
+                fn = getattr(inst, attr, None)
+                if callable(fn):
+                    try:
+                        fn()
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    cleanup_rns_stale()
+
+
 def _win_subprocess_flags():
     if sys.platform != "win32":
         return 0
@@ -459,8 +484,18 @@ class ChatWebServer:
         for task in list(self._background_tasks):
             task.cancel()
 
-    async def _on_cleanup(self, app):
-        self._shutting_down = True
+    def _teardown_network_stack(self):
+        if self.lan_beacon:
+            try:
+                self.lan_beacon.stop()
+            except Exception:
+                pass
+            self.lan_beacon = None
+        if self.discovery:
+            try:
+                self.discovery.stop()
+            except Exception:
+                pass
         if self.messaging:
             self.messaging.shutdown_requested = True
             self.messaging.running = False
@@ -469,13 +504,21 @@ class ChatWebServer:
                 self.messaging.stop()
             except Exception:
                 pass
+        shutdown_rns_stack()
+
+    async def _on_cleanup(self, app):
+        self._shutting_down = True
+        try:
+            await asyncio.to_thread(self._teardown_network_stack)
+        except Exception:
+            self._teardown_network_stack()
         for ws in list(self.websockets):
             try:
                 await ws.close()
             except Exception:
                 pass
         self.websockets.clear()
-        print("[shutdown] Server stopped")
+        print("[shutdown] Server stopped — ports released")
 
     async def _wait_for_rns(self, timeout=90.0):
         deadline = time.time() + timeout

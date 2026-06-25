@@ -8,15 +8,8 @@ echo chatxz Windows Uninstall
 echo ========================
 echo.
 
-echo [1/4] Stopping chatxz server processes...
-for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":8742" ^| findstr "LISTENING"') do (
-  taskkill /F /PID %%a >nul 2>&1 && echo   Stopped PID %%a
-)
-for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":4242" ^| findstr "UDP"') do (
-  taskkill /F /PID %%a >nul 2>&1
-)
-wmic process where "commandline like '%%chatxz.web.server%%'" call terminate >nul 2>&1
-wmic process where "commandline like '%%chatxz.app%%'" call terminate >nul 2>&1
+echo [1/4] Stopping chatxz server and releasing ports...
+call "%~dp0scripts\stop-chatxz.bat"
 echo   Done.
 
 echo [2/4] Removing Python environment...

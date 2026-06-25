@@ -1,5 +1,5 @@
 @echo off
-REM Run chatxz from this git clone folder in cmd. No install step.
+REM Run chatxz from this git clone folder in cmd. Ctrl+C stops everything.
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 set "CHATXZ_ROOT=%CD%"
@@ -25,32 +25,37 @@ echo   run.bat web --share
 echo   run.bat web --share --debug
 echo   run.bat cli [options]
 echo.
-echo Clone the repo, open cmd in this folder, run the command above.
-echo First start only: downloads rns + aiohttp into local .venv
+echo Open cmd in this folder and run the command above.
+echo Ctrl+C stops the server and releases all ports.
 echo Cleanup:  uninstall.bat
-echo.
-echo Do NOT use run.ps1 or PowerShell.
 echo.
 exit /b 1
 
 :cli
 call :resolve_python
 if errorlevel 1 exit /b 1
+call "%~dp0scripts\stop-chatxz.bat"
 set "CHATXZ_MODULE=chatxz.app"
 "%CHATXZ_PYTHON%" -u -m %CHATXZ_MODULE% %2 %3 %4 %5 %6 %7 %8 %9
-exit /b %ERRORLEVEL%
+set "EXIT_CODE=%ERRORLEVEL%"
+call "%~dp0scripts\stop-chatxz.bat"
+exit /b %EXIT_CODE%
 
 :web
 call :resolve_python
 if errorlevel 1 exit /b 1
+call "%~dp0scripts\stop-chatxz.bat"
 echo.
 echo chatxz web server
 echo Web UI:  http://127.0.0.1:8742
-echo Logs below - press Ctrl+C to stop
+echo Press Ctrl+C to stop - all ports will be released
 echo.
 set "CHATXZ_MODULE=chatxz.web.server"
 "%CHATXZ_PYTHON%" -u -m %CHATXZ_MODULE% %2 %3 %4 %5 %6 %7 %8 %9
-exit /b %ERRORLEVEL%
+set "EXIT_CODE=%ERRORLEVEL%"
+call "%~dp0scripts\stop-chatxz.bat"
+if "%EXIT_CODE%"=="0" echo [stopped] Server and ports closed.
+exit /b %EXIT_CODE%
 
 :resolve_python
 set "CHATXZ_PYTHON="
@@ -90,7 +95,7 @@ if exist "%VENV_PY%" (
       exit /b 0
     )
   )
-  call :stop_server
+  call "%~dp0scripts\stop-chatxz.bat"
   rmdir /s /q ".venv" 2>nul
   ping -n 2 127.0.0.1 >nul
 )
@@ -114,10 +119,4 @@ if errorlevel 1 (
 )
 echo. > ".venv\.ready"
 set "CHATXZ_PYTHON=%VENV_PY%"
-exit /b 0
-
-:stop_server
-for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":8742" ^| findstr "LISTENING"') do (
-  taskkill /F /PID %%a >nul 2>&1
-)
 exit /b 0
