@@ -3374,7 +3374,16 @@ function sameSubnet(ipA, ipB) {
   if (!ipA || !ipB) return false;
   const a = String(ipA).split('.');
   const b = String(ipB).split('.');
-  return a.length === 4 && b.length === 4 && a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+  if (a.length !== 4 || b.length !== 4) return false;
+  if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) return true;
+  const a0 = parseInt(a[0], 10);
+  const a1 = parseInt(a[1], 10);
+  const b0 = parseInt(b[0], 10);
+  const b1 = parseInt(b[1], 10);
+  if (a0 === 10 && b0 === 10) return true;
+  if (a0 === 172 && b0 === 172 && a1 >= 16 && a1 <= 31 && b1 >= 16 && b1 <= 31) return true;
+  if (a0 === 192 && b0 === 192 && a1 === 168 && b1 === 168) return true;
+  return false;
 }
 
 function detectClientPlatform() {

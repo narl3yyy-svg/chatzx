@@ -349,7 +349,20 @@ class PeerDiscovery:
         parts_b = str(ip_b).split(".")
         if len(parts_a) != 4 or len(parts_b) != 4:
             return True
-        return parts_a[:3] == parts_b[:3]
+        if parts_a[:3] == parts_b[:3]:
+            return True
+        try:
+            a0, a1 = int(parts_a[0]), int(parts_a[1])
+            b0, b1 = int(parts_b[0]), int(parts_b[1])
+        except ValueError:
+            return True
+        if a0 == b0 == 10:
+            return True
+        if a0 == b0 == 172 and 16 <= a1 <= 31 and 16 <= b1 <= 31:
+            return True
+        if a0 == b0 == 192 and a1 == b1 == 168:
+            return True
+        return False
 
     @staticmethod
     def _peer_dedup_key(peer):

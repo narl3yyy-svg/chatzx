@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.133
+**Current version:** 0.3.134
 
 ## Download
 
@@ -195,7 +195,8 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
-- **v0.3.133** — Platform-aware UI hints (Windows vs macOS vs Linux): mic permission messages, folder picker, serial setup; server reports `windows`/`darwin`/`linux`/`android`; saved contact IP prefers your pinned LAN subnet (ignores cross-subnet VPN beacons like `10.0.5.x` when you are on `172.17.x`)
+- **v0.3.134** — LAN scope match fix: `172.17.13.x` peers visible when pinned to `172.17.121.x` (same `172.17/16`); contact IP no longer overwritten by `10.0.5.x` VPN beacons
+- **v0.3.133** — Platform-aware UI hints (Windows vs macOS vs Linux): mic permission messages, folder picker, serial setup; server reports `windows`/`darwin`/`linux`/`android`; saved contact IP prefers your pinned LAN subnet
 - **v0.3.132** — Windows: saved contact IP updates live when peer moves subnet (no server restart); searchable emoji picker; clearer microphone permission hints (Helium + Windows Privacy); quieter file-preview disconnect logs; macOS Apple Silicon CPU temp via ioreg/powermetrics/thermal estimate (`~` when approximate)
 - **v0.3.131** — Windows: fix large-file preview/send (`WinError 87` sendfile); CPU/temp status bar on Windows + macOS; discovered peer IP updates in GUI when same identity moves subnet
 - **v0.3.130** — TCP LAN fix: hot-added TCP server no longer crashes on incoming connections (`ifac_netname`); UDP preferred over TCP when both enabled; less TCP client reconnect spam
