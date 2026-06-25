@@ -159,6 +159,46 @@ class InboundLinkTests(unittest.TestCase):
         self.assertTrue(notified[0].get("passive"))
         self.assertIsNone(backend.active_peer_hash)
 
+    def test_finish_connect_drains_queue_on_user_connect(self):
+        backend = _make_backend()
+        peer = "4a2aa1dbbed382886b0333274e546ba8"
+        link = _FakeLink("55" * 16, "f687bbff423a220af49f04edb8381ab2")
+        backend.links[link.link_id] = link
+        backend._link_peer_hashes[link.link_id] = peer
+        backend.peer_links[peer] = link
+        backend.message_queue = [{
+            "type": "text",
+            "content": "queued hello",
+            "target_hash": peer,
+            "msg_id": "abc12345",
+        }]
+        backend._connect_user_initiated = True
+        sent = []
+
+        def fake_send(text, msg_id=None, target_peer=None, link=None, **kwargs):
+            sent.append(text)
+            from chatxz.core.messaging import ChatMessage
+            return ChatMessage("text", text, msg_id=msg_id)
+
+        with patch.object(backend, "send_message", side_effect=fake_send):
+            backend._finish_connect(peer, link=link)
+        self.assertEqual(sent, ["queued hello"])
+        self.assertEqual(backend.message_queue, [])
+
+    def test_consolidate_peer_links_closes_duplicates(self):
+        backend = _make_backend()
+        peer = "4a2aa1dbbed382886b0333274e546ba8"
+        keep = _FakeLink("66" * 16, "f687bbff423a220af49f04edb8381ab2")
+        extra = _FakeLink("77" * 16, "f687bbff423a220af49f04edb8381ab2")
+        backend.links[keep.link_id] = keep
+        backend.links[extra.link_id] = extra
+        backend._link_peer_hashes[keep.link_id] = peer
+        backend._link_peer_hashes[extra.link_id] = peer
+        extra.teardown = MagicMock()
+        closed = backend._consolidate_peer_links(peer, keep_link=keep)
+        self.assertEqual(closed, 1)
+        extra.teardown.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

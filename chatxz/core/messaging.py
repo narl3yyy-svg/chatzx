@@ -324,6 +324,61 @@ class MessagingBackend:
                     self._link_handoff = False
         return closed
 
+    def _consolidate_peer_links(self, peer_hash, keep_link=None):
+        """Keep one active link per peer — tear down parallel sessions."""
+        peer = self.dest_hash_for(peer_hash)
+        if not peer or peer == "unknown":
+            return 0
+        keep_id = getattr(keep_link, "link_id", None) if keep_link else None
+        closed = 0
+        for link in list(self._links_for_peer(peer)):
+            if keep_id and link.link_id == keep_id:
+                continue
+            try:
+                if getattr(link, "status", None) == RNS.Link.CLOSED:
+                    continue
+            except Exception:
+                pass
+            try:
+                link.teardown()
+                closed += 1
+            except Exception:
+                pass
+        if closed:
+            print(f"[messaging] Closed {closed} duplicate link(s) for {peer[:16]}...")
+        return closed
+
+    def _finish_connect(self, peer_hash, link=None, user_initiated=None):
+        """After a successful connect: one link per peer and drain outbound queue."""
+        peer = self.dest_hash_for(peer_hash)
+        if not peer or peer == "unknown":
+            return True
+        initiated = (
+            bool(user_initiated)
+            if user_initiated is not None
+            else bool(getattr(self, "_connect_user_initiated", False))
+        )
+        use_link = link
+        if not use_link:
+            use_link = self._adopt_healthy_peer_link(peer) or self._best_outgoing_link(peer)
+        if use_link:
+            self._consolidate_peer_links(peer, keep_link=use_link)
+        if initiated and not self.is_user_disconnected(peer):
+            send_link = use_link or self._best_outgoing_link(peer) or self.active_link
+            if send_link and self._peer_link_active(peer):
+                self.drain_queue(send_link, peer, include_files=True)
+        return True
+
+    def _udp_connect_ready(self, dest_hex, peer_ip=None, peer_lan_down=False):
+        if peer_lan_down or not physical_lan_reachable() or not self._lan_transport_ready():
+            return False
+        if peer_ip:
+            return True
+        return (
+            self._peer_has_path_on_family(dest_hex, "udp")
+            or self._peer_has_path(dest_hex)
+        )
+
     def linked_peers(self):
         out = []
         for peer, link in list(self.peer_links.items()):
@@ -646,7 +701,7 @@ class MessagingBackend:
     def _preferred_failover_family(self, peer, attached=None, peer_ip=None):
         attached = attached or self._link_attached_interface(self.active_link)
         att_fam = interface_family(attached)
-        serial_up = self._has_online_family("serial")
+        serial_up = self._serial_transport_ready()
         physical_lan = physical_lan_reachable()
         udp_up = self._has_online_family("udp")
         peer_lan_down = bool(peer_ip and self._peer_lan_recently_unreachable(peer_ip))
@@ -658,6 +713,8 @@ class MessagingBackend:
             return "serial"
         # LAN/UDP primary whenever physical ethernet/Wi-Fi is up and peer answers on LAN.
         if physical_lan and udp_up and not peer_lan_down:
+            if att_fam == "serial" and not serial_up:
+                return "udp"
             if att_fam == "serial":
                 return "udp"
             return "udp"
@@ -731,7 +788,8 @@ class MessagingBackend:
         self._failover_announce(prefer_family, peer_ip=peer_ip)
         if prefer_family == "serial":
             if not self._serial_transport_ready():
-                print("[connect] Serial failover blocked — serial interface offline")
+                print("[connect] Serial interface offline — skipping serial path prep")
+                clear_paths_on_family("serial")
                 return False
             request_paths_for_hash(peer, family="serial")
             path_iface = wait_for_peer_path_families(
@@ -830,9 +888,9 @@ class MessagingBackend:
         ):
             return True, "peer path on serial"
 
-        if att_fam == "serial" and not self._has_online_family("serial"):
-            if self._has_online_family("udp") or self._has_online_family("lan"):
-                return True, "serial down, LAN available"
+        if att_fam == "serial" and not self._serial_transport_ready():
+            if (self._has_online_family("udp") or self._has_online_family("lan")) and physical_lan_reachable():
+                return True, "serial offline, LAN available"
 
         if (
             att_fam == "serial"
@@ -1200,6 +1258,7 @@ class MessagingBackend:
                         entry["content"],
                         msg_id=entry.get("msg_id"),
                         target_peer=target_hash,
+                        link=link,
                     )
                     if result:
                         sent += 1
@@ -1221,6 +1280,7 @@ class MessagingBackend:
                             entry["type"],
                             transfer_id=entry.get("msg_id"),
                             target_peer=target_hash,
+                            link=link,
                         )
                         if result:
                             sent += 1
@@ -2004,6 +2064,7 @@ class MessagingBackend:
         self._register_peer_link(link, peer)
         self._last_link_established_at = time.time()
         if promote_active:
+            self._consolidate_peer_links(peer, keep_link=link)
             old_active = self.active_peer_hash
             self.active_link = link
             self.active_peer_hash = peer
@@ -2162,6 +2223,11 @@ class MessagingBackend:
             except Exception:
                 pass
 
+        if not peer_hash or peer_hash == "unknown":
+            resolved = self._peer_hash_from_link_identity(link)
+            if resolved and resolved != "unknown":
+                peer_hash = resolved
+                self._cache_link_peer(link, peer_hash)
         print(f"[messaging] Incoming link established: {link.link_id.hex()[:12]} ({peer_hash[:16]}...)")
         self._last_handoff = False
         self._setup_link(link)
@@ -2606,9 +2672,16 @@ class MessagingBackend:
         self._failover_in_progress = True
         try:
             prefer = self._preferred_failover_family(peer, peer_ip=peer_ip)
+            if (
+                prefer == "serial"
+                and physical_lan_reachable()
+                and self._has_online_family("udp")
+                and (peer_ip or self._peer_has_path_on_family(peer, "udp"))
+            ):
+                prefer = "udp"
             if prefer in ("udp", "lan") and not self._lan_transport_ready():
-                prefer = "serial" if self._has_online_family("serial") else prefer
-            if prefer == "serial" and not self._has_online_family("serial"):
+                prefer = "serial" if self._serial_transport_ready() else prefer
+            if prefer == "serial" and not self._serial_transport_ready():
                 prefer = "udp" if self._has_online_family("udp") else (
                     "lan" if lan_mesh_has_peer() else prefer
                 )
@@ -2718,7 +2791,7 @@ class MessagingBackend:
                 if not replace:
                     if link_ok:
                         print(f"[connect] Already connected to {self.active_peer_hash[:16]}...")
-                        return True
+                        return self._finish_connect(clean, link=self.active_link)
                     print(f"[connect] Stale link to {self.active_peer_hash[:16]}... — reconnecting")
                     self._teardown_active_link(preserve_peer=True, handoff=True)
                 elif self._link_path_score(self.active_link) >= 90 and link_ok:
@@ -2729,13 +2802,12 @@ class MessagingBackend:
                     print(f"[connect] Replacing link to {self.active_peer_hash[:16]} for better path...")
             elif self._peer_link_active(clean):
                 print(f"[connect] Already linked to {clean[:16]}... (parallel session)")
-                if user_initiated:
-                    link = self._link_for_peer(clean)
-                    if link:
-                        self._notify_link_established(
-                            link, clean, promote_active=True, background=False,
-                        )
-                return True
+                adopt = self._link_for_peer(clean) or self._find_active_link_for_peer(clean)
+                if user_initiated and adopt:
+                    self._notify_link_established(
+                        adopt, clean, promote_active=True, background=False,
+                    )
+                return self._finish_connect(clean, link=adopt)
 
             known_identity = self._identity_for_hash(clean)
             if known_identity is None:
@@ -2780,10 +2852,11 @@ class MessagingBackend:
                     inbound, dest_hex, promote_active=True, background=False,
                 )
                 print(f"[connect] Adopted inbound link to {dest_hex[:16]}...")
-                return True
+                return self._finish_connect(dest_hex, link=inbound)
             if self._peer_link_active(dest_hex, clean):
                 print(f"[connect] Already linked to {dest_hex[:16]}... (inbound)")
-                return True
+                adopt = self._link_for_peer(dest_hex) or self._find_active_link_for_peer(dest_hex, clean)
+                return self._finish_connect(dest_hex, link=adopt)
 
             physical_lan = physical_lan_reachable()
             peer_lan_down = bool(peer_ip and self._peer_lan_recently_unreachable(peer_ip))
@@ -2795,6 +2868,19 @@ class MessagingBackend:
             serial_ready = self._serial_transport_ready()
             serial_only = serial_ready and (not lan_ready or peer_lan_down)
             prune_stale_lan_paths()
+
+            if self._udp_connect_ready(dest_hex, peer_ip, peer_lan_down):
+                if peer_ip:
+                    self._prime_udp_path(dest_hex, peer_ip=peer_ip, timeout_s=2.5)
+                print(f"[connect] LAN/UDP path ready — quick connect ({QUICK_OUTBOUND_TIMEOUT_S}s)")
+                if self._establish_outbound_link(
+                    destination, dest_hex, clean, old_link=old_link,
+                    timeout_s=QUICK_OUTBOUND_TIMEOUT_S,
+                ):
+                    return self._finish_connect(dest_hex)
+                if self._peer_link_active(dest_hex, clean):
+                    adopt = self._link_for_peer(dest_hex) or self._find_active_link_for_peer(dest_hex, clean)
+                    return self._finish_connect(dest_hex, link=adopt)
 
             if serial_ready and (serial_only or not physical_lan or self._peer_has_path_on_family(dest_hex, "serial")):
                 if not physical_lan:
@@ -3010,7 +3096,8 @@ class MessagingBackend:
         link = self._outgoing_link(peer)
         return bool(link and self._link_interface_healthy(link))
 
-    def send_message(self, text, receipt_callback=None, msg_id=None, target_peer=None):
+    def send_message(self, text, receipt_callback=None, msg_id=None, target_peer=None,
+                     link=None):
         peer = self.dest_hash_for(
             target_peer or self.active_peer_hash or self._session_peer_hash or ""
         )
@@ -3018,7 +3105,7 @@ class MessagingBackend:
         if not self._peer_link_active(peer):
             print(f"[messaging] send_message: no active link to {peer[:16] if peer else 'peer'}")
             return False
-        link = self._best_outgoing_link(peer)
+        link = link or self._best_outgoing_link(peer)
         if not link:
             print(f"[messaging] send_message: no link to {peer[:16] if peer else 'peer'}")
             return False
@@ -3129,9 +3216,9 @@ class MessagingBackend:
         return True
 
     def send_file(self, file_path, msg_type=MESSAGE_TYPE_FILE, progress_callback=None,
-                  transfer_id=None, target_peer=None):
+                  transfer_id=None, target_peer=None, link=None):
         peer = self.dest_hash_for(target_peer or self.active_peer_hash or "")
-        link = self._outgoing_link(peer)
+        link = link or self._outgoing_link(peer)
         if not link or not os.path.exists(file_path):
             print(f"[messaging] send_file: no link to {peer[:16] if peer else 'peer'} or missing file")
             return False
