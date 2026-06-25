@@ -3277,7 +3277,6 @@ class ChatWebServer:
                 })
             except Exception as e:
                 return web.json_response({"error": str(e)}, status=400)
-        import sys, os
         if getattr(sys, "frozen", False) and sys.platform == "win32":
             exe = sys.executable
             cwd = os.path.dirname(os.path.abspath(exe))
