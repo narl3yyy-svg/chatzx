@@ -34,6 +34,45 @@ class DefaultInterfaceTests(unittest.TestCase):
         self.assertTrue(ri.standalone_needs_udp(ifaces))
 
 
+class HubSettingsTests(unittest.TestCase):
+    def test_apply_hub_server_enables_tcp_listener(self):
+        from chatxz.web.server import ChatWebServer
+
+        server = ChatWebServer.__new__(ChatWebServer)
+        settings = {
+            "hub_role": "server",
+            "hub_port": 4242,
+            "rns_interfaces": ri.default_interface_list(),
+        }
+        out = server._apply_hub_settings(settings)
+        server_iface = next(
+            i for i in out["rns_interfaces"]
+            if i.get("type") == "TCPServerInterface"
+        )
+        self.assertTrue(server_iface.get("enabled"))
+        self.assertEqual(server_iface.get("listen_ip"), "0.0.0.0")
+        self.assertEqual(server_iface.get("listen_port"), 4242)
+
+    def test_apply_hub_client_points_tcp_client_at_host(self):
+        from chatxz.web.server import ChatWebServer
+
+        server = ChatWebServer.__new__(ChatWebServer)
+        settings = {
+            "hub_role": "client",
+            "hub_host": "10.10.100.11",
+            "hub_port": 4242,
+            "rns_interfaces": ri.default_interface_list(),
+        }
+        out = server._apply_hub_settings(settings)
+        client = next(
+            i for i in out["rns_interfaces"]
+            if i.get("type") == "TCPClientInterface"
+        )
+        self.assertEqual(client.get("target_host"), "10.10.100.11")
+        self.assertEqual(client.get("target_port"), 4242)
+        self.assertTrue(client.get("enabled"))
+
+
 class HubPeerTests(unittest.TestCase):
     def test_is_hub_peer_hash(self):
         self.assertTrue(is_hub_peer_hash(HUB_GROUP_PEER))

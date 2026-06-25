@@ -707,6 +707,112 @@ def hot_add_serial_interface(port, speed=SERIAL_DEFAULT_BAUD, ifac_size=16):
         return None
 
 
+def tcp_server_interface_online(listen_port=None):
+    """Return an online TCPServerInterface, optionally matching listen_port."""
+    try:
+        import RNS
+        for iface in getattr(RNS.Transport, "interfaces", []) or []:
+            if type(iface).__name__ != "TCPServerInterface":
+                continue
+            if listen_port is not None:
+                port = getattr(iface, "listen_port", None) or getattr(iface, "port", None)
+                if port is not None and int(port) != int(listen_port):
+                    continue
+            if getattr(iface, "online", False):
+                return iface
+    except Exception:
+        pass
+    return None
+
+
+def tcp_client_interface_online():
+    """Return an online TCPClientInterface if any."""
+    try:
+        import RNS
+        for iface in getattr(RNS.Transport, "interfaces", []) or []:
+            if type(iface).__name__ == "TCPClientInterface" and getattr(iface, "online", False):
+                return iface
+    except Exception:
+        pass
+    return None
+
+
+def hot_add_tcp_server_interface(listen_ip="0.0.0.0", listen_port=4242, ifac_size=16):
+    """Attach TCPServerInterface when hub server mode is enabled after RNS already started."""
+    listen_ip = (listen_ip or "0.0.0.0").strip()
+    listen_port = int(listen_port or 4242)
+    try:
+        import RNS
+        from RNS.Interfaces.TCPInterface import TCPServerInterface
+    except Exception as exc:
+        print(f"[hub] TCP server hot-add unavailable: {exc}")
+        return None
+
+    existing = tcp_server_interface_online(listen_port)
+    if existing:
+        return existing
+
+    for iface in list(getattr(RNS.Transport, "interfaces", []) or []):
+        if type(iface).__name__ != "TCPServerInterface":
+            continue
+        try:
+            RNS.Transport.remove_interface(iface)
+        except Exception:
+            pass
+
+    name = f"TCP Hub {listen_port}"
+    try:
+        iface = TCPServerInterface(RNS.Transport, {
+            "name": name,
+            "listen_ip": listen_ip,
+            "listen_port": listen_port,
+            "ifac_size": ifac_size,
+        })
+        _finalize_rns_interface(iface, ifac_size=ifac_size)
+        RNS.Transport.add_interface(iface)
+        print(f"[hub] Hot-added TCP hub server on {listen_ip}:{listen_port}")
+        return iface
+    except Exception as exc:
+        print(f"[hub] TCP server hot-add failed for {listen_ip}:{listen_port}: {exc}")
+        return None
+
+
+def ensure_runtime_tcp_hub(settings=None, config_dir=None):
+    """Start TCP hub listener when hub_role is server (runtime hot-add)."""
+    if not settings:
+        try:
+            from chatxz.utils.helpers import get_config_dir
+            import json
+            path = os.path.join(config_dir or get_config_dir(), "settings.json")
+            with open(path, encoding="utf-8") as fh:
+                settings = json.load(fh)
+        except Exception:
+            return None
+    if (settings.get("hub_role") or "off") != "server":
+        return None
+    try:
+        import RNS
+        if RNS.Reticulum.get_instance() is None:
+            return None
+    except Exception:
+        return None
+    listen_ip = "0.0.0.0"
+    listen_port = int(settings.get("hub_port") or 4242)
+    ifac_size = 16
+    for iface in normalize_interface_list(settings.get("rns_interfaces")):
+        if iface.get("type") != "TCPServerInterface":
+            continue
+        if not iface.get("enabled", True):
+            continue
+        listen_ip = (iface.get("listen_ip") or listen_ip).strip() or "0.0.0.0"
+        listen_port = int(iface.get("listen_port") or listen_port)
+        ifac_size = int(iface.get("ifac_size") or ifac_size)
+        break
+    return hot_add_tcp_server_interface(
+        listen_ip=listen_ip, listen_port=listen_port, ifac_size=ifac_size,
+    )
+
+
 def ensure_runtime_serial(settings_interfaces=None):
     port, speed = configured_serial_port(settings_interfaces)
     if not port:

@@ -1744,7 +1744,9 @@ function saveHubSettings() {
     if (d.status === 'ok') {
       window._hubRole = d.settings?.hub_role || hub_role;
       updateHubUi();
-      toast('Hub settings saved — restart chatxz to apply RNS config');
+      toast(appPlatform === 'android'
+        ? 'Hub settings saved — RNS config updated'
+        : 'Hub settings saved — restart chatxz if TCP hub does not connect');
       loadRnsInterfaces();
     }
     return d;

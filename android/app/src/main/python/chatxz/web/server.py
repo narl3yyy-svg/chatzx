@@ -655,28 +655,104 @@ class ChatWebServer:
                         filtered.append(self._enrich_message(repaired, outgoing=False))
         return filtered[-limit:]
 
+    @staticmethod
+    def _is_tcp_server_iface(iface):
+        return (
+            iface.get("type") == "TCPServerInterface"
+            or iface.get("preset") == "tcp_server"
+        )
+
+    @staticmethod
+    def _is_tcp_client_iface(iface):
+        return (
+            iface.get("type") == "TCPClientInterface"
+            or iface.get("preset") == "tcp_client"
+        )
+
     def _apply_hub_settings(self, settings):
         hub_role = settings.get("hub_role", "off")
         hub_host = (settings.get("hub_host") or "").strip()
         hub_port = int(settings.get("hub_port") or 4242)
         interfaces = normalize_interface_list(settings.get("rns_interfaces"))
         if hub_role == "server":
-            if not any(i.get("type") == "TCPServerInterface" for i in interfaces):
+            server = None
+            for iface in interfaces:
+                if self._is_tcp_server_iface(iface):
+                    server = iface
+                    break
+            if not server:
                 interfaces = add_interface(interfaces, "tcp_server")
+                interfaces = normalize_interface_list(interfaces)
+                server = next(
+                    i for i in interfaces if self._is_tcp_server_iface(i)
+                )
+            server["enabled"] = True
+            server["type"] = "TCPServerInterface"
+            server["listen_ip"] = (server.get("listen_ip") or "0.0.0.0").strip() or "0.0.0.0"
+            server["listen_port"] = hub_port
+            for iface in interfaces:
+                if not self._is_tcp_client_iface(iface):
+                    continue
+                host = (iface.get("target_host") or "").strip().lower()
+                if host in ("127.0.0.1", "localhost", ""):
+                    iface["enabled"] = False
         elif hub_role == "client" and hub_host:
+            for iface in interfaces:
+                if self._is_tcp_server_iface(iface):
+                    iface["enabled"] = False
             updated = False
             for iface in interfaces:
-                if iface.get("type") == "TCPClientInterface":
+                if self._is_tcp_client_iface(iface):
                     iface["target_host"] = hub_host
                     iface["target_port"] = hub_port
+                    iface["enabled"] = True
+                    iface["type"] = "TCPClientInterface"
                     updated = True
                     break
             if not updated:
                 interfaces = add_interface(interfaces, "tcp_client")
-                interfaces[-1]["target_host"] = hub_host
-                interfaces[-1]["target_port"] = hub_port
-        settings["rns_interfaces"] = interfaces
+                interfaces = normalize_interface_list(interfaces)
+                client = next(
+                    i for i in interfaces if self._is_tcp_client_iface(i)
+                )
+                client["target_host"] = hub_host
+                client["target_port"] = hub_port
+                client["enabled"] = True
+        settings["rns_interfaces"] = normalize_interface_list(interfaces)
         return settings
+
+    def _apply_hub_runtime(self, settings=None):
+        """Hot-apply hub interfaces on a running RNS instance (Android/desktop)."""
+        settings = settings or self.load_settings()
+        hub_role = settings.get("hub_role", "off")
+        try:
+            from chatxz.core.rns_interfaces import (
+                ensure_runtime_tcp_hub,
+                tcp_client_interface_online,
+                tcp_server_interface_online,
+            )
+            if hub_role == "server":
+                iface = ensure_runtime_tcp_hub(settings, self.config_dir)
+                if iface and self.messaging:
+                    self.messaging._silent_announce()
+                online = tcp_server_interface_online(int(settings.get("hub_port") or 4242))
+                if online:
+                    print(f"[hub] TCP hub server listening on 0.0.0.0:{settings.get('hub_port', 4242)}")
+                else:
+                    print(
+                        f"[hub] TCP hub server not online yet on port "
+                        f"{settings.get('hub_port', 4242)} — check hub role and restart"
+                    )
+            elif hub_role == "client":
+                host = settings.get("hub_host") or ""
+                port = int(settings.get("hub_port") or 4242)
+                online = tcp_client_interface_online()
+                if online:
+                    print(f"[hub] TCP hub client connected")
+                elif host:
+                    print(f"[hub] TCP hub client connecting to {host}:{port}...")
+        except Exception as exc:
+            print(f"[hub] Runtime hub apply failed: {exc}")
 
     def load_settings(self):
         defaults = {
@@ -996,6 +1072,8 @@ class ChatWebServer:
                 print("[network] Startup announce sent once (tap Announce for more)")
         except Exception as exc:
             print(f"[network] Startup announce failed: {exc}")
+
+        self._apply_hub_runtime(settings)
 
         return my_hash
 
@@ -2238,6 +2316,18 @@ class ChatWebServer:
         port, _ = configured_serial_port(self.load_settings().get("rns_interfaces"))
         settings = self.load_settings()
         configured = settings.get("rns_interfaces")
+        from chatxz.core.rns_interfaces import (
+            tcp_client_interface_online,
+            tcp_server_interface_online,
+        )
+        hub_role = settings.get("hub_role", "off")
+        hub_port = int(settings.get("hub_port") or 4242)
+        tcp_hub_online = bool(
+            hub_role == "server" and tcp_server_interface_online(hub_port)
+        )
+        tcp_client_online = bool(
+            hub_role == "client" and tcp_client_interface_online()
+        )
         lan_discovery = lan_discovery_configured(configured)
         if lan_discovery and sys.platform in ("win32", "darwin"):
             lan_snap = await asyncio.to_thread(desktop_lan_status)
@@ -2302,6 +2392,11 @@ class ChatWebServer:
             ),
             "queue_size": self.messaging.queue_size() if self.messaging else 0,
             "debug_log_path": debug_log_path() if is_android() else None,
+            "hub_role": hub_role,
+            "hub_host": settings.get("hub_host") or "",
+            "hub_port": hub_port,
+            "tcp_hub_online": tcp_hub_online,
+            "tcp_client_online": tcp_client_online,
         })
 
     async def handle_path_wake(self, request):
@@ -2555,8 +2650,14 @@ class ChatWebServer:
                 settings["auto_announce"] = bool(data["auto_announce"])
             if "setup_complete" in data:
                 settings["setup_complete"] = bool(data["setup_complete"])
+            hub_changed = any(
+                k in data for k in ("hub_role", "hub_host", "hub_port")
+            )
             settings = self._apply_hub_settings(settings)
             self.save_settings(settings)
+            if hub_changed:
+                self._write_rns_config(settings)
+                await asyncio.to_thread(self._apply_hub_runtime, settings)
             if "auto_announce" in data:
                 self._apply_auto_announce_settings(settings)
             if self.messaging:
@@ -2650,7 +2751,14 @@ class ChatWebServer:
 
     async def handle_restart(self, request):
         if is_android():
-            return web.json_response({"status": "restarting", "android": True})
+            settings = self.load_settings()
+            self._write_rns_config(settings)
+            await asyncio.to_thread(self._apply_hub_runtime, settings)
+            return web.json_response({
+                "status": "restarting",
+                "android": True,
+                "rns_reloaded": True,
+            })
         import sys, os
         if getattr(sys, "frozen", False):
             args = [sys.executable]
