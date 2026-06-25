@@ -105,12 +105,56 @@ def migrate_contact_by_ip(config_dir, ip, new_hash, name=None, port=None, identi
     return removed
 
 
-def update_contact_endpoint(config_dir, peer_hash, ip=None, port=None, identity_hash=None, peers_equivalent=None):
+def _same_subnet(ip_a, ip_b):
+    if not ip_a or not ip_b:
+        return False
+    parts_a = str(ip_a).split(".")
+    parts_b = str(ip_b).split(".")
+    if len(parts_a) != 4 or len(parts_b) != 4:
+        return False
+    return parts_a[:3] == parts_b[:3]
+
+
+def should_update_contact_ip(contact_ip, new_ip, local_scope_ip=None):
+    """Prefer pinned-LAN subnet IPs; ignore cross-subnet beacons when contact is local."""
+    new_ip = (new_ip or "").strip()
+    contact_ip = (contact_ip or "").strip()
+    if not new_ip:
+        return False
+    if not contact_ip:
+        return True
+    if contact_ip == new_ip:
+        return False
+    scope = (local_scope_ip or "").strip()
+    if not scope:
+        return True
+    new_local = _same_subnet(new_ip, scope)
+    contact_local = _same_subnet(contact_ip, scope)
+    if new_local and not contact_local:
+        return True
+    if new_local and contact_local:
+        return True
+    if not new_local and contact_local:
+        return False
+    return True
+
+
+def update_contact_endpoint(
+    config_dir,
+    peer_hash,
+    ip=None,
+    port=None,
+    identity_hash=None,
+    peers_equivalent=None,
+    name=None,
+    local_scope_ip=None,
+):
     """Refresh saved contact LAN endpoint when the same peer moves to a new IP."""
     clean = (peer_hash or "").strip().replace(":", "")
     if not clean:
         return None
     target_ip = (ip or "").strip()
+    peer_name = (name or "").strip().lower()
     updated = None
     for contact in list_contacts(config_dir):
         ch = (contact.get("hash") or "").replace(":", "")
@@ -121,9 +165,14 @@ def update_contact_endpoint(config_dir, peer_hash, ip=None, port=None, identity_
         if not same and identity_hash:
             ident = str(identity_hash).strip().replace(":", "")
             same = ih == ident or ch == ident
+        if not same and peer_name:
+            cn = (contact.get("name") or "").strip().lower()
+            if cn and cn == peer_name:
+                same = True
         if not same:
             continue
-        if target_ip and target_ip != (contact.get("ip") or "").strip():
+        contact_ip = (contact.get("ip") or "").strip()
+        if target_ip and should_update_contact_ip(contact_ip, target_ip, local_scope_ip):
             updated = save_contact(
                 config_dir,
                 ch,

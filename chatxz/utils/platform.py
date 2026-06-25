@@ -73,6 +73,19 @@ def patch_embedded_signals():
     _signals_patched = True
 
 
+def host_platform():
+    """Return OS id for UI hints: android, windows, darwin, linux, or desktop."""
+    if is_android():
+        return "android"
+    if sys.platform == "win32":
+        return "windows"
+    if sys.platform == "darwin":
+        return "darwin"
+    if sys.platform.startswith("linux"):
+        return "linux"
+    return "desktop"
+
+
 def is_android():
     """True on Chaquopy/Android — never cache False before env/java checks run."""
     global _android

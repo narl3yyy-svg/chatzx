@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.132
+**Current version:** 0.3.133
 
 ## Download
 
@@ -32,7 +32,7 @@ run.bat web --share
 
 Open **http://127.0.0.1:8742**. Logs stay in that cmd window.
 
-**Voice notes (Helium / Chrome):** use `127.0.0.1` (secure context). If mic is blocked, allow it via the site lock icon and **Settings → Privacy & security → Microphone** (desktop apps on).
+**Voice notes:** use `http://127.0.0.1:8742` (Windows) or `http://localhost:8742` (macOS). If mic is blocked: allow the site in your browser, then enable the browser under **Windows → Privacy → Microphone** or **macOS → Privacy & Security → Microphone**.
 
 **Stop:** **Ctrl+C** — server exits and **all ports close** (8742, 4242, 8743). Nothing keeps listening after `run.bat` ends.
 
@@ -195,6 +195,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.133** — Platform-aware UI hints (Windows vs macOS vs Linux): mic permission messages, folder picker, serial setup; server reports `windows`/`darwin`/`linux`/`android`; saved contact IP prefers your pinned LAN subnet (ignores cross-subnet VPN beacons like `10.0.5.x` when you are on `172.17.x`)
 - **v0.3.132** — Windows: saved contact IP updates live when peer moves subnet (no server restart); searchable emoji picker; clearer microphone permission hints (Helium + Windows Privacy); quieter file-preview disconnect logs; macOS Apple Silicon CPU temp via ioreg/powermetrics/thermal estimate (`~` when approximate)
 - **v0.3.131** — Windows: fix large-file preview/send (`WinError 87` sendfile); CPU/temp status bar on Windows + macOS; discovered peer IP updates in GUI when same identity moves subnet
 - **v0.3.130** — TCP LAN fix: hot-added TCP server no longer crashes on incoming connections (`ifac_netname`); UDP preferred over TCP when both enabled; less TCP client reconnect spam

@@ -77,6 +77,7 @@ from chatxz.utils.debug_log import (
 )
 from chatxz.utils.android_notify import show_message_notification
 from chatxz.utils.platform import (
+    host_platform,
     is_android,
     apply_lan_interface_preference,
     enumerate_lan_interfaces,
@@ -1812,6 +1813,8 @@ class ChatWebServer:
             port=peer.get("port"),
             identity_hash=peer.get("identity_hash"),
             peers_equivalent=self._peers_equivalent,
+            name=peer.get("name"),
+            local_scope_ip=self._discovery_scope_ip(),
         )
         if contact_updated:
             contacts_dirty = True
@@ -2456,9 +2459,9 @@ class ChatWebServer:
         return payload
 
     def _platform_name(self):
-        if is_android() or self.embedded:
-            return "android"
-        return "desktop"
+        if self.embedded and not is_android():
+            return host_platform()
+        return host_platform()
 
     def _reset_network_state(self, update_settings=True):
         if self.messaging:

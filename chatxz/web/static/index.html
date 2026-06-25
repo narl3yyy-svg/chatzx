@@ -2865,11 +2865,16 @@ const SERIAL_BAUD_RATES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 
 const SERIAL_DEFAULT_BAUD = 57600;
 
 function updatePlatformHints() {
+  const os = detectClientPlatform();
   const serialHint = document.getElementById('serial-setup-hint');
   if (serialHint) {
-    serialHint.textContent = appPlatform === 'android'
-      ? 'Use a USB OTG cable, plug in your serial adapter, tap Refresh devices, grant USB access, pick baud (default 57600), click Apply, then restart the app.'
-      : 'Plug in USB serial, pick device + baud (default 57600), click Apply. Start with ./run.sh web --share for dialout permissions. Restart chatxz after applying.';
+    if (os === 'android') {
+      serialHint.textContent = 'Use a USB OTG cable, plug in your serial adapter, tap Refresh devices, grant USB access, pick baud (default 57600), click Apply, then restart the app.';
+    } else if (os === 'windows') {
+      serialHint.textContent = 'Plug in USB serial, pick device + baud (default 57600), click Apply, then restart chatxz (run.bat web --share).';
+    } else {
+      serialHint.textContent = 'Plug in USB serial, pick device + baud (default 57600), click Apply. Start with ./run.sh web --share for dialout permissions. Restart chatxz after applying.';
+    }
   }
 }
 
@@ -3365,17 +3370,51 @@ function contactMatchesPeer(c, p) {
   return false;
 }
 
+function sameSubnet(ipA, ipB) {
+  if (!ipA || !ipB) return false;
+  const a = String(ipA).split('.');
+  const b = String(ipB).split('.');
+  return a.length === 4 && b.length === 4 && a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+}
+
+function detectClientPlatform() {
+  if (appPlatform === 'android' || window.chatxzAndroid?.isAndroid?.()) return 'android';
+  if (['windows', 'darwin', 'linux', 'android'].includes(appPlatform)) return appPlatform;
+  const plat = (navigator.platform || '').toLowerCase();
+  const ua = navigator.userAgent || '';
+  if (/android/i.test(ua)) return 'android';
+  if (/win/i.test(plat)) return 'windows';
+  if (/mac/i.test(plat)) return 'darwin';
+  if (/linux/i.test(plat)) return 'linux';
+  return appPlatform || 'desktop';
+}
+
+function bestPeerForContact(peers, contact) {
+  const matches = (peers || []).filter(p => contactMatchesPeer(contact, p) && p.ip);
+  if (!matches.length) return null;
+  const scope = window._localLanIp;
+  if (scope) {
+    const local = matches.filter(p => sameSubnet(p.ip, scope));
+    if (local.length) {
+      local.sort((a, b) => (b.last_seen || 0) - (a.last_seen || 0));
+      return local[0];
+    }
+  }
+  matches.sort((a, b) => (b.last_seen || 0) - (a.last_seen || 0));
+  return matches[0];
+}
+
 function syncContactIpsFromDiscovered(peers) {
   let changed = false;
-  (peers || []).forEach(p => {
-    if (!p || !p.ip) return;
-    allContacts = allContacts.map(c => {
-      if (!contactMatchesPeer(c, p)) return c;
-      const port = p.port || c.port || 8742;
-      if (c.ip === p.ip && (c.port || 8742) === port) return c;
-      changed = true;
-      return {...c, ip: p.ip, port, identity_hash: p.identity_hash || c.identity_hash};
-    });
+  allContacts = allContacts.map(c => {
+    const p = bestPeerForContact(peers, c);
+    if (!p) return c;
+    const port = p.port || c.port || 8742;
+    if (c.ip === p.ip && (c.port || 8742) === port) return c;
+    const scope = window._localLanIp;
+    if (scope && c.ip && sameSubnet(c.ip, scope) && !sameSubnet(p.ip, scope)) return c;
+    changed = true;
+    return {...c, ip: p.ip, port, identity_hash: p.identity_hash || c.identity_hash};
   });
   if (changed) renderContacts(allContacts);
 }
@@ -3464,6 +3503,7 @@ function refreshNetworkStatus(silent) {
         `<div class="net-row"><span class="net-label">${label}</span><span class="net-value ${ok === undefined ? '' : netClass(ok)}">${escapeHtml(String(value ?? '—'))}</span></div>`;
       const platform = (window.chatxzAndroid?.isAndroid?.() ? 'android' : null) || d.platform;
       if (platform) appPlatform = platform;
+      if (d.lan_ip && d.lan_ip !== 'not configured') window._localLanIp = d.lan_ip;
       html += row('Platform', platform);
       html += row('HTTP bind', d.http_webview ? `${d.http_bind} (WebView ${d.http_webview})` : d.http_bind);
       html += row('Discovery listening', d.discovery_active ? 'yes' : 'no (tap Announce)', !!d.discovery_active);
@@ -4158,21 +4198,52 @@ window.onChatxzAudioPermissionGranted = function() {
   refreshNetworkStatus();
 };
 
+function micBrowserLabel() {
+  const ua = navigator.userAgent || '';
+  if (/Helium/i.test(ua)) return 'Helium';
+  if (/Edg\//i.test(ua)) return 'Edge';
+  if (/Chrome/i.test(ua)) return 'Chrome';
+  if (/Firefox/i.test(ua)) return 'Firefox';
+  if (/Safari/i.test(ua) && !/Chrome/i.test(ua)) return 'Safari';
+  return 'your browser';
+}
+
 function micAccessHint(err) {
+  const os = detectClientPlatform();
+  const browser = micBrowserLabel();
+  const localUrl = os === 'darwin' ? 'http://localhost:8742' : 'http://127.0.0.1:8742';
   if (!window.isSecureContext) {
-    return 'Microphone needs a secure page — use http://127.0.0.1:8742 (not a raw LAN IP in Helium)';
+    return `Microphone needs a secure page — open ${localUrl} (not a raw LAN IP in ${browser})`;
   }
   const name = err?.name || '';
   if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
-    return 'No microphone found — plug one in or enable it in Windows Sound settings';
+    if (os === 'darwin') return 'No microphone found — check System Settings → Sound → Input and pick a mic';
+    if (os === 'windows') return 'No microphone found — plug one in or enable it in Windows Sound settings';
+    if (os === 'linux') return 'No microphone found — check your audio input in system sound settings';
+    return 'No microphone found on this device';
   }
   if (name === 'NotReadableError' || name === 'TrackStartError') {
     return 'Microphone busy — close other apps using it, then try again';
   }
   if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || name === 'SecurityError') {
-    return 'Microphone blocked — in Helium click the lock/site icon → Site settings → Allow microphone for this site. Also check Windows Settings → Privacy → Microphone → allow desktop apps.';
+    if (os === 'darwin') {
+      return `Microphone blocked — in ${browser} allow mic for this site, then System Settings → Privacy & Security → Microphone → enable ${browser}`;
+    }
+    if (os === 'windows') {
+      return `Microphone blocked — in ${browser} click the lock/site icon → Allow microphone. Also Windows Settings → Privacy & security → Microphone → allow desktop apps.`;
+    }
+    if (os === 'linux') {
+      return `Microphone blocked — allow mic for this site in ${browser} and check system audio/privacy settings`;
+    }
+    return `Microphone blocked — allow mic for this site in ${browser}`;
   }
-  return 'Microphone access denied — allow mic for this site in Helium and Windows Privacy settings';
+  if (os === 'darwin') {
+    return `Microphone access denied — allow mic in ${browser} and macOS Privacy & Security → Microphone`;
+  }
+  if (os === 'windows') {
+    return `Microphone access denied — allow mic in ${browser} and Windows Privacy settings`;
+  }
+  return `Microphone access denied — allow mic for this site in ${browser}`;
 }
 
 async function queryMicPermissionState() {
@@ -4401,7 +4472,13 @@ async function pickReceivedDir() {
     return;
   }
 
-  toast('Opening folder picker… a Windows dialog should appear (check the taskbar).');
+  const os = detectClientPlatform();
+  const pickerMsg = os === 'windows'
+    ? 'Opening folder picker… a Windows dialog should appear (check the taskbar).'
+    : os === 'darwin'
+      ? 'Opening folder picker… a macOS dialog should appear.'
+      : 'Opening folder picker…';
+  toast(pickerMsg);
   try {
     const r = await fetch('/api/browse-dir');
     const d = await r.json();
