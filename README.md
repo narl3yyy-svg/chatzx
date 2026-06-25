@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.100
+**Current version:** 0.3.106
 
 ## Download
 
@@ -21,7 +21,7 @@ Portable Windows, macOS, and Android builds are published automatically on every
 
 ## Windows (portable)
 
-1. Download **`chatxz-0.3.61-windows-portable.zip`** from [Releases](https://github.com/narl3yyy-svg/chatxz/releases).
+1. Download **`chatxz-0.3.106-windows-portable.zip`** from [Releases](https://github.com/narl3yyy-svg/chatxz/releases).
 2. Unzip anywhere (e.g. `C:\Users\You\chatxz`).
 3. Open the `chatxz` folder and double-click **`chatxz.exe`**.
 4. Browser opens at **http://127.0.0.1:8742**. Allow Windows Firewall on **private** networks if prompted (UDP 4242, TCP 8742).
@@ -154,6 +154,12 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.106** — Android VPN interfaces in picker (ConnectivityManager); discovery peers no longer flash away on startup; 5‑min discovery TTL; file transfers prefer TCP/LAN over UDP with compression off on fast paths; Android debug log export to user-chosen folder
+- **v0.3.105** — First-run setup wizard (retention + received folder); Arch auto-discovery shows all subnets; Android interface retry + announce burst fixes
+- **v0.3.104** — Hub/TCP audit: Arch as hub server, Ubuntu/Android as clients; TCP failover; group chat sender names; hub queue drain; settings modal stays open on save
+- **v0.3.103** — Hub group chat routing fixes; TCP client/server presets; network panel improvements
+- **v0.3.102** — TCP hub mode polish; interface picker fixes; discovery scope per pinned NIC
+- **v0.3.101** — Hub server/client group chat via TCP; saved contacts migration; link failover tuning
 - **v0.3.100** — Every `connect_to` success path drains the outbound queue and consolidates links (no missed drain on serial/wake/reverse paths)
 - **v0.3.99** — Queued messages drain on explicit reconnect; one link per peer (no parallel-session split); queue sends use the active link; UDP/LAN preferred over stale serial when VPN/LAN is up; faster failover when serial unplugged or peer restarts
 - **v0.3.98** — Disconnect stays disconnected (no auto-reconnect/failover/resume); passive inbound links after disconnect (messages still arrive with unread badge + desktop notification); purge stale RNS `known_destinations` on beacon register; close mismatched parallel links on Connect; discovered-peer unread badges
