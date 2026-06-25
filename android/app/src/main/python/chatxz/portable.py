@@ -41,7 +41,8 @@ def main():
 
     host = "0.0.0.0"
     port = 8742
-    server = ChatWebServer(host=host, port=port, verbose=False, debug=False, force=False)
+    force = sys.platform == "win32" and getattr(sys, "frozen", False)
+    server = ChatWebServer(host=host, port=port, verbose=False, debug=False, force=force)
 
     def _open_browser():
         if wait_for_port("127.0.0.1", port):

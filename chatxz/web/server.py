@@ -165,7 +165,26 @@ def cleanup_rns_stale():
             pass
 
 
+def _win_subprocess_flags():
+    if sys.platform != "win32":
+        return 0
+    return getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 def _proc_cmdline(pid):
+    if sys.platform == "win32":
+        try:
+            result = subprocess.run(
+                [
+                    "powershell.exe", "-NoProfile", "-Command",
+                    f"(Get-CimInstance Win32_Process -Filter \"ProcessId={int(pid)}\").CommandLine",
+                ],
+                capture_output=True, text=True, timeout=5,
+                creationflags=_win_subprocess_flags(),
+            )
+            return (result.stdout or "").strip()
+        except (ValueError, subprocess.TimeoutExpired, OSError):
+            return ""
     try:
         with open(f"/proc/{pid}/cmdline", "rb") as f:
             return f.read().replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
@@ -174,19 +193,54 @@ def _proc_cmdline(pid):
 
 
 def _is_chatxz_process(pid):
+    if sys.platform == "win32":
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {int(pid)}", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=5,
+                creationflags=_win_subprocess_flags(),
+            )
+            line = (result.stdout or "").lower()
+            return "chatxz" in line and "grok" not in line
+        except (ValueError, subprocess.TimeoutExpired, OSError):
+            return False
     cmd = _proc_cmdline(pid)
     return "chatxz" in cmd and "grok" not in cmd.lower()
 
 
 def _port_holder_pids(port, udp=True):
     pids = []
+    needle = f":{port}"
+    if sys.platform == "win32":
+        try:
+            result = subprocess.run(
+                ["netstat", "-ano"],
+                capture_output=True, text=True, timeout=5,
+                creationflags=_win_subprocess_flags(),
+            )
+            proto = "UDP" if udp else "TCP"
+            for line in result.stdout.splitlines():
+                upper = line.upper()
+                if proto not in upper or needle not in line:
+                    continue
+                parts = line.split()
+                if not parts:
+                    continue
+                try:
+                    pid = int(parts[-1])
+                except ValueError:
+                    continue
+                if pid > 0:
+                    pids.append(pid)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+        return list(dict.fromkeys(pids))
     try:
         flag = "-u" if udp else "-t"
         result = subprocess.run(
             ["ss", "-H", "-n", flag, "-lp"],
             capture_output=True, text=True, timeout=3,
         )
-        needle = f":{port}"
         for line in result.stdout.splitlines():
             if needle not in line:
                 continue
@@ -210,7 +264,7 @@ def _is_port_in_use(port, sock_type=socket.SOCK_DGRAM, host="0.0.0.0"):
 
 def stop_stale_chatxz_servers(exclude_pid=None):
     """Stop other chatxz server/cli processes holding RNS ports."""
-    if is_android() or sys.platform == "win32":
+    if is_android():
         return 0
     exclude_pid = exclude_pid or os.getpid()
     targets = set()
@@ -218,17 +272,39 @@ def stop_stale_chatxz_servers(exclude_pid=None):
         for pid in _port_holder_pids(port, udp=(port == 4242)):
             if pid != exclude_pid and _is_chatxz_process(pid):
                 targets.add(pid)
-    try:
-        result = subprocess.run(
-            ["pgrep", "-f", "chatxz\\.web\\.server|chatxz\\.app|chatxz-web"],
-            capture_output=True, text=True, timeout=3,
-        )
-        for pid_str in result.stdout.split():
-            pid = int(pid_str)
-            if pid != exclude_pid:
-                targets.add(pid)
-    except (ValueError, subprocess.TimeoutExpired, OSError):
-        pass
+    if sys.platform == "win32":
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq chatxz.exe", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=5,
+                creationflags=_win_subprocess_flags(),
+            )
+            for line in result.stdout.splitlines():
+                if "chatxz.exe" not in line.lower():
+                    continue
+                parts = [p.strip('"') for p in line.split('","')]
+                if len(parts) < 2:
+                    continue
+                try:
+                    pid = int(parts[1])
+                except ValueError:
+                    continue
+                if pid != exclude_pid:
+                    targets.add(pid)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+    else:
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", "chatxz\\.web\\.server|chatxz\\.app|chatxz-web"],
+                capture_output=True, text=True, timeout=3,
+            )
+            for pid_str in result.stdout.split():
+                pid = int(pid_str)
+                if pid != exclude_pid:
+                    targets.add(pid)
+        except (ValueError, subprocess.TimeoutExpired, OSError):
+            pass
 
     if not targets:
         return 0
@@ -236,10 +312,17 @@ def stop_stale_chatxz_servers(exclude_pid=None):
     print(f"[startup] Stopping stale chatxz process(es): {', '.join(str(p) for p in sorted(targets))}")
     for pid in sorted(targets):
         try:
-            os.kill(pid, signal.SIGTERM)
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/F"],
+                    capture_output=True, timeout=5,
+                    creationflags=_win_subprocess_flags(),
+                )
+            else:
+                os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
-        except PermissionError:
+        except (PermissionError, subprocess.TimeoutExpired, OSError):
             print(f"[startup] No permission to stop PID {pid}")
 
     deadline = time.time() + 5
@@ -279,9 +362,18 @@ def ensure_rns_ports_free(force=False):
     holder_txt = ", ".join(f"PID {p} ({_proc_cmdline(p)[:60]})" for p in holders) or "unknown"
     print(f"[startup] ERROR: UDP port 4242 is already in use by {holder_txt}")
     print("[startup] Another chatxz/RNS instance is probably still running.")
-    print("[startup] Stop it with:  pkill -f chatxz.web.server")
-    print("[startup] Or restart with:  ./run.sh web --share --force")
+    if sys.platform == "win32":
+        print("[startup] Close other chatxz.exe windows, or end the process in Task Manager.")
+    else:
+        print("[startup] Stop it with:  pkill -f chatxz.web.server")
+        print("[startup] Or restart with:  ./run.sh web --share --force")
     return False
+
+
+def _rns_startup_failure(msg):
+    """Fatal RNS startup errors must not call sys.exit from a worker thread."""
+    print(f"[startup] {msg}")
+    raise RuntimeError(msg)
 
 
 def _pick_directory_tkinter(start):
@@ -1038,7 +1130,7 @@ class ChatWebServer:
             msg = "UDP port 4242 is already in use"
             if self.embedded:
                 raise RuntimeError(msg)
-            sys.exit(1)
+            _rns_startup_failure(msg)
 
         if self.debug and not (self.embedded or is_android()):
             loglevel = getattr(RNS, "LOG_EXTREME", RNS.LOG_DEBUG)
@@ -1063,9 +1155,10 @@ class ChatWebServer:
             stop_stale_chatxz_servers()
             time.sleep(1)
             if not ensure_rns_ports_free(force=True):
+                msg = "UDP port 4242 is already in use"
                 if self.embedded:
-                    raise RuntimeError("UDP port 4242 is already in use")
-                sys.exit(1)
+                    raise RuntimeError(msg)
+                _rns_startup_failure(msg)
             RNS.Reticulum(self.config_dir, loglevel=loglevel)
         except Exception as e:
             if self.embedded:
@@ -3005,6 +3098,28 @@ class ChatWebServer:
                 "rns_reloaded": True,
             })
         import sys, os
+        if getattr(sys, "frozen", False) and sys.platform == "win32":
+            exe = sys.executable
+            cwd = os.path.dirname(os.path.abspath(exe))
+
+            def _win_restart():
+                sys.stdout.flush()
+                stop_stale_chatxz_servers(exclude_pid=os.getpid())
+                flags = (
+                    getattr(subprocess, "DETACHED_PROCESS", 0)
+                    | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                )
+                subprocess.Popen(
+                    [exe],
+                    cwd=cwd,
+                    close_fds=True,
+                    creationflags=flags,
+                )
+                os._exit(0)
+
+            print(f"[restart] Spawning new process: {exe}")
+            asyncio.get_event_loop().call_later(0.5, _win_restart)
+            return web.json_response({"status": "restarting"})
         if getattr(sys, "frozen", False):
             args = [sys.executable]
         else:
@@ -3906,8 +4021,13 @@ class ChatWebServer:
             my_hash = await asyncio.to_thread(self.start_rns)
             print(f"[startup] RNS ready, identity: {my_hash}")
             await self._broadcast({"type": "rns_ready", "data": {"hash": my_hash}})
-        except SystemExit:
-            raise
+        except (SystemExit, RuntimeError) as e:
+            self.rns_init_error = str(e) or "RNS startup failed"
+            print(f"[startup] RNS init failed: {self.rns_init_error}")
+            await self._broadcast({
+                "type": "info",
+                "data": f"Network stack failed: {self.rns_init_error}",
+            })
         except Exception:
             import traceback
             self.rns_init_error = traceback.format_exc()

@@ -350,14 +350,28 @@ def normalize_interface_list(items):
     if not out:
         return default_interface_list()
     seen_serial_ports = set()
+    seen_udp = False
+    seen_tcp_lan = False
     deduped = []
     for item in out:
-        if item.get("type") == "SerialInterface":
+        itype = item.get("type")
+        preset = item.get("preset")
+        if itype == "SerialInterface":
             port = (item.get("port") or "").strip()
             if port and port in seen_serial_ports:
                 continue
             if port:
                 seen_serial_ports.add(port)
+        elif itype == "UDPInterface" or preset == "udp_lan":
+            if seen_udp:
+                continue
+            seen_udp = True
+        elif preset == "tcp_lan" or (
+            itype == "TCPServerInterface" and preset not in ("tcp_server",)
+        ):
+            if seen_tcp_lan:
+                continue
+            seen_tcp_lan = True
         deduped.append(item)
     return deduped
 
@@ -1132,6 +1146,8 @@ def render_rns_config(
     ]
     skipped_serial = []
     seen_serial_ports = set()
+    seen_udp = False
+    seen_tcp_lan = False
     for iface in normalized:
         itype = iface.get("type", "")
         if itype == "SerialInterface":
@@ -1160,6 +1176,17 @@ def render_rns_config(
             continue
         elif not iface.get("enabled", True):
             continue
+        preset = iface.get("preset")
+        if itype == "UDPInterface" or preset == "udp_lan":
+            if seen_udp:
+                continue
+            seen_udp = True
+        elif preset == "tcp_lan" or (
+            itype == "TCPServerInterface" and preset not in ("tcp_server",)
+        ):
+            if seen_tcp_lan:
+                continue
+            seen_tcp_lan = True
         name = iface.get("name") or iface.get("type", "Interface")
         lines.append(f"  [[{name}]]")
         lines.append(f"    type = {iface.get('type', 'UDPInterface')}")
