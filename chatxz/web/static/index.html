@@ -247,7 +247,7 @@ body::before {
   border-top: 1px solid var(--border);
   animation: panelIn 0.25s ease;
 }
-.overlay-panel.open { display: flex; }
+.overlay-panel.open { display: flex; pointer-events: auto; z-index: 25; }
 @keyframes panelIn {
   from { opacity: 0; transform: translateX(-8px); }
   to { opacity: 1; transform: translateX(0); }
@@ -817,6 +817,7 @@ body.modal-open #save-contact-dialog * { pointer-events: auto; user-select: auto
 .folder-option-btn .path { display: block; font-size: 10px; color: var(--text3); margin-top: 4px; word-break: break-all; }
 .network-status {
   margin-top: 10px; font-size: 11px; color: var(--text2); line-height: 1.5;
+  max-height: 220px; overflow-y: auto; padding-right: 4px;
 }
 .net-row {
   display: flex; justify-content: space-between; gap: 8px;
@@ -1033,6 +1034,14 @@ body.sidebar-open #sidebar-backdrop { display: block; }
       </select>
     </div>
     <div class="setup-step">
+      <label for="setup-lan-transport">LAN transport (RNS)</label>
+      <select id="setup-lan-transport">
+        <option value="udp_lan" selected>UDP LAN — Wi-Fi / Ethernet (recommended)</option>
+        <option value="tcp_lan">TCP LAN — direct TCP peer links</option>
+      </select>
+      <p class="field-hint">How encrypted chat travels on your LAN. Change later in Settings → Network.</p>
+    </div>
+    <div class="setup-step">
       <label for="setup-received-dir">Received files folder</label>
       <div class="field-row">
         <input id="setup-received-dir" placeholder="/home/user/Downloads/chatxz" spellcheck="false">
@@ -1162,7 +1171,7 @@ body.sidebar-open #sidebar-backdrop { display: block; }
             <label>Received Files Folder</label>
             <div class="field-row">
               <input id="settings-received-dir" placeholder="/home/user/Downloads">
-              <button class="btn-block" onclick="pickReceivedDir()" style="width:auto;white-space:nowrap;padding:0 12px;height:40px" title="Select folder">Select folder</button>
+              <button type="button" class="btn-block" onclick="pickReceivedDir()" style="width:auto;white-space:nowrap;padding:0 12px;height:40px" title="Select folder">Select folder</button>
             </div>
             <p class="field-hint" id="settings-received-hint">Select folder opens your system directory picker. Click Save to apply.</p>
             <input type="file" id="dir-picker-fallback" style="display:none" webkitdirectory onchange="pickReceivedDirFallback(this)">
@@ -1170,11 +1179,32 @@ body.sidebar-open #sidebar-backdrop { display: block; }
         </div>
         <div class="settings-card" id="network-settings-card">
           <h4>📡 Network</h4>
-          <div class="settings-row-split" style="margin-bottom:10px">
-            <button class="btn-block" onclick="refreshNetworkStatus()">Refresh status</button>
-            <button class="btn-block danger" onclick="resetNetwork()">Reset network</button>
+
+          <div class="settings-subhead">RNS transport</div>
+          <p class="iface-preset-hint"><strong>UDP LAN</strong> — Wi-Fi/Ethernet on your subnet. <strong>TCP LAN</strong> — same discovery, direct TCP links. <strong>Serial</strong> — USB radio/cable.</p>
+          <div class="settings-section">
+            <label>Primary LAN transport</label>
+            <select id="settings-lan-transport" onchange="applyLanTransport()">
+              <option value="udp_lan">UDP LAN (recommended)</option>
+              <option value="tcp_lan">TCP LAN</option>
+            </select>
+            <p class="field-hint">Switches your main LAN preset. Restart chatxz after changing. Add Serial or TCP Hub below if needed.</p>
           </div>
-          <div id="network-status-panel" class="network-status">Tap Refresh to load network status.</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+            <button type="button" class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('udp_lan')" title="LAN broadcast discovery">+ UDP LAN</button>
+            <button type="button" class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('tcp_lan')" title="LAN discovery + direct TCP peer links">+ TCP LAN</button>
+            <button type="button" class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('tcp_client')">+ TCP Client</button>
+            <button type="button" class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('tcp_server')">+ TCP Hub</button>
+            <button type="button" class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('serial')">+ Serial</button>
+          </div>
+          <div id="serial-devices-panel" class="serial-devices-panel" style="display:none"></div>
+          <div id="rns-interfaces-list" style="font-size:11px;color:var(--text2)">Loading...</div>
+          <label id="auto-interface-toggle" style="display:none;align-items:center;gap:8px;font-size:12px;color:var(--text2);margin-top:10px">
+            <input type="checkbox" id="settings-auto-interface" onchange="saveAutoInterface()">
+            RNS AutoInterface (IPv6 LAN mesh — Linux/macOS when UDP LAN is active)
+          </label>
+          <div id="serial-permission-hint" style="display:none;margin-top:6px;font-size:10px;color:var(--warn,#e8a838);line-height:1.45"></div>
+          <div id="serial-setup-hint" style="margin-top:6px;font-size:10px;color:var(--text3)">Serial: plug in USB, pick device + baud (57600), click Apply. Restart after changes.</div>
 
           <div class="settings-subhead">LAN discovery</div>
           <div class="settings-section">
@@ -1193,23 +1223,12 @@ body.sidebar-open #sidebar-backdrop { display: block; }
             Auto-reset beacon counters weekly
           </label>
 
-          <div class="settings-subhead">RNS transport</div>
-          <p class="iface-preset-hint"><strong>UDP LAN</strong> — Wi-Fi/Ethernet peers on your subnet. <strong>TCP Hub</strong> — relay through one machine. <strong>Serial</strong> — USB radio/cable link.</p>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-            <button class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('udp_lan')" title="LAN broadcast discovery">+ UDP LAN</button>
-            <button class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('tcp_lan')" title="LAN discovery + direct TCP peer links">+ TCP LAN</button>
-            <button class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('tcp_client')">+ TCP Client</button>
-            <button class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('tcp_server')">+ TCP Hub</button>
-            <button class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('serial')">+ Serial</button>
+          <div class="settings-subhead">Network status</div>
+          <div class="settings-row-split" style="margin-bottom:10px">
+            <button type="button" class="btn-block" onclick="refreshNetworkStatus()">Refresh status</button>
+            <button type="button" class="btn-block danger" onclick="resetNetwork()">Reset network</button>
           </div>
-          <div id="serial-devices-panel" class="serial-devices-panel" style="display:none"></div>
-          <div id="rns-interfaces-list" style="font-size:11px;color:var(--text2)">Loading...</div>
-          <label id="auto-interface-toggle" style="display:none;align-items:center;gap:8px;font-size:12px;color:var(--text2);margin-top:10px">
-            <input type="checkbox" id="settings-auto-interface" onchange="saveAutoInterface()">
-            RNS AutoInterface (IPv6 LAN mesh — Linux/macOS when UDP LAN is active)
-          </label>
-          <div id="serial-permission-hint" style="display:none;margin-top:6px;font-size:10px;color:var(--warn,#e8a838);line-height:1.45"></div>
-          <div id="serial-setup-hint" style="margin-top:6px;font-size:10px;color:var(--text3)">Serial: plug in USB, pick device + baud (57600), click Apply. Restart after changes.</div>
+          <div id="network-status-panel" class="network-status">Tap Refresh to load network status.</div>
 
           <div class="settings-subhead">Hub group chat (optional)</div>
           <div class="settings-section">
@@ -1600,12 +1619,14 @@ function completeSetupWizard() {
   const auto_announce = !!document.getElementById('setup-auto-announce')?.checked;
   const history_retention = document.getElementById('setup-retention')?.value || 'never';
   const received_dir = document.getElementById('setup-received-dir')?.value.trim() || '';
+  const lan_transport = document.getElementById('setup-lan-transport')?.value || 'udp_lan';
   fetch('/api/settings', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
       name,
       lan_interface,
+      lan_transport,
       auto_announce,
       history_retention,
       received_dir,
@@ -2863,6 +2884,7 @@ function loadRnsInterfaces() {
     }
     let html = items.map(iface => renderRnsInterfaceRow(iface, window._serialPorts, baudRates)).join('');
     list.innerHTML = html;
+    updateLanTransportSelect(items);
     const autoToggle = document.getElementById('auto-interface-toggle');
     const autoCb = document.getElementById('settings-auto-interface');
     const hasUdp = items.some(i => (i.preset === 'udp_lan' || i.type === 'UDPInterface') && i.enabled !== false);
@@ -2923,6 +2945,36 @@ function saveSerialInterface(id) {
       toast('Save failed: ' + (d.error || ''));
     }
   }).catch(() => toast('Save failed'));
+}
+
+function currentLanTransportPreset(interfaces) {
+  const items = interfaces || [];
+  if (items.some(i => i.preset === 'tcp_lan' && i.enabled !== false)) return 'tcp_lan';
+  if (items.some(i => (i.preset === 'udp_lan' || i.type === 'UDPInterface') && i.enabled !== false)) return 'udp_lan';
+  return 'udp_lan';
+}
+
+function updateLanTransportSelect(interfaces) {
+  const sel = document.getElementById('settings-lan-transport');
+  if (!sel) return;
+  sel.value = currentLanTransportPreset(interfaces);
+}
+
+function applyLanTransport() {
+  const lan_transport = document.getElementById('settings-lan-transport')?.value || 'udp_lan';
+  fetch('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({lan_transport}),
+  }).then(r => r.json()).then(d => {
+    if (d.status === 'ok') {
+      toast('LAN transport set to ' + (lan_transport === 'tcp_lan' ? 'TCP LAN' : 'UDP LAN') + ' — restart chatxz to apply');
+      loadRnsInterfaces();
+      refreshNetworkStatus();
+    } else {
+      toast('Failed: ' + (d.error || 'unknown'));
+    }
+  }).catch(() => toast('Failed to save LAN transport'));
 }
 
 function addRnsInterface(preset) {
@@ -3922,6 +3974,7 @@ async function pickSetupReceivedDir() {
     window.chatxzAndroid.pickFolder();
     return;
   }
+  toast('Opening folder picker…');
   try {
     const r = await fetch('/api/browse-dir');
     const d = await r.json();
@@ -3934,7 +3987,11 @@ async function pickSetupReceivedDir() {
       toast('Folder selected');
       return;
     }
-    if (d.error && d.error !== 'cancelled') toast('Browse failed: ' + d.error);
+    if (d.error === 'cancelled') {
+      toast('Folder picker cancelled');
+      return;
+    }
+    if (d.error) toast('Browse failed: ' + d.error);
   } catch (_) {
     toast('Browse failed');
   }
@@ -3956,6 +4013,7 @@ async function pickReceivedDir() {
     return;
   }
 
+  toast('Opening folder picker… check the taskbar if the dialog is behind the browser.');
   try {
     const r = await fetch('/api/browse-dir');
     const d = await r.json();
@@ -3968,8 +4026,14 @@ async function pickReceivedDir() {
       toast('Folder selected — click Save to apply');
       return;
     }
-    if (d.error && d.error !== 'cancelled') toast('Browse failed: ' + d.error);
-  } catch (_) {}
+    if (d.error === 'cancelled') {
+      toast('Folder picker cancelled');
+      return;
+    }
+    if (d.error) toast('Browse failed: ' + d.error);
+  } catch (_) {
+    toast('Browse failed');
+  }
 
   if (window.showDirectoryPicker) {
     try {

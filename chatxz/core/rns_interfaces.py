@@ -391,6 +391,30 @@ def add_interface(items, preset_key):
     return items
 
 
+def set_primary_lan_transport(interfaces, preset_key):
+    """Replace UDP/TCP LAN presets with a single chosen LAN transport."""
+    if preset_key not in ("udp_lan", "tcp_lan"):
+        return normalize_interface_list(interfaces)
+    items = normalize_interface_list(interfaces)
+    kept = []
+    for iface in items:
+        preset = iface.get("preset")
+        itype = iface.get("type")
+        if preset in ("udp_lan", "tcp_lan"):
+            continue
+        if itype == "UDPInterface":
+            continue
+        if preset == "tcp_server" or (itype == "TCPServerInterface" and preset == "tcp_server"):
+            kept.append(iface)
+            continue
+        if itype == "TCPServerInterface" and preset != "tcp_server":
+            continue
+        kept.append(iface)
+    if any(i.get("preset") == preset_key for i in kept):
+        return kept
+    return add_interface(kept, preset_key)
+
+
 def delete_interface(items, iface_id):
     items = normalize_interface_list(items)
     return [i for i in items if i.get("id") != iface_id]

@@ -34,6 +34,7 @@ from chatxz.core.rns_interfaces import (
     SERIAL_PERMISSION_HINT,
     serial_permission_hint_for_process,
     add_interface,
+    set_primary_lan_transport,
     configured_serial_port,
     delete_interface,
     dedupe_serial_interfaces,
@@ -282,12 +283,6 @@ def ensure_rns_ports_free(force=False):
     return False
 
 
-def _subprocess_no_window():
-    if sys.platform == "win32":
-        return getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    return 0
-
-
 def _pick_directory_tkinter(start):
     try:
         import tkinter as tk
@@ -304,59 +299,6 @@ def _pick_directory_tkinter(start):
         return picked or None
     except Exception:
         return None
-
-
-def _pick_directory_windows(start):
-    start_esc = start.replace("'", "''")
-    script = f"""
-Add-Type -AssemblyName System.Windows.Forms
-$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-$dialog.Description = 'Select received files folder'
-$dialog.ShowNewFolderButton = $true
-if (Test-Path -LiteralPath '{start_esc}') {{
-    $dialog.SelectedPath = '{start_esc}'
-}}
-if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{
-    Write-Output $dialog.SelectedPath
-}}
-"""
-    try:
-        proc = subprocess.run(
-            ["powershell", "-NoProfile", "-STA", "-Command", script],
-            capture_output=True,
-            text=True,
-            timeout=300,
-            check=False,
-            creationflags=_subprocess_no_window(),
-        )
-        picked = (proc.stdout or "").strip()
-        if picked:
-            return os.path.normpath(picked)
-    except Exception:
-        pass
-    return None
-
-
-def _pick_directory_macos(start):
-    start_posix = start.replace("\\", "/")
-    script = (
-        'POSIX path of (choose folder with prompt "Select received files folder" '
-        f'default location POSIX file "{start_posix}")'
-    )
-    try:
-        proc = subprocess.run(
-            ["osascript", "-e", script],
-            capture_output=True,
-            text=True,
-            timeout=300,
-            check=False,
-        )
-        picked = (proc.stdout or "").strip()
-        if picked and picked != "/":
-            return os.path.normpath(picked)
-    except Exception:
-        pass
-    return None
 
 
 class ChatWebServer:
@@ -2816,13 +2758,20 @@ class ChatWebServer:
         if not os.path.isdir(start):
             start = os.path.expanduser("~")
 
-        pickers = []
+        if sys.platform in ("win32", "darwin"):
+            try:
+                from chatxz.utils.folder_picker import pick_folder
+                picked = pick_folder(start)
+                if picked:
+                    return os.path.normpath(picked)
+            except Exception:
+                pass
+        if sys.platform == "darwin":
+            picked = _pick_directory_tkinter(start)
+            if picked:
+                return os.path.normpath(picked)
         if sys.platform == "win32":
-            pickers.extend([_pick_directory_tkinter, _pick_directory_windows])
-        elif sys.platform == "darwin":
-            pickers.extend([_pick_directory_macos, _pick_directory_tkinter])
-        for picker in pickers:
-            picked = picker(start)
+            picked = _pick_directory_tkinter(start)
             if picked:
                 return os.path.normpath(picked)
 
@@ -2867,11 +2816,14 @@ class ChatWebServer:
 
             picked = await asyncio.to_thread(self._pick_directory_native)
             if not picked:
-                return web.json_response({"error": "cancelled"}, status=400)
+                return web.json_response({
+                    "error": "cancelled",
+                    "platform": self._platform_name(),
+                }, status=400)
             path, err = self._normalize_received_dir(picked)
             if err:
                 return web.json_response({"error": err}, status=400)
-            return web.json_response({"path": path})
+            return web.json_response({"path": path, "platform": self._platform_name()})
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
@@ -2905,6 +2857,13 @@ class ChatWebServer:
                     pass
             if "hub_server_hash" in data:
                 settings["hub_server_hash"] = (data.get("hub_server_hash") or "").strip()
+            if "lan_transport" in data:
+                preset = (data.get("lan_transport") or "").strip()
+                if preset in ("udp_lan", "tcp_lan"):
+                    settings["rns_interfaces"] = set_primary_lan_transport(
+                        settings.get("rns_interfaces"), preset
+                    )
+                    self._write_rns_config(settings)
             if "lan_interface" in data:
                 settings["lan_interface"] = (data.get("lan_interface") or "").strip()
                 set_lan_interface_preference(settings["lan_interface"])

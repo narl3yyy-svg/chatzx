@@ -34,6 +34,13 @@ class DefaultInterfaceTests(unittest.TestCase):
         ])
         self.assertTrue(ri.standalone_needs_udp(ifaces))
 
+    def test_set_primary_lan_transport_swaps_udp_for_tcp(self):
+        udp = ri.default_interface_list()
+        self.assertTrue(any(i.get("preset") == "udp_lan" for i in udp))
+        tcp = ri.set_primary_lan_transport(udp, "tcp_lan")
+        self.assertFalse(any(i.get("preset") == "udp_lan" for i in tcp))
+        self.assertTrue(any(i.get("preset") == "tcp_lan" for i in tcp))
+
 
 class HubSettingsTests(unittest.TestCase):
     def test_apply_hub_server_enables_tcp_listener(self):

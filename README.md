@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.108
+**Current version:** 0.3.109
 
 ## Download
 
@@ -21,7 +21,7 @@ Portable Windows, macOS, and Android builds are published automatically on every
 
 ## Windows (portable)
 
-1. Download **`chatxz-0.3.108-windows-portable.zip`** from [Releases](https://github.com/narl3yyy-svg/chatxz/releases).
+1. Download **`chatxz-0.3.109-windows-portable.zip`** from [Releases](https://github.com/narl3yyy-svg/chatxz/releases).
 2. Unzip anywhere (e.g. `C:\Users\You\chatxz`).
 3. Open the `chatxz` folder and double-click **`chatxz.exe`**.
 4. Browser opens at **http://127.0.0.1:8742**. Allow Windows Firewall on **private** networks if prompted (UDP 4242, TCP 8742).
@@ -154,6 +154,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.109** — Windows portable UI fixes: visible folder picker via Win32 `SHBrowseForFolder` (PowerShell fallback no longer hidden); **Primary LAN transport** dropdown in setup + Settings; RNS transport controls moved above network status panel; scrollable status panel
 - **v0.3.108** — Windows received-files folder picker: native PowerShell dialog (portable exe) with tkinter fallback; path normalization accepts `C:/` slashes and resolves folder names; macOS interface list fixes false **offline** status (ifconfig UP/active parsing)
 - **v0.3.107** — **TCP LAN** transport preset: same LAN beacon discovery, Announce, pinned NIC, serial failover, and peer wake as UDP LAN — but RNS links use direct TCP (listen on 4242, dial discovered peer IPs on connect). Add via Settings → Network → **+ TCP LAN**
 - **v0.3.106** — Android VPN interfaces in picker (ConnectivityManager); discovery peers no longer flash away on startup; 5‑min discovery TTL; file transfers prefer TCP/LAN over UDP with compression off on fast paths; Android debug log export to user-chosen folder
