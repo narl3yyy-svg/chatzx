@@ -65,7 +65,7 @@ case "${1:-}" in
         echo "  ./run.sh web --share    # Linux / macOS LAN access"
         echo "  ./run.sh cli --daemon"
         echo
-        echo "Windows (cmd):  run.bat web --share"
+        echo "Windows (cmd):  install.bat  then  run.bat web --share"
         echo "Windows (Git Bash):  ./run.sh web --share"
         echo "  ./run.sh cli --connect <hash> --send hello"
         ;;

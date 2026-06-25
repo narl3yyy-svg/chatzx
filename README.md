@@ -2,60 +2,64 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.118
+**Current version:** 0.3.119
 
 ## Download
 
-**Android APK** on **[GitHub Releases](https://github.com/narl3yyy-svg/chatxz/releases)**. Desktop (Windows, macOS, Linux): **clone the repo and run one command** — no separate web-server install step.
+**Android APK** on **[GitHub Releases](https://github.com/narl3yyy-svg/chatxz/releases)**. Desktop: clone the repo and use the platform runner below.
 
 | Platform | Run |
 |----------|-----|
 | **Android** | `chatxz-X.Y.Z.apk` from Releases — sideload (arm64) |
-| **Windows** | `git clone` → open **cmd** → `run.bat web --share` |
+| **Windows** | `git clone` → **cmd** → `install.bat` → `run.bat web --share` |
 | **macOS / Linux** | `git clone` → `./run.sh web --share` |
-
-First run auto-installs Python dependencies (`rns`, `aiohttp`) into a local `.venv` on Windows, or via `pip` on Linux/macOS.
 
 ---
 
-## Windows (cmd + `run.bat`)
+## Windows (cmd + `.bat` files)
 
-Use **Command Prompt (cmd)** in the repo folder — not PowerShell, not `.\run.ps1` (Windows opens `.ps1` in VS Code and the server never starts).
+Use **Command Prompt (cmd)** in the repo folder. Three batch files:
 
-**Prerequisite:** [Python 3.10+](https://www.python.org/downloads/windows/) (check **Add python.exe to PATH** during install). [Git](https://git-scm.com/download/win) for `git clone` / `git pull`.
+| File | Purpose |
+|------|---------|
+| `install.bat` | Install Python venv + dependencies (one time, or after `uninstall.bat`) |
+| `run.bat` | Start web server — all logs print in the same cmd window |
+| `uninstall.bat` | Stop server, remove `.venv`, optionally delete app data |
+
+**Prerequisite:** [Python 3.10+](https://www.python.org/downloads/windows/) (check **Add python.exe to PATH**). [Git](https://git-scm.com/download/win) for `git clone` / `git pull`.
 
 ```cmd
 git clone https://github.com/narl3yyy-svg/chatxz.git
 cd chatxz
+install.bat
 run.bat web --share
 ```
 
-Debug logs (RNS extreme + chat trace) in the same cmd window:
+Install and start in one step:
+
+```cmd
+install.bat --start
+```
+
+Debug logs:
 
 ```cmd
 run.bat web --share --debug
 ```
 
-Other useful commands:
+Uninstall everything chatxz installed (venv + optional identity/chats):
 
 ```cmd
-run.bat web --share --verbose
-run.bat web --share --force
+uninstall.bat
 ```
 
-`run.cmd` is the same as `run.bat`. Typing `run web --share` also works if cmd finds `run.bat` in the folder.
-
-All server logs print in the cmd window where you ran `run.bat`. Press **Ctrl+C** to stop.
-
-No separate install step — first run creates `.venv` and installs dependencies automatically.
+All server logs stay in the cmd window where you ran `run.bat`. Press **Ctrl+C** to stop.
 
 Browser: **http://127.0.0.1:8742**. Allow Windows Firewall on **private** networks (UDP 4242, 8743; TCP 8742).
 
-**Data:** `%USERPROFILE%\.config\chatxz\`. To keep old portable data beside the repo: `set CHATXZ_PORTABLE=C:\path\to\chatxz` before starting.
+**Data:** `%USERPROFILE%\.config\chatxz\`. Portable/repo-local: `set CHATXZ_PORTABLE=C:\path\to\chatxz` before starting.
 
-**Update:** `git pull` then `run.bat web --share`
-
-**Optional:** `install-windows.cmd` — voice notes (`pyaudio`) only; not required for chat.
+**Update:** `git pull` then `run.bat web --share` (re-run `install.bat` only if dependencies changed).
 
 **Git Bash on Windows** (alternative): `./run.sh web --share`
 
@@ -160,8 +164,9 @@ Chat and file payloads never leave the RNS encrypted link. Port 8742 serves only
 ```
 
 ```cmd
-run.bat web --share --verbose    # Windows (cmd)
+install.bat                      # Windows (cmd) — first time
 run.bat web --share --debug
+uninstall.bat                    # remove venv + optional data
 ```
 
 ```bash
@@ -181,7 +186,8 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
-- **v0.3.118** — Windows: run from **cmd** with **`run.bat web --share`** (not PowerShell / `.\run.ps1`); live logs in your cmd window; startup announce deferred for faster boot
+- **v0.3.119** — Windows: **`install.bat`**, **`run.bat`**, **`uninstall.bat`** only (removed PowerShell runners); pure cmd workflow with live logs
+- **v0.3.118** — Windows: run from **cmd** with **`run.bat web --share`**; live logs in your cmd window; startup announce deferred for faster boot
 - **v0.3.117** — Windows cmd: **`run.cmd web --share`** runs server in foreground with live logs (`python -u`); fix `.\run.ps1` in cmd opening VS Code instead of starting server; faster setup wizard save
 - **v0.3.116** — Windows: **`run.cmd web --share`** from cmd (no separate install); auto-setup `.venv` on first run; Git Bash can use `./run.sh` like Linux/Mac
 - **v0.3.115** — Windows/macOS desktop: **source-only** (`run.ps1` / `run.sh`); CI releases **Android APK only** (no Windows exe zip, no macOS zip)

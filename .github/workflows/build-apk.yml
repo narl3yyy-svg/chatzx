@@ -1,4 +1,4 @@
-# Builds chatxz Android APK on version tags (desktop: clone repo + run.sh / run.ps1).
+# Builds chatxz Android APK on version tags (desktop: clone repo + run.sh / install.bat).
 name: Build Android APK
 
 on:
@@ -87,7 +87,7 @@ jobs:
             | Platform | Install |
             |----------|---------|
             | **Android** | `${{ steps.version.outputs.apk }}` — sideload (arm64) |
-            | **Windows** | `git clone` → `powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1` → `.\run.ps1 web --share` |
+            | **Windows** | `git clone` → `install.bat` → `run.bat web --share` |
             | **macOS / Linux** | `git clone` → `bash scripts/install-macos.sh` or `install-arch.sh` → `./run.sh web --share` |
 
             Desktop builds are **source-only** (no portable exe / mac zip). Releases ship the Android APK only.

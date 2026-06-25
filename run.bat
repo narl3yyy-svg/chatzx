@@ -1,5 +1,5 @@
 @echo off
-REM chatxz on Windows — use THIS from cmd (NOT .\run.ps1 — that opens VS Code).
+REM Run chatxz web server from cmd. Install first with install.bat if needed.
 setlocal EnableExtensions
 cd /d "%~dp0"
 set "CHATXZ_ROOT=%CD%"
@@ -10,7 +10,6 @@ if "%~1"=="" goto :usage
 if /I "%~1"=="help" goto :usage
 if /I "%~1"=="-h" goto :usage
 if /I "%~1"=="--help" goto :usage
-if /I "%~1"=="install" goto :install
 if /I "%~1"=="cli" goto :cli
 if /I "%~1"=="web" goto :web
 if /I "%~1"=="server" goto :web
@@ -18,42 +17,39 @@ if "%~1:~0,1%"=="-" goto :web
 
 :usage
 echo.
-echo ============================================================
-echo   FROM CMD use:
-echo     run.bat web --share
-echo     run.bat web --share --debug
+echo Usage:
+echo   run.bat web --share
+echo   run.bat web --share --debug
+echo   run.bat cli [options]
 echo.
-echo   Do NOT use:  .\run.ps1  or  PowerShell
-echo   Windows opens .ps1 in VS Code — the server never starts.
-echo ============================================================
-echo.
-echo   Git Bash:    ./run.sh web --share --debug
+echo First time:  install.bat
+echo Remove all:  uninstall.bat
 echo.
 exit /b 1
 
-:install
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0run.ps1" install
-exit /b %ERRORLEVEL%
-
 :cli
-call :ensure_venv
+call :ensure_install
 if errorlevel 1 exit /b 1
 ".venv\Scripts\python.exe" -u -m chatxz.app %2 %3 %4 %5 %6 %7 %8 %9
 exit /b %ERRORLEVEL%
 
 :web
-call :ensure_venv
+call :ensure_install
 if errorlevel 1 exit /b 1
 echo.
 echo chatxz web server
 echo Web UI:  http://127.0.0.1:8742
-echo Press Ctrl+C to stop — all logs print in this window
+echo Logs below — press Ctrl+C to stop
 echo.
 ".venv\Scripts\python.exe" -u -m chatxz.web.server %2 %3 %4 %5 %6 %7 %8 %9
 exit /b %ERRORLEVEL%
 
-:ensure_venv
-if exist ".venv\Scripts\python.exe" exit /b 0
-echo First run: installing dependencies into .venv ...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0run.ps1" install
+:ensure_install
+if not exist ".venv\Scripts\python.exe" goto :do_install
+".venv\Scripts\python.exe" -m pip --version >nul 2>&1
+if not errorlevel 1 exit /b 0
+echo Broken install ^(pip missing^). Re-running install.bat ...
+:do_install
+if not exist ".venv\Scripts\python.exe" echo Not installed. Running install.bat ...
+call "%~dp0install.bat"
 exit /b %ERRORLEVEL%

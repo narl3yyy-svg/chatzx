@@ -367,7 +367,7 @@ def ensure_rns_ports_free(force=False):
         print("[startup] Close other chatxz.exe windows, or end the process in Task Manager.")
     else:
         print("[startup] Stop it with:  pkill -f chatxz.web.server")
-        hint = ".\\run.ps1 web --share --force" if sys.platform == "win32" else "./run.sh web --share --force"
+        hint = "run.bat web --share --force" if sys.platform == "win32" else "./run.sh web --share --force"
         print(f"[startup] Or restart with:  {hint}")
     return False
 
