@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.92
+**Current version:** 0.3.93
 
 ## Download
 
@@ -153,6 +153,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.93** — Immediate peer supersession: one hash per LAN IP, old hash evicted on new Announce (no 30s wait); block Connect/send to stale hashes; migrate or remove saved contacts when peer identity changes; disconnect stale links
 - **v0.3.92** — Live identity regeneration (no server restart); discovered peers expire in 30s and refresh when hash/IP changes; evict stale peer entries after identity swap on same host; folder picker reverted to v0.3.90 native dialogs with Select folder button kept
 - **v0.3.91** — Fix RNS init on Linux when started in background thread (signal handler patch); native folder picker for received-files (zenity/kdialog/tk, not browser upload); per-interface Active toggles + AutoInterface on/off; `scripts/check.sh` pre-push test suite
 - **v0.3.90** — Windows startup speed: HTTP server listens immediately (RNS init in background); fast ipconfig-based LAN scan with 45s cache (fixes slow PowerShell on multi-homed NICs); single-pass network status API

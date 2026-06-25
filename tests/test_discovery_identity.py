@@ -52,6 +52,47 @@ class DiscoveryIdentityTests(unittest.TestCase):
         self.assertEqual(removed, 1)
         self.assertEqual(len(disc.peers), 0)
 
+    def test_get_peers_keeps_newest_hash_per_ip(self):
+        disc = PeerDiscovery()
+        disc.accept_peers = True
+        now = time.time()
+        disc.peers["oldhash123456789012345678901234"] = {
+            "hash": "oldhash123456789012345678901234",
+            "name": "ubuntu",
+            "ip": "10.0.30.101",
+            "last_seen": now - 5,
+            "via": "rns",
+        }
+        disc.peers["newhash123456789012345678901234"] = {
+            "hash": "newhash123456789012345678901234",
+            "name": "ubuntu",
+            "ip": "10.0.30.101",
+            "last_seen": now,
+            "via": "beacon",
+        }
+        peers = disc.get_peers()
+        self.assertEqual(len(peers), 1)
+        self.assertEqual(peers[0]["hash"], "newhash123456789012345678901234")
+
+    def test_rns_announce_evicts_same_name_peer(self):
+        disc = PeerDiscovery()
+        disc.accept_peers = True
+        disc.peers["8503195b200ad31536053584f86c9908"] = {
+            "hash": "8503195b200ad31536053584f86c9908",
+            "name": "ubuntu",
+            "ip": "10.10.100.4",
+            "last_seen": time.time(),
+            "via": "beacon",
+        }
+        disc._store_peer({
+            "hash": "a68cdfa88742c19a1edec7c2ae021f25",
+            "name": "ubuntu",
+            "last_seen": time.time(),
+            "via": "rns",
+        })
+        self.assertEqual(len(disc.peers), 1)
+        self.assertIn("a68cdfa88742c19a1edec7c2ae021f25", disc.peers)
+
     def test_stale_peer_pruned_after_ttl(self):
         disc = PeerDiscovery()
         disc.accept_peers = True

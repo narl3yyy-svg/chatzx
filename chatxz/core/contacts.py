@@ -77,6 +77,34 @@ def list_contacts(config_dir):
     return out
 
 
+def migrate_contact_by_ip(config_dir, ip, new_hash, name=None, port=None, identity_hash=None):
+    """Replace any saved contact on this LAN IP with the peer's current hash."""
+    ip = (ip or "").strip()
+    new_clean = (new_hash or "").strip().replace(":", "")
+    if not ip or not new_clean:
+        return []
+    removed = []
+    matched = False
+    for contact in list_contacts(config_dir):
+        if (contact.get("ip") or "").strip() != ip:
+            continue
+        matched = True
+        old_hash = (contact.get("hash") or "").replace(":", "")
+        if old_hash and old_hash != new_clean:
+            delete_contact(config_dir, old_hash)
+            removed.append(old_hash)
+    if matched:
+        save_contact(
+            config_dir,
+            new_clean,
+            name=name,
+            ip=ip,
+            port=port,
+            identity_hash=identity_hash,
+        )
+    return removed
+
+
 def contact_connect_meta(config_dir, peer_hash, peers_equivalent):
     """Return (ip, port) stored on a saved contact, if any."""
     clean = (peer_hash or "").strip().replace(":", "")

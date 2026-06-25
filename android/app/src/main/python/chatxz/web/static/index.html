@@ -1754,6 +1754,32 @@ function handleWSMessage(msg) {
     const data = msg.data || {};
     applyIdentityChange(data.hash, data.identity_hash, data.old_hash || data.old_identity_hash);
     toast('Identity updated — tap Announce so peers see the new hash');
+  } else if (msg.type === 'peer_superseded') {
+    const data = msg.data || {};
+    const removed = data.removed || [];
+    removed.forEach(old => {
+      const key = peerKey(old);
+      linkedPeers.delete(key);
+      if (peerKey(viewingPeer) === key) {
+        viewingPeer = data.replacement || null;
+        if (!viewingPeer) closeChat();
+      }
+      if (peerKey(linkPeer) === key) linkPeer = null;
+      window._discoveredPeers = (window._discoveredPeers || []).filter(p =>
+        peerKey(p.hash) !== key && peerKey(p.identity_hash) !== key
+      );
+      allContacts = allContacts.filter(c =>
+        peerKey(c.hash) !== key && peerKey(c.identity_hash) !== key
+      );
+    });
+    if (data.replacement_peer) {
+      registerPeerAliases(data.replacement_peer.hash, data.replacement_peer.identity_hash);
+    }
+    renderContacts(allContacts);
+    renderDiscovered(window._discoveredPeers || []);
+    updatePeerHeader();
+    setLinkStatus('disconnected', 'Inactive');
+    if (removed.length) toast('Peer identity changed — use the new hash in Discovered');
   } else if (msg.type === 'progress') {
     showProgress(msg.data);
   } else if (msg.type === 'link_established') {

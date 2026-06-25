@@ -17,6 +17,7 @@ from chatxz.core.lan_beacon import LanBeacon, BEACON_PORT
 from chatxz.core.contacts import (
     contact_connect_meta,
     delete_contact as delete_saved_contact,
+    migrate_contact_by_ip,
     list_contacts,
     save_contact,
 )
@@ -896,7 +897,10 @@ class ChatWebServer:
         my_dest_clean = my_hash.replace(":", "")
         self.messaging.my_dest_hash = my_dest_clean
         self.destination_hash = my_hash
-        self.discovery = PeerDiscovery(on_peer_seen=self._on_peer_discovered)
+        self.discovery = PeerDiscovery(
+            on_peer_seen=self._on_peer_discovered,
+            on_peer_evicted=self._on_peer_evicted,
+        )
         self.discovery.start()
         identity_pubkey = None
         if self.identity:
@@ -1129,6 +1133,107 @@ class ChatWebServer:
             except Exception:
                 self.websockets.discard(ws)
 
+    def _current_peer_for_ip(self, ip):
+        if not ip or not self.discovery:
+            return None
+        best = None
+        for peer in self.discovery.get_peers():
+            if peer.get("ip") != ip:
+                continue
+            if not best or peer.get("last_seen", 0) >= best.get("last_seen", 0):
+                best = peer
+        return best
+
+    def _peer_is_current(self, peer_hash):
+        clean = self._peer_dest_hash(peer_hash)
+        if not clean or not self.discovery:
+            return False
+        return self.discovery.peer_is_current(clean)
+
+    def _resolve_current_peer_hash(self, peer_hash, peer_ip=None):
+        clean = self._peer_dest_hash(peer_hash)
+        if self._peer_is_current(clean):
+            return clean
+        if peer_ip:
+            current = self._current_peer_for_ip(peer_ip)
+            if current:
+                return self._peer_dest_hash(current.get("hash"))
+        if self.discovery:
+            for peer in self.discovery.get_peers():
+                if self._peers_equivalent(peer.get("hash"), clean):
+                    return self._peer_dest_hash(peer.get("hash"))
+                if peer.get("identity_hash") and self._peers_equivalent(
+                    peer.get("identity_hash"), clean
+                ):
+                    return self._peer_dest_hash(peer.get("hash"))
+        return clean
+
+    def _on_peer_evicted(self, removed_hashes, new_peer=None):
+        if not removed_hashes:
+            return
+        self._supersede_peer_hashes(removed_hashes, new_peer)
+
+    def _supersede_peer_hashes(self, removed_hashes, new_peer=None):
+        from chatxz.core.discovery import normalize_hash
+
+        removed_clean = []
+        for raw in removed_hashes:
+            clean = self._peer_dest_hash(raw)
+            if clean:
+                removed_clean.append(clean)
+        if not removed_clean:
+            return
+
+        replacement = None
+        if new_peer:
+            replacement = self._peer_dest_hash(new_peer.get("hash"))
+            ip = new_peer.get("ip")
+            if ip:
+                migrate_contact_by_ip(
+                    self.config_dir,
+                    ip,
+                    replacement,
+                    name=new_peer.get("name"),
+                    port=new_peer.get("port"),
+                    identity_hash=new_peer.get("identity_hash"),
+                )
+
+        for old in removed_clean:
+            if self.messaging:
+                self.messaging.disconnect_peer(old)
+                self.messaging.clear_queue(old)
+            delete_saved_contact(self.config_dir, old)
+            self._clear_history_for_peer(old)
+            self._clear_queue_for_peer(old)
+            if self.active_peer and self._peers_equivalent(self.active_peer, old):
+                self.active_peer = replacement
+            if self._ui_state.get("viewing_peer") and self._peers_equivalent(
+                self._ui_state.get("viewing_peer"), old
+            ):
+                self._ui_state["viewing_peer"] = replacement
+
+        if self.websockets and self._loop:
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast({
+                    "type": "peer_superseded",
+                    "data": {
+                        "removed": removed_clean,
+                        "replacement": replacement,
+                        "replacement_peer": new_peer,
+                    },
+                }),
+                self._loop,
+            )
+            peers = self.discovery.get_peers() if self.discovery else []
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast({"type": "peers", "data": peers}),
+                self._loop,
+            )
+        print(
+            f"[discovery] Superseded {len(removed_clean)} stale peer hash(es)"
+            + (f" -> {replacement[:16]}..." if replacement else "")
+        )
+
     def _on_peer_discovered(self, peer):
         if not self.messaging:
             return
@@ -1137,18 +1242,18 @@ class ChatWebServer:
         dest = self._peer_dest_hash(peer.get("hash"))
         if peer.get("identity_hash"):
             self.messaging.register_peer_mapping(dest, peer.get("identity_hash"))
-        if peer.get("ip"):
-            for contact in list_contacts(self.config_dir):
-                if self._peers_equivalent(contact.get("hash"), dest):
-                    if contact.get("ip") != peer.get("ip"):
-                        save_contact(
-                            self.config_dir,
-                            contact.get("hash"),
-                            ip=peer.get("ip"),
-                            port=peer.get("port"),
-                            identity_hash=peer.get("identity_hash"),
-                        )
-                    break
+        if peer.get("ip") and any(
+            (c.get("ip") or "").strip() == peer.get("ip")
+            for c in list_contacts(self.config_dir)
+        ):
+            migrate_contact_by_ip(
+                self.config_dir,
+                peer.get("ip"),
+                dest,
+                name=peer.get("name"),
+                port=peer.get("port"),
+                identity_hash=peer.get("identity_hash"),
+            )
         if self.discovery and self.websockets and self._loop:
             peers = self.discovery.get_peers()
             asyncio.run_coroutine_threadsafe(
@@ -1413,6 +1518,11 @@ class ChatWebServer:
             ):
                 await self._run_blocking(self.messaging._burst_serial_announce, 4, 0.3)
             resolved_hash = self._resolve_connect_target(peer_hash, peer_ip)
+            resolved_hash = self._resolve_current_peer_hash(resolved_hash, peer_ip)
+            if self.discovery and not self._peer_is_current(resolved_hash):
+                return web.json_response({
+                    "error": "Stale peer hash — use the peer in Discovered or wait for Announce",
+                }, status=400)
             peer_info = self._discovery_peer_for_connect(peer_ip, resolved_hash)
             if not peer_info:
                 peer_info = self._peer_in_discovery(resolved_hash, peer_ip)
@@ -3132,6 +3242,18 @@ class ChatWebServer:
                 )
                 if not target_hash and self.messaging._session_peer_hash:
                     target_hash = self.messaging._session_peer_hash
+                if target_hash:
+                    peer_ip = None
+                    meta = self._discovery_peer_for_connect(None, target_hash)
+                    if meta:
+                        peer_ip = meta.get("ip")
+                    target_hash = self._resolve_current_peer_hash(target_hash, peer_ip)
+                    if self.discovery and not self._peer_is_current(target_hash):
+                        await ws.send_str(json.dumps({
+                            "type": "info",
+                            "data": "Stale peer hash — open the peer from Discovered",
+                        }))
+                        return
                 linked_to_target = bool(
                     target_hash and self.messaging.peer_send_ready(target_hash)
                 )

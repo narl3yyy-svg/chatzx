@@ -99,11 +99,12 @@ class AnnounceHandler:
 
 
 class PeerDiscovery:
-    def __init__(self, on_peer_seen=None):
+    def __init__(self, on_peer_seen=None, on_peer_evicted=None):
         self.peers = {}
         self.running = False
         self._handler = None
         self.on_peer_seen = on_peer_seen
+        self.on_peer_evicted = on_peer_evicted
         self._last_log = {}
         self.accept_peers = False
 
@@ -155,15 +156,33 @@ class PeerDiscovery:
             self._last_log.pop(f"beacon-id:{target}", None)
         return removed
 
+    def _attach_peer_ip(self, peer):
+        if (peer.get("ip") or "").strip():
+            return peer
+        name = (peer.get("name") or "").strip()
+        ident = normalize_hash(peer.get("identity_hash"))
+        for existing in self.peers.values():
+            if not existing.get("ip"):
+                continue
+            if name and existing.get("name") == name:
+                peer["ip"] = existing["ip"]
+                peer["port"] = existing.get("port", 8742)
+                return peer
+            if ident and normalize_hash(existing.get("identity_hash")) == ident:
+                peer["ip"] = existing["ip"]
+                peer["port"] = existing.get("port", 8742)
+                return peer
+        return peer
+
     def _evict_superseded_peers(self, peer):
         """Drop older entries for the same host when identity/hash changes."""
+        peer = self._attach_peer_ip(dict(peer))
         ip = (peer.get("ip") or "").strip()
         new_hash = normalize_hash(peer.get("hash"))
         new_ident = normalize_hash(peer.get("identity_hash"))
         new_pubkey = peer.get("pubkey")
-        if not ip and not new_ident and not new_pubkey:
-            return 0
-        removed = 0
+        name = (peer.get("name") or "").strip()
+        removed = []
         for key, existing in list(self.peers.items()):
             same_host = ip and existing.get("ip") == ip
             same_ident = (
@@ -172,19 +191,37 @@ class PeerDiscovery:
             )
             same_pubkey = new_pubkey and existing.get("pubkey") == new_pubkey
             same_hash = normalize_hash(existing.get("hash")) == new_hash
+            existing_name = (existing.get("name") or "").strip()
+            same_name = (
+                name
+                and existing_name
+                and name == existing_name
+                and name != new_hash[:8]
+                and existing_name != normalize_hash(existing.get("hash"))[:8]
+            )
             if same_hash:
                 continue
-            if same_host or same_ident or same_pubkey:
+            if same_host or same_ident or same_pubkey or same_name:
+                removed.append(normalize_hash(existing.get("hash")) or key)
                 del self.peers[key]
-                removed += 1
-        return removed
+        return removed, peer
+
+    def _notify_peer_evicted(self, removed_hashes, new_peer):
+        if not removed_hashes or not self.on_peer_evicted:
+            return
+        try:
+            self.on_peer_evicted(removed_hashes, new_peer)
+        except Exception as e:
+            print(f"[discovery] on_peer_evicted error: {e}")
 
     def _store_peer(self, peer):
         hash_hex = normalize_hash(peer.get("hash"))
         if not hash_hex:
             return
         peer["hash"] = hash_hex
-        self._evict_superseded_peers(peer)
+        removed, peer = self._evict_superseded_peers(peer)
+        if removed:
+            self._notify_peer_evicted(removed, peer)
         existing = self.peers.get(hash_hex)
         if existing:
             if peer.get("ip") and not existing.get("ip"):
@@ -325,6 +362,24 @@ class PeerDiscovery:
             ip = peer.get("ip")
             key = f"{ip}:{peer.get('port', 8742)}" if ip else peer["hash"]
             existing = deduped.get(key)
-            if not existing or self._peer_rank(peer) > self._peer_rank(existing):
+            if not existing:
+                deduped[key] = peer
+                continue
+            if peer.get("last_seen", 0) >= existing.get("last_seen", 0):
                 deduped[key] = peer
         return list(deduped.values())
+
+    def current_hashes(self):
+        hashes = set()
+        for peer in self.get_peers():
+            for key in ("hash", "identity_hash"):
+                clean = normalize_hash(peer.get(key))
+                if clean:
+                    hashes.add(clean)
+        return hashes
+
+    def peer_is_current(self, peer_hash):
+        clean = normalize_hash(peer_hash)
+        if not clean:
+            return False
+        return clean in self.current_hashes()
