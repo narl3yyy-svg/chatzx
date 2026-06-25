@@ -84,6 +84,7 @@ from chatxz.utils.platform import (
     lan_broadcast,
     physical_lan_reachable,
     desktop_lan_status,
+    invalidate_desktop_interface_cache,
     set_lan_interface_preference,
     android_storage_dirs,
     patch_embedded_signals,
@@ -481,8 +482,10 @@ class ChatWebServer:
                     return ip
         return detect_lan_ip()
 
-    def _interfaces_for_picker(self):
+    def _interfaces_for_picker(self, refresh=False):
         """All local NICs for setup/settings dropdowns (unfiltered)."""
+        if refresh:
+            invalidate_desktop_interface_cache()
         by_name = {}
         for entry in enumerate_lan_interfaces():
             name = entry.get("name")
@@ -2428,6 +2431,13 @@ class ChatWebServer:
         """Alias for network-status — used by setup wizard and settings."""
         return await self.handle_network_status(request)
 
+    async def handle_interfaces_get(self, request):
+        refresh = request.query.get("refresh", "").lower() in ("1", "true", "yes")
+        ifaces = await asyncio.to_thread(
+            lambda: self._interfaces_for_picker(refresh=refresh)
+        )
+        return web.json_response({"interfaces": ifaces})
+
     async def handle_network_status(self, request):
         try:
             settings = self.load_settings()
@@ -2505,17 +2515,19 @@ class ChatWebServer:
             hub_role == "client" and tcp_client_interface_online()
         )
         lan_discovery = lan_discovery_configured(configured)
+        refresh_ifaces = request.query.get("refresh", "").lower() in ("1", "true", "yes")
         if lan_discovery and sys.platform in ("win32", "darwin"):
             lan_snap = await asyncio.to_thread(desktop_lan_status)
             lan_up = lan_snap["lan_connected"]
             lan_ip_value = lan_snap["lan_ip"] if lan_up else None
             bcast_value = lan_snap["broadcast"] if lan_up else None
-            avail_ifaces = lan_snap["interfaces"]
         else:
             lan_up = lan_connected() if lan_discovery else False
             lan_ip_value = detect_lan_ip() if lan_up else None
             bcast_value = lan_broadcast() if lan_up else None
-            avail_ifaces = self._interfaces_for_picker()
+        avail_ifaces = await asyncio.to_thread(
+            lambda: self._interfaces_for_picker(refresh=refresh_ifaces)
+        )
         return web.json_response({
             "platform": self._platform_name(),
             "embedded": self.embedded,
@@ -2814,7 +2826,10 @@ class ChatWebServer:
                     "current": settings.get("received_dir", os.path.join(self.config_dir, "received")),
                 })
 
-            picked = await asyncio.to_thread(self._pick_directory_native)
+            if sys.platform == "win32":
+                picked = self._pick_directory_native()
+            else:
+                picked = await asyncio.to_thread(self._pick_directory_native)
             if not picked:
                 return web.json_response({
                     "error": "cancelled",
@@ -3960,6 +3975,7 @@ class ChatWebServer:
         app.router.add_post("/api/path_wake", self.handle_path_wake)
         app.router.add_get("/api/network-status", self.handle_network_status)
         app.router.add_get("/api/network", self.handle_network)
+        app.router.add_get("/api/interfaces", self.handle_interfaces_get)
         app.router.add_post("/api/network/reset", self.handle_network_reset)
         app.router.add_post("/api/disconnect", self.handle_disconnect)
         app.router.add_post("/api/file", self.handle_file_upload)

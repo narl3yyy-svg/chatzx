@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.109
+**Current version:** 0.3.110
 
 ## Download
 
@@ -11,7 +11,7 @@ Pre-built binaries are on **[GitHub Releases](https://github.com/narl3yyy-svg/ch
 | Platform | File | Install |
 |----------|------|---------|
 | **Windows 11** | `chatxz-X.Y.Z-windows-portable.zip` | Unzip → double-click `chatxz.exe` |
-| **macOS** | `chatxz-X.Y.Z-macos.dmg` | Open DMG → drag `chatxz.app` to Applications |
+| **macOS** | `chatxz-X.Y.Z-macos.zip` | Unzip → open `chatxz.app` |
 | **Android** | `chatxz-X.Y.Z.apk` | Sideload (arm64) |
 | **Linux / macOS (source)** | Git clone | `./run.sh web --share` |
 
@@ -21,7 +21,7 @@ Portable Windows, macOS, and Android builds are published automatically on every
 
 ## Windows (portable)
 
-1. Download **`chatxz-0.3.109-windows-portable.zip`** from [Releases](https://github.com/narl3yyy-svg/chatxz/releases).
+1. Download **`chatxz-0.3.110-windows-portable.zip`** from [Releases](https://github.com/narl3yyy-svg/chatxz/releases).
 2. Unzip anywhere (e.g. `C:\Users\You\chatxz`).
 3. Open the `chatxz` folder and double-click **`chatxz.exe`**.
 4. Browser opens at **http://127.0.0.1:8742**. Allow Windows Firewall on **private** networks if prompted (UDP 4242, TCP 8742).
@@ -40,12 +40,11 @@ Reinstalling the app creates a **new identity** — update saved contacts after 
 
 ---
 
-## macOS (portable .dmg)
+## macOS (portable .zip)
 
-1. Download **`chatxz-X.Y.Z-macos.dmg`** from [Releases](https://github.com/narl3yyy-svg/chatxz/releases).
-2. Open the DMG and drag **chatxz.app** to Applications (or run from the DMG).
-3. Double-click **chatxz.app** — a Terminal window opens and your browser loads **http://127.0.0.1:8742**.
-4. If Gatekeeper blocks the app: right-click → **Open** (first launch only).
+1. Download **`chatxz-X.Y.Z-macos.zip`** from [Releases](https://github.com/narl3yyy-svg/chatxz/releases).
+2. Unzip and double-click **chatxz.app** — a Terminal window opens and your browser loads **http://127.0.0.1:8742**.
+3. If Gatekeeper blocks the app: right-click → **Open** (first launch only).
 
 Your identity, chats, and received files live in **`chatxz-data/`** next to the app (same layout as Windows portable). LAN access is enabled by default (like `./run.sh web --share`).
 
@@ -154,6 +153,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.110** — Windows folder picker runs on main thread (dialog actually appears); PowerShell WinForms picker with visible window; Windows NIC list merges ipconfig + `Get-NetAdapter` (all adapters shown); `/api/interfaces?refresh=1` + ↻ rescan; simplified Network settings (step 1: NIC, step 2: transport); macOS releases ship as `.zip` only (no `.dmg`)
 - **v0.3.109** — Windows portable UI fixes: visible folder picker via Win32 `SHBrowseForFolder` (PowerShell fallback no longer hidden); **Primary LAN transport** dropdown in setup + Settings; RNS transport controls moved above network status panel; scrollable status panel
 - **v0.3.108** — Windows received-files folder picker: native PowerShell dialog (portable exe) with tkinter fallback; path normalization accepts `C:/` slashes and resolves folder names; macOS interface list fixes false **offline** status (ifconfig UP/active parsing)
 - **v0.3.107** — **TCP LAN** transport preset: same LAN beacon discovery, Announce, pinned NIC, serial failover, and peer wake as UDP LAN — but RNS links use direct TCP (listen on 4242, dial discovered peer IPs on connect). Add via Settings → Network → **+ TCP LAN**

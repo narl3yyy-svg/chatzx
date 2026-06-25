@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build chatxz.app and a release .dmg (run on macOS).
+# Build chatxz.app and a release .zip (run on macOS).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -26,23 +26,10 @@ fi
 
 cp packaging/macos/README-PORTABLE.txt dist/README-PORTABLE.txt
 
-DMG="chatxz-${VERSION}-macos.dmg"
-STAGING="dist/dmg-staging"
-rm -rf "$STAGING"
-mkdir -p "$STAGING"
-cp -R dist/chatxz.app "$STAGING/"
-cp dist/README-PORTABLE.txt "$STAGING/"
-ln -s /Applications "$STAGING/Applications" 2>/dev/null || true
-
-rm -f "dist/${DMG}"
-hdiutil create -volname "chatxz ${VERSION}" -srcfolder "$STAGING" -ov -format UDZO "dist/${DMG}"
-rm -rf "$STAGING"
-
 ZIP="chatxz-${VERSION}-macos.zip"
 rm -f "dist/${ZIP}"
 ditto -c -k --keepParent dist/chatxz.app "dist/${ZIP}"
 
 echo "Built:"
 echo "  dist/chatxz.app"
-echo "  dist/${DMG}"
 echo "  dist/${ZIP}"

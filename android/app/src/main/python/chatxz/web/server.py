@@ -34,6 +34,7 @@ from chatxz.core.rns_interfaces import (
     SERIAL_PERMISSION_HINT,
     serial_permission_hint_for_process,
     add_interface,
+    set_primary_lan_transport,
     configured_serial_port,
     delete_interface,
     dedupe_serial_interfaces,
@@ -83,6 +84,7 @@ from chatxz.utils.platform import (
     lan_broadcast,
     physical_lan_reachable,
     desktop_lan_status,
+    invalidate_desktop_interface_cache,
     set_lan_interface_preference,
     android_storage_dirs,
     patch_embedded_signals,
@@ -281,6 +283,25 @@ def ensure_rns_ports_free(force=False):
     print("[startup] Or restart with:  ./run.sh web --share --force")
     return False
 
+
+def _pick_directory_tkinter(start):
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            root.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        picked = filedialog.askdirectory(initialdir=start, mustexist=True, parent=root)
+        root.destroy()
+        return picked or None
+    except Exception:
+        return None
+
+
 class ChatWebServer:
     def __init__(self, host="127.0.0.1", port=8742, verbose=False, debug=False, force=False, embedded=False):
         self.host = host
@@ -461,8 +482,10 @@ class ChatWebServer:
                     return ip
         return detect_lan_ip()
 
-    def _interfaces_for_picker(self):
+    def _interfaces_for_picker(self, refresh=False):
         """All local NICs for setup/settings dropdowns (unfiltered)."""
+        if refresh:
+            invalidate_desktop_interface_cache()
         by_name = {}
         for entry in enumerate_lan_interfaces():
             name = entry.get("name")
@@ -2408,6 +2431,13 @@ class ChatWebServer:
         """Alias for network-status — used by setup wizard and settings."""
         return await self.handle_network_status(request)
 
+    async def handle_interfaces_get(self, request):
+        refresh = request.query.get("refresh", "").lower() in ("1", "true", "yes")
+        ifaces = await asyncio.to_thread(
+            lambda: self._interfaces_for_picker(refresh=refresh)
+        )
+        return web.json_response({"interfaces": ifaces})
+
     async def handle_network_status(self, request):
         try:
             settings = self.load_settings()
@@ -2485,17 +2515,19 @@ class ChatWebServer:
             hub_role == "client" and tcp_client_interface_online()
         )
         lan_discovery = lan_discovery_configured(configured)
+        refresh_ifaces = request.query.get("refresh", "").lower() in ("1", "true", "yes")
         if lan_discovery and sys.platform in ("win32", "darwin"):
             lan_snap = await asyncio.to_thread(desktop_lan_status)
             lan_up = lan_snap["lan_connected"]
             lan_ip_value = lan_snap["lan_ip"] if lan_up else None
             bcast_value = lan_snap["broadcast"] if lan_up else None
-            avail_ifaces = lan_snap["interfaces"]
         else:
             lan_up = lan_connected() if lan_discovery else False
             lan_ip_value = detect_lan_ip() if lan_up else None
             bcast_value = lan_broadcast() if lan_up else None
-            avail_ifaces = self._interfaces_for_picker()
+        avail_ifaces = await asyncio.to_thread(
+            lambda: self._interfaces_for_picker(refresh=refresh_ifaces)
+        )
         return web.json_response({
             "platform": self._platform_name(),
             "embedded": self.embedded,
@@ -2675,12 +2707,33 @@ class ChatWebServer:
     async def handle_settings_get(self, request):
         return web.json_response(self._apply_hub_settings(self.load_settings()))
 
+    def _abs_path_hint(self):
+        if sys.platform == "win32":
+            return "C:\\Users\\you\\Downloads"
+        return "/home/user/Downloads"
+
     def _normalize_received_dir(self, raw):
-        path = os.path.normpath(os.path.expanduser((raw or "").strip()))
+        path = (raw or "").strip()
         if not path:
             return None, "Path is empty"
+        path = os.path.expanduser(path)
+        if sys.platform == "win32":
+            if re.match(r"^[A-Za-z]:[^\\/]", path):
+                path = path[:2] + "\\" + path[2:]
+            path = os.path.normpath(path.replace("/", "\\"))
+        else:
+            path = os.path.normpath(path)
         if not os.path.isabs(path):
-            return None, "Path must be absolute (e.g. /home/user/Downloads)"
+            for base in (self.config_dir, os.path.expanduser("~"), os.getcwd()):
+                if not base:
+                    continue
+                candidate = os.path.normpath(os.path.join(base, path))
+                if os.path.isdir(candidate):
+                    path = candidate
+                    break
+            else:
+                hint = self._abs_path_hint()
+                return None, f"Path must be absolute (e.g. {hint})"
         if is_android() and path.startswith("/storage/"):
             try:
                 os.makedirs(path, exist_ok=True)
@@ -2716,6 +2769,23 @@ class ChatWebServer:
         start = os.path.expanduser(start)
         if not os.path.isdir(start):
             start = os.path.expanduser("~")
+
+        if sys.platform in ("win32", "darwin"):
+            try:
+                from chatxz.utils.folder_picker import pick_folder
+                picked = pick_folder(start)
+                if picked:
+                    return os.path.normpath(picked)
+            except Exception:
+                pass
+        if sys.platform == "darwin":
+            picked = _pick_directory_tkinter(start)
+            if picked:
+                return os.path.normpath(picked)
+        if sys.platform == "win32":
+            picked = _pick_directory_tkinter(start)
+            if picked:
+                return os.path.normpath(picked)
 
         commands = []
         if shutil.which("zenity"):
@@ -2756,13 +2826,19 @@ class ChatWebServer:
                     "current": settings.get("received_dir", os.path.join(self.config_dir, "received")),
                 })
 
-            picked = await asyncio.to_thread(self._pick_directory_native)
+            if sys.platform == "win32":
+                picked = self._pick_directory_native()
+            else:
+                picked = await asyncio.to_thread(self._pick_directory_native)
             if not picked:
-                return web.json_response({"error": "cancelled"}, status=400)
+                return web.json_response({
+                    "error": "cancelled",
+                    "platform": self._platform_name(),
+                }, status=400)
             path, err = self._normalize_received_dir(picked)
             if err:
                 return web.json_response({"error": err}, status=400)
-            return web.json_response({"path": path})
+            return web.json_response({"path": path, "platform": self._platform_name()})
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
@@ -2796,6 +2872,13 @@ class ChatWebServer:
                     pass
             if "hub_server_hash" in data:
                 settings["hub_server_hash"] = (data.get("hub_server_hash") or "").strip()
+            if "lan_transport" in data:
+                preset = (data.get("lan_transport") or "").strip()
+                if preset in ("udp_lan", "tcp_lan"):
+                    settings["rns_interfaces"] = set_primary_lan_transport(
+                        settings.get("rns_interfaces"), preset
+                    )
+                    self._write_rns_config(settings)
             if "lan_interface" in data:
                 settings["lan_interface"] = (data.get("lan_interface") or "").strip()
                 set_lan_interface_preference(settings["lan_interface"])
@@ -3892,6 +3975,7 @@ class ChatWebServer:
         app.router.add_post("/api/path_wake", self.handle_path_wake)
         app.router.add_get("/api/network-status", self.handle_network_status)
         app.router.add_get("/api/network", self.handle_network)
+        app.router.add_get("/api/interfaces", self.handle_interfaces_get)
         app.router.add_post("/api/network/reset", self.handle_network_reset)
         app.router.add_post("/api/disconnect", self.handle_disconnect)
         app.router.add_post("/api/file", self.handle_file_upload)

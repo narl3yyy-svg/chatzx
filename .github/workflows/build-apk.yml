@@ -1,4 +1,4 @@
-# Builds chatxz releases on version tags: Android APK + Windows portable + macOS .dmg.
+# Builds chatxz releases on version tags: Android APK + Windows portable + macOS zip.
 name: Build Releases
 
 on:
@@ -88,11 +88,11 @@ jobs:
             |----------|------|
             | Android | `${{ steps.version.outputs.apk }}` |
             | Windows 11 portable | `chatxz-${{ steps.version.outputs.version }}-windows-portable.zip` |
-            | macOS | `chatxz-${{ steps.version.outputs.version }}-macos.dmg` |
+            | macOS | `chatxz-${{ steps.version.outputs.version }}-macos.zip` |
 
             **Windows:** unzip, double-click `chatxz.exe`. Data in `chatxz-data\` beside the exe.
 
-            **macOS:** open the `.dmg`, drag `chatxz.app` to Applications, double-click to start. Data in `chatxz-data/` beside the app. From source: `./run.sh web --share`.
+            **macOS:** unzip, open `chatxz.app`, double-click to start. Data in `chatxz-data/` beside the app. From source: `./run.sh web --share`.
           files: ${{ steps.version.outputs.apk }}
           make_latest: true
 
@@ -175,14 +175,12 @@ jobs:
             fi
             TAG="v${VERSION}"
           fi
-          DMG="chatxz-${VERSION}-macos.dmg"
           ZIP="chatxz-${VERSION}-macos.zip"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "dmg=${DMG}" >> "$GITHUB_OUTPUT"
           echo "zip=${ZIP}" >> "$GITHUB_OUTPUT"
 
-      - name: Build macOS .app and .dmg
+      - name: Build macOS .app and zip
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -193,16 +191,12 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: chatxz-${{ steps.version.outputs.version }}-macos
-          path: |
-            dist/${{ steps.version.outputs.dmg }}
-            dist/${{ steps.version.outputs.zip }}
+          path: dist/${{ steps.version.outputs.zip }}
 
-      - name: Publish macOS release assets
+      - name: Publish macOS zip to GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          files: |
-            dist/${{ steps.version.outputs.dmg }}
-            dist/${{ steps.version.outputs.zip }}
+          files: dist/${{ steps.version.outputs.zip }}
           append_body: true
           make_latest: false

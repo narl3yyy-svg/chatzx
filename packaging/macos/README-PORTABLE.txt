@@ -27,7 +27,7 @@ Find your IP: System Settings → Network, or run  ifconfig  in Terminal.
 
 From source (Arch-style)
 ------------------------
-If you cloned the repo instead of using the .dmg:
+If you cloned the repo instead of using the portable zip:
 
   ./run.sh web --share
 

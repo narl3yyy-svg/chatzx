@@ -546,11 +546,18 @@ def _windows_enumerate_interfaces_ipconfig():
         if "media disconnected" in low:
             current_up = False
             continue
+        if any(token in low for token in ("subnet mask", "default gateway", "subnetmask", "gateway")):
+            continue
         match = re.search(
             r"IPv4 Address[^:]*:\s*([\d.]+)",
             stripped,
             flags=re.IGNORECASE,
         )
+        if not match:
+            match = re.search(
+                r":\s*(\d{1,3}(?:\.\d{1,3}){3})\s*(?:\(Preferred\))?\s*$",
+                stripped,
+            )
         if not match:
             continue
         ip = match.group(1)
@@ -576,12 +583,8 @@ def _windows_enumerate_interfaces_ipconfig():
 
 
 def _windows_enumerate_interfaces_powershell():
-    """Fallback Windows NIC scan when ipconfig parsing fails."""
+    """Windows NIC scan via Get-NetAdapter — includes all adapters (even without IPv4)."""
     script = r"""
-$adapters = @{}
-Get-NetAdapter -ErrorAction SilentlyContinue | ForEach-Object {
-  $adapters[$_.InterfaceIndex] = ($_.Status -eq 'Up')
-}
 $gwIndex = $null
 $route = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
   Where-Object { $_.NextHop -and $_.NextHop -ne '0.0.0.0' } |
@@ -589,17 +592,20 @@ $route = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContin
   Select-Object -First 1
 if ($route) { $gwIndex = $route.InterfaceIndex }
 $rows = @()
-Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-  Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' } |
-  ForEach-Object {
-    $up = [bool]$adapters[$_.InterfaceIndex]
-    [PSCustomObject]@{
-      name = $_.InterfaceAlias
-      ip = $_.IPAddress
-      up = $up
-      gateway_iface = ($_.InterfaceIndex -eq $gwIndex)
-    }
+Get-NetAdapter -ErrorAction SilentlyContinue | ForEach-Object {
+  $adapter = $_
+  $ip = $null
+  Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' } |
+    ForEach-Object { if (-not $ip) { $ip = $_.IPAddress } }
+  $up = ($adapter.Status -eq 'Up')
+  [PSCustomObject]@{
+    name = $adapter.Name
+    ip = $(if ($ip) { $ip } else { $null })
+    up = $up
+    gateway_iface = ($adapter.InterfaceIndex -eq $gwIndex)
   }
+}
 if ($rows.Count -eq 0) { '[]' } else { $rows | ConvertTo-Json -Compress }
 """
     try:
@@ -625,26 +631,56 @@ if ($rows.Count -eq 0) { '[]' } else { $rows | ConvertTo-Json -Compress }
         name = str(row.get("name") or "").strip()
         ip = str(row.get("ip") or "").strip()
         up = bool(row.get("up"))
-        if not name or not ip:
+        if not name:
             continue
-        subnet = _host_ipv4_broadcast(ip) if up else None
+        subnet = _host_ipv4_broadcast(ip) if up and ip else None
         entries.append({
             "name": name,
             "kind": _windows_iface_kind(name),
-            "ip": ip if up else "disconnected",
-            "broadcast": subnet if up else None,
-            "subnet_broadcast": subnet if up else None,
-            "up": up,
+            "ip": ip if up and ip else "disconnected",
+            "broadcast": subnet if up and ip else None,
+            "subnet_broadcast": subnet if up and ip else None,
+            "up": up and bool(ip),
             "gateway_iface": bool(row.get("gateway_iface")),
         })
     return entries
 
 
+def _windows_merge_interface_entries(*groups):
+    """Merge interface lists without dropping multi-homed or duplicate-name NICs."""
+    merged = []
+    seen = set()
+    for entries in groups:
+        for entry in entries or []:
+            name = entry.get("name") or ""
+            ip = entry.get("ip") or "disconnected"
+            key = (name, ip)
+            if not name or key in seen:
+                continue
+            seen.add(key)
+            merged.append(entry)
+    return merged
+
+
 def _windows_enumerate_interfaces():
-    entries = _windows_enumerate_interfaces_ipconfig()
-    if not entries:
-        entries = _windows_enumerate_interfaces_powershell()
-    return entries
+    ipconfig_entries = _windows_enumerate_interfaces_ipconfig()
+    ps_entries = _windows_enumerate_interfaces_powershell()
+    if ps_entries:
+        by_name = {e.get("name"): e for e in ps_entries if e.get("name")}
+        for entry in ipconfig_entries:
+            name = entry.get("name")
+            if not name:
+                continue
+            prev = by_name.get(name)
+            if not prev:
+                by_name[name] = entry
+                continue
+            if entry.get("gateway_iface") and not prev.get("gateway_iface"):
+                by_name[name] = {**prev, **entry, "gateway_iface": True}
+            elif entry.get("up") and not prev.get("up"):
+                by_name[name] = {**prev, **entry}
+        return [by_name[k] for k in sorted(by_name)]
+    return ipconfig_entries
 
 
 def _darwin_is_vpn_iface(name):

@@ -1179,56 +1179,71 @@ body.sidebar-open #sidebar-backdrop { display: block; }
         </div>
         <div class="settings-card" id="network-settings-card">
           <h4>📡 Network</h4>
+          <p class="field-hint" style="margin-bottom:12px">Pick which network card to use for discovery, then how chat connects over that network.</p>
 
-          <div class="settings-subhead">RNS transport</div>
-          <p class="iface-preset-hint"><strong>UDP LAN</strong> — Wi-Fi/Ethernet on your subnet. <strong>TCP LAN</strong> — same discovery, direct TCP links. <strong>Serial</strong> — USB radio/cable.</p>
+          <div class="settings-subhead">1. Your network card</div>
           <div class="settings-section">
-            <label>Primary LAN transport</label>
+            <label>Network interface</label>
+            <div class="field-row">
+              <select id="settings-lan-interface" onchange="saveLanInterface()">
+                <option value="">Auto — prefer Wi-Fi / Ethernet over VPN</option>
+              </select>
+              <button type="button" class="btn-block" onclick="refreshLanInterfaces(true)" style="width:auto;white-space:nowrap;padding:0 12px;height:40px" title="Rescan network cards">↻</button>
+            </div>
+            <div id="lan-interface-summary" class="field-hint" style="margin-top:8px"></div>
+            <p class="field-hint">Choose <strong>Auto</strong> on most PCs. Pin a VPN adapter only when you want peers on that tunnel.</p>
+          </div>
+
+          <div class="settings-subhead">2. Chat transport</div>
+          <div class="settings-section">
+            <label>How peers connect on LAN</label>
             <select id="settings-lan-transport" onchange="applyLanTransport()">
-              <option value="udp_lan">UDP LAN (recommended)</option>
-              <option value="tcp_lan">TCP LAN</option>
+              <option value="udp_lan">UDP LAN — default for Wi-Fi / Ethernet</option>
+              <option value="tcp_lan">TCP LAN — direct TCP links</option>
             </select>
-            <p class="field-hint">Switches your main LAN preset. Restart chatxz after changing. Add Serial or TCP Hub below if needed.</p>
-          </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-            <button type="button" class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('udp_lan')" title="LAN broadcast discovery">+ UDP LAN</button>
-            <button type="button" class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('tcp_lan')" title="LAN discovery + direct TCP peer links">+ TCP LAN</button>
-            <button type="button" class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('tcp_client')">+ TCP Client</button>
-            <button type="button" class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('tcp_server')">+ TCP Hub</button>
-            <button type="button" class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('serial')">+ Serial</button>
-          </div>
-          <div id="serial-devices-panel" class="serial-devices-panel" style="display:none"></div>
-          <div id="rns-interfaces-list" style="font-size:11px;color:var(--text2)">Loading...</div>
-          <label id="auto-interface-toggle" style="display:none;align-items:center;gap:8px;font-size:12px;color:var(--text2);margin-top:10px">
-            <input type="checkbox" id="settings-auto-interface" onchange="saveAutoInterface()">
-            RNS AutoInterface (IPv6 LAN mesh — Linux/macOS when UDP LAN is active)
-          </label>
-          <div id="serial-permission-hint" style="display:none;margin-top:6px;font-size:10px;color:var(--warn,#e8a838);line-height:1.45"></div>
-          <div id="serial-setup-hint" style="margin-top:6px;font-size:10px;color:var(--text3)">Serial: plug in USB, pick device + baud (57600), click Apply. Restart after changes.</div>
-
-          <div class="settings-subhead">LAN discovery</div>
-          <div class="settings-section">
-            <label>Active network interface</label>
-            <select id="settings-lan-interface" onchange="saveLanInterface()">
-              <option value="">Auto (Ethernet/Wi-Fi before VPN)</option>
-            </select>
-            <p class="field-hint">Peers are shown only on this interface's subnet. Pick a VPN tunnel to chat over that network.</p>
+            <p class="field-hint">Restart chatxz after changing transport.</p>
           </div>
           <label class="setup-toggle" style="margin-bottom:10px">
             <input type="checkbox" id="settings-auto-announce" onchange="saveAutoAnnounce()">
             <span><strong>Auto-announce</strong>Broadcast your presence on the LAN every ~30s. Off = manual 📡 Announce only.</span>
           </label>
+
+          <details id="network-advanced-details" style="margin:12px 0 8px">
+            <summary style="cursor:pointer;font-size:12px;color:var(--text2);user-select:none">Advanced transport presets (Serial, TCP Hub, extra interfaces)</summary>
+            <div style="margin-top:10px">
+              <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+                <button type="button" class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('udp_lan')">+ UDP LAN</button>
+                <button type="button" class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('tcp_lan')">+ TCP LAN</button>
+                <button type="button" class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('tcp_client')">+ TCP Client</button>
+                <button type="button" class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('tcp_server')">+ TCP Hub</button>
+                <button type="button" class="btn-block" style="flex:1;min-width:88px" onclick="addRnsInterface('serial')">+ Serial</button>
+              </div>
+              <div id="serial-devices-panel" class="serial-devices-panel" style="display:none"></div>
+              <div id="rns-interfaces-list" style="font-size:11px;color:var(--text2)">Loading...</div>
+              <label id="auto-interface-toggle" style="display:none;align-items:center;gap:8px;font-size:12px;color:var(--text2);margin-top:10px">
+                <input type="checkbox" id="settings-auto-interface" onchange="saveAutoInterface()">
+                RNS AutoInterface (IPv6 LAN mesh — Linux/macOS when UDP LAN is active)
+              </label>
+              <div id="serial-permission-hint" style="display:none;margin-top:6px;font-size:10px;color:var(--warn,#e8a838);line-height:1.45"></div>
+              <div id="serial-setup-hint" style="margin-top:6px;font-size:10px;color:var(--text3)">Serial: plug in USB, pick device + baud (57600), click Apply. Restart after changes.</div>
+            </div>
+          </details>
           <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2);margin-bottom:8px">
             <input type="checkbox" id="settings-network-auto-reset" onchange="saveNetworkAutoReset()">
             Auto-reset beacon counters weekly
           </label>
 
-          <div class="settings-subhead">Network status</div>
+          <details style="margin-top:8px">
+            <summary style="cursor:pointer;font-size:12px;color:var(--text2);user-select:none">Technical network status</summary>
+            <div style="margin-top:10px">
+          <div class="settings-subhead">Status</div>
           <div class="settings-row-split" style="margin-bottom:10px">
             <button type="button" class="btn-block" onclick="refreshNetworkStatus()">Refresh status</button>
             <button type="button" class="btn-block danger" onclick="resetNetwork()">Reset network</button>
           </div>
           <div id="network-status-panel" class="network-status">Tap Refresh to load network status.</div>
+            </div>
+          </details>
 
           <div class="settings-subhead">Hub group chat (optional)</div>
           <div class="settings-section">
@@ -1556,21 +1571,72 @@ function init() {
 }
 
 function mergeInterfaceLists(...lists) {
-  const byName = {};
+  const byKey = {};
   lists.flat().filter(Boolean).forEach(iface => {
     const name = iface?.name;
-    if (name) byName[name] = iface;
+    if (!name) return;
+    const ip = iface?.ip || 'disconnected';
+    const key = name + '|' + ip;
+    byKey[key] = iface;
   });
-  return Object.values(byName);
+  return Object.values(byKey).sort((a, b) => {
+    const score = (iface) => {
+      if (iface.gateway_iface) return 0;
+      if (iface.kind === 'vpn') return 3;
+      if (iface.kind === 'wifi' || iface.kind === 'ethernet') return 1;
+      return 2;
+    };
+    const diff = score(a) - score(b);
+    return diff !== 0 ? diff : String(a.name).localeCompare(String(b.name));
+  });
+}
+
+function renderLanInterfaceSummary(interfaces) {
+  const el = document.getElementById('lan-interface-summary');
+  if (!el) return;
+  const items = (interfaces || []).filter(i => i?.name);
+  if (!items.length) {
+    el.textContent = 'No network cards detected — click ↻ to rescan.';
+    return;
+  }
+  const lines = items.slice(0, 8).map(iface => {
+    const ip = iface.ip && iface.ip !== 'disconnected' ? iface.ip : 'no IP';
+    const kind = iface.kind && iface.kind !== 'other' ? ` · ${iface.kind}` : '';
+    const gw = iface.gateway_iface ? ' · default route' : '';
+    const mark = iface.up ? 'up' : 'down';
+    return `${iface.name}: ${ip} (${mark}${kind}${gw})`;
+  });
+  if (items.length > 8) lines.push(`+ ${items.length - 8} more`);
+  el.innerHTML = lines.map(l => `<div>${escapeHtml(l)}</div>`).join('');
+}
+
+function refreshLanInterfaces(showToast) {
+  return fetch('/api/interfaces?refresh=1')
+    .then(r => r.json())
+    .then(d => {
+      const ifaces = d.interfaces || [];
+      const sel = document.getElementById('settings-lan-interface');
+      const pinned = sel?.value || '';
+      populateLanInterfaceSelect(ifaces, pinned);
+      populateSetupLanSelect(ifaces, document.getElementById('setup-lan-interface')?.value || '');
+      renderLanInterfaceSummary(ifaces);
+      if (showToast) toast(ifaces.length ? `Found ${ifaces.length} network card(s)` : 'No network cards found');
+      return ifaces;
+    })
+    .catch(() => {
+      if (showToast) toast('Failed to refresh network cards');
+      return [];
+    });
 }
 
 function loadSetupInterfacesWithRetry(attempt, settings) {
-  fetch('/api/network-status')
+  fetch('/api/interfaces?refresh=1')
     .then(r => r.json())
     .then(d => {
-      const ifaces = mergeInterfaceLists(d.available_interfaces, d.interfaces);
+      const ifaces = d.interfaces || [];
       populateLanInterfaceSelect(ifaces, settings?.lan_interface);
       populateSetupLanSelect(ifaces, settings?.lan_interface);
+      renderLanInterfaceSummary(ifaces);
       if (ifaces.length === 0 && attempt < 10) {
         setTimeout(() => loadSetupInterfacesWithRetry(attempt + 1, settings), 500);
       }
@@ -3049,15 +3115,16 @@ function saveNetworkAutoReset() {
 }
 
 function lanInterfaceSelectHtml(interfaces) {
-  let html = '<option value="">Auto (Ethernet/Wi-Fi before VPN)</option>';
+  let html = '<option value="">Auto — prefer Wi-Fi / Ethernet over VPN</option>';
   (interfaces || []).forEach(iface => {
     const name = iface.name || 'iface';
-    const ip = iface.ip && iface.ip !== 'disconnected' ? iface.ip : 'offline';
+    const ip = iface.ip && iface.ip !== 'disconnected' ? iface.ip : 'no IP';
     const mark = iface.up ? 'up' : 'down';
     const kind = iface.kind && iface.kind !== 'other'
       ? ` · ${iface.kind === 'vpn' ? 'VPN' : iface.kind}`
       : '';
-    html += `<option value="${escapeHtml(name)}">${escapeHtml(name)} — ${escapeHtml(ip)} (${mark}${kind})</option>`;
+    const gw = iface.gateway_iface ? ' · default route' : '';
+    html += `<option value="${escapeHtml(name)}">${escapeHtml(name)} — ${escapeHtml(ip)} (${mark}${kind}${gw})</option>`;
   });
   return html;
 }
@@ -3083,6 +3150,7 @@ function populateLanInterfaceSelect(interfaces, selected) {
   const pinned = selected !== undefined ? selected : sel.value;
   sel.innerHTML = lanInterfaceSelectHtml(interfaces);
   sel.value = pinned || '';
+  renderLanInterfaceSummary(interfaces);
 }
 
 function populateSetupLanSelect(interfaces, selected) {
@@ -3136,7 +3204,8 @@ function refreshNetworkStatus(silent) {
   const panel = document.getElementById('network-status-panel');
   if (!panel) return;
   if (!silent) panel.textContent = 'Loading...';
-  fetch('/api/network-status')
+  const url = silent ? '/api/network-status' : '/api/network-status?refresh=1';
+  fetch(url)
     .then(r => r.json())
     .then(d => {
       let html = '';
@@ -3286,6 +3355,7 @@ function toggleSettings() {
     panel.classList.add('open');
     btn?.classList.add('active');
     refreshNetworkStatus();
+    refreshLanInterfaces(false);
     startNetworkAutoRefresh();
     loadRnsInterfaces();
     fetch('/api/settings')
@@ -4013,7 +4083,7 @@ async function pickReceivedDir() {
     return;
   }
 
-  toast('Opening folder picker… check the taskbar if the dialog is behind the browser.');
+  toast('Opening folder picker… a Windows dialog should appear (check the taskbar).');
   try {
     const r = await fetch('/api/browse-dir');
     const d = await r.json();

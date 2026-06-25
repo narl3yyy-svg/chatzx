@@ -52,7 +52,7 @@ case "${1:-}" in
         echo "  ./run.sh web --share    # Linux / macOS LAN access"
         echo "  ./run.sh cli --daemon"
         echo
-        echo "macOS portable: see GitHub Releases (.dmg) or: bash scripts/install-macos.sh"
+        echo "macOS portable: see GitHub Releases (.zip) or: bash scripts/install-macos.sh"
         echo "  ./run.sh cli --connect <hash> --send hello"
         ;;
 esac
