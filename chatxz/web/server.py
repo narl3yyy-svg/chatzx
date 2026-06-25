@@ -3199,17 +3199,22 @@ class ChatWebServer:
         def _source_restart():
             sys.stdout.flush()
             stop_stale_chatxz_servers(exclude_pid=os.getpid())
-            args = [sys.executable, "-m", "chatxz.web.server", *sys.argv[1:]]
-            env = os.environ.copy()
             root = os.environ.get("CHATXZ_ROOT") or os.getcwd()
-            env["CHATXZ_ROOT"] = root
-            env["PYTHONPATH"] = root
-            subprocess.Popen(
-                args,
-                cwd=root,
-                env=env,
-                start_new_session=True,
-            )
+            extra = [a for a in sys.argv[1:] if a.startswith("-")]
+            if sys.platform == "win32":
+                run_bat = os.path.join(root, "run.bat")
+                cmd = ["cmd.exe", "/c", run_bat, "web"] + (extra or ["--share"])
+                flags = (
+                    getattr(subprocess, "DETACHED_PROCESS", 0)
+                    | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                )
+                subprocess.Popen(cmd, cwd=root, creationflags=flags)
+            else:
+                args = [sys.executable, "-m", "chatxz.web.server", *sys.argv[1:]]
+                env = os.environ.copy()
+                env["CHATXZ_ROOT"] = root
+                env["PYTHONPATH"] = root
+                subprocess.Popen(args, cwd=root, env=env, start_new_session=True)
             os._exit(0)
 
         print("[restart] Spawning new server process")

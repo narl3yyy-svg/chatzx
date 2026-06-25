@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.121
+**Current version:** 0.3.122
 
 ## Download
 
@@ -182,6 +182,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.122** — Windows: fix `run.bat` cmd parsing (`xz.web.server` error); restart from UI uses `run.bat` on Windows
 - **v0.3.121** — Windows: faster **`run.bat`** (skip deps when `.venv` ready); removed `install.bat` and all PowerShell runners; Mac fix: no AutoInterface + UDP LAN duplicate (errno 48); restart no longer crashes on port 8742
 - **v0.3.120** — Windows: **`run.bat web --share`** only — runs from git clone folder, no separate install step; first run auto-fetches deps into local `.venv`
 - **v0.3.119** — Windows: **`install.bat`**, **`run.bat`**, **`uninstall.bat`** only (removed PowerShell runners); pure cmd workflow with live logs

@@ -36,7 +36,8 @@ exit /b 1
 :cli
 call :resolve_python
 if errorlevel 1 exit /b 1
-"%CHATXZ_PYTHON%" -u -m chatxz.app %2 %3 %4 %5 %6 %7 %8 %9
+set "CHATXZ_MODULE=chatxz.app"
+"%CHATXZ_PYTHON%" -u -m %CHATXZ_MODULE% %2 %3 %4 %5 %6 %7 %8 %9
 exit /b %ERRORLEVEL%
 
 :web
@@ -47,7 +48,8 @@ echo chatxz web server
 echo Web UI:  http://127.0.0.1:8742
 echo Logs below - press Ctrl+C to stop
 echo.
-"%CHATXZ_PYTHON%" -u -m chatxz.web.server %2 %3 %4 %5 %6 %7 %8 %9
+set "CHATXZ_MODULE=chatxz.web.server"
+"%CHATXZ_PYTHON%" -u -m %CHATXZ_MODULE% %2 %3 %4 %5 %6 %7 %8 %9
 exit /b %ERRORLEVEL%
 
 :resolve_python
