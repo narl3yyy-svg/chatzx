@@ -175,6 +175,20 @@ class TcpLanTests(unittest.TestCase):
 
 
 class TcpFamilyTests(unittest.TestCase):
+    def test_finalize_rns_interface_sets_ifac_netname(self):
+        class _Iface:
+            DEFAULT_IFAC_SIZE = 16
+
+            def optimise_mtu(self):
+                pass
+
+        iface = _Iface()
+        ri._finalize_rns_interface(iface, ifac_size=16)
+        self.assertTrue(hasattr(iface, "ifac_netname"))
+        self.assertIsNone(iface.ifac_netname)
+        self.assertTrue(hasattr(iface, "ifac_netkey"))
+        self.assertIsNone(iface.ifac_netkey)
+
     def test_interface_family_recognizes_tcp(self):
         class TCPClientInterface:
             pass

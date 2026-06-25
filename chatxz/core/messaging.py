@@ -834,15 +834,15 @@ class MessagingBackend:
                 order = ("tcp", "serial")
         elif lan_up and serial_up:
             if self._serial_faster_than_lan(peer):
-                order = ("serial", "tcp", "udp", "lan") if tcp_lan else ("serial", "udp", "lan")
+                order = ("serial", "udp", "tcp", "lan") if tcp_lan else ("serial", "udp", "lan")
             else:
-                order = ("tcp", "udp", "lan", "serial") if tcp_lan else ("udp", "lan", "serial")
+                order = ("udp", "tcp", "lan", "serial") if tcp_lan else ("udp", "lan", "serial")
         elif lan_up:
-            order = ("tcp", "udp", "lan", "serial") if tcp_lan else ("udp", "lan", "serial")
+            order = ("udp", "tcp", "lan", "serial") if tcp_lan else ("udp", "lan", "serial")
         elif serial_up:
-            order = ("serial", "tcp", "udp", "lan") if tcp_lan else ("serial", "udp", "lan")
+            order = ("serial", "udp", "tcp", "lan") if tcp_lan else ("serial", "udp", "lan")
         else:
-            order = ("tcp", "udp", "serial", "lan") if tcp_lan else ("udp", "serial", "lan")
+            order = ("udp", "tcp", "serial", "lan") if tcp_lan else ("udp", "serial", "lan")
         seen = set()
         out = []
         for fam in order:

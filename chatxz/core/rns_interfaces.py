@@ -637,10 +637,32 @@ def _finalize_rns_interface(iface, ifac_size=16):
     iface.announce_rate_target = None
     iface.announce_rate_grace = None
     iface.announce_rate_penalty = None
+    if not hasattr(iface, "ifac_netname"):
+        iface.ifac_netname = None
+    if not hasattr(iface, "ifac_netkey"):
+        iface.ifac_netkey = None
     if hasattr(iface, "optimise_mtu"):
         iface.optimise_mtu()
     if hasattr(iface, "final_init"):
         iface.final_init()
+
+
+def _register_hot_rns_interface(iface, ifac_size=16):
+    """Register a runtime-hot-added interface the same way Reticulum config load does."""
+    import RNS
+
+    _finalize_rns_interface(iface, ifac_size=ifac_size)
+    inst = RNS.Reticulum.get_instance()
+    if inst is not None and hasattr(inst, "_add_interface"):
+        inst._add_interface(
+            iface,
+            ifac_size=ifac_size,
+            ifac_netname=getattr(iface, "ifac_netname", None),
+            ifac_netkey=getattr(iface, "ifac_netkey", None),
+        )
+    else:
+        RNS.Transport.add_interface(iface)
+    return iface
 
 
 def dedupe_serial_interfaces(port=None):
@@ -782,8 +804,7 @@ def hot_add_serial_interface(port, speed=SERIAL_DEFAULT_BAUD, ifac_size=16):
             "speed": int(speed),
             "ifac_size": ifac_size,
         })
-        _finalize_rns_interface(iface, ifac_size=ifac_size)
-        RNS.Transport.add_interface(iface)
+        _register_hot_rns_interface(iface, ifac_size=ifac_size)
         dedupe_serial_interfaces(port)
         print(f"[serial] Hot-added RNS SerialInterface on {port}")
         _notify_serial_hot_add(iface)
@@ -856,8 +877,7 @@ def hot_add_tcp_server_interface(
             "listen_port": listen_port,
             "ifac_size": ifac_size,
         })
-        _finalize_rns_interface(iface, ifac_size=ifac_size)
-        RNS.Transport.add_interface(iface)
+        _register_hot_rns_interface(iface, ifac_size=ifac_size)
         print(f"[{log_tag}] Hot-added TCP server on {listen_ip}:{listen_port}")
         return iface
     except Exception as exc:
@@ -906,16 +926,8 @@ def hot_add_tcp_client_interface(target_host, target_port=4242, ifac_size=16, lo
             or getattr(iface, "port", None)
             or 4242
         )
-        if (
-            host == target_host
-            and port == target_port
-            and getattr(iface, "online", False)
-        ):
+        if host == target_host and port == target_port:
             return iface
-        try:
-            RNS.Transport.remove_interface(iface)
-        except Exception:
-            pass
 
     name = f"TCP Client {target_host}:{target_port}"
     try:
@@ -925,8 +937,7 @@ def hot_add_tcp_client_interface(target_host, target_port=4242, ifac_size=16, lo
             "target_port": target_port,
             "ifac_size": ifac_size,
         })
-        _finalize_rns_interface(iface, ifac_size=ifac_size)
-        RNS.Transport.add_interface(iface)
+        _register_hot_rns_interface(iface, ifac_size=ifac_size)
         print(f"[{log_tag}] Hot-added TCP client to {target_host}:{target_port}")
         return iface
     except Exception as exc:
