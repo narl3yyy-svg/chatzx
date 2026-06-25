@@ -66,6 +66,8 @@ LINK_STALE_FAILOVER_IDLE_S = 90
 SESSION_RECONNECT_MIN_IDLE_S = 18
 DUAL_PATH_RECONNECT_MIN_IDLE_S = 4
 DUAL_PATH_FAILOVER_COOLDOWN_S = 8
+DUAL_PATH_DISCONNECTED_COOLDOWN_S = 4
+SERIAL_SPEED_MARGIN = 1.15
 PEER_LAN_UNREACHABLE_TTL_S = 90
 RECEIPT_FAILOVER_TIMEOUT_S = 30
 RECEIPT_FAILOVER_MIN_PENDING = 2
@@ -209,6 +211,7 @@ class MessagingBackend:
         self._connect_background = False
         self._peer_lan_unreachable = {}
         self._user_disconnected = set()
+        self._transport_reconnect_pending = False
 
     def _is_self_hash(self, h):
         clean = normalize_hash(h)
@@ -682,9 +685,90 @@ class MessagingBackend:
         return SESSION_RECONNECT_MIN_IDLE_S
 
     def _failover_cooldown(self):
+        disconnected = (
+            not self.active_link
+            and bool(self.dest_hash_for(self._session_peer_hash or ""))
+        )
         if self._dual_path_configured():
+            if disconnected:
+                return DUAL_PATH_DISCONNECTED_COOLDOWN_S
             return DUAL_PATH_FAILOVER_COOLDOWN_S
+        if disconnected:
+            return DUAL_PATH_RECONNECT_MIN_IDLE_S
         return self._failover_cooldown_s
+
+    def _link_rtt_seconds(self, link):
+        if not link:
+            return None
+        rtt = getattr(link, "rtt", None)
+        if rtt is None:
+            return None
+        try:
+            return float(rtt)
+        except Exception:
+            return None
+
+    def _serial_faster_than_lan(self, peer):
+        """True when serial is confirmed up and measurably faster than LAN/UDP."""
+        if not self._serial_transport_ready():
+            return False
+        if not physical_lan_reachable() or not self._has_online_family("udp"):
+            return True
+        if not self._peer_has_path_on_family(peer, "serial"):
+            return False
+        serial_rtt = None
+        for link in self._links_for_peer(peer):
+            if interface_family(self._link_attached_interface(link)) == "serial":
+                serial_rtt = self._link_rtt_seconds(link)
+                if serial_rtt is not None:
+                    break
+        if serial_rtt is None and self.active_link:
+            if interface_family(self._link_attached_interface(self.active_link)) == "serial":
+                serial_rtt = self._link_rtt_seconds(self.active_link)
+        if serial_rtt is None:
+            return False
+        lan_rtt = None
+        for link in self._links_for_peer(peer):
+            fam = interface_family(self._link_attached_interface(link))
+            if fam in ("udp", "lan"):
+                lan_rtt = self._link_rtt_seconds(link)
+                if lan_rtt is not None:
+                    break
+        if lan_rtt is None and self.active_link:
+            fam = interface_family(self._link_attached_interface(self.active_link))
+            if fam in ("udp", "lan"):
+                lan_rtt = self._link_rtt_seconds(self.active_link)
+        if lan_rtt is None:
+            return False
+        return serial_rtt * SERIAL_SPEED_MARGIN < lan_rtt
+
+    def _failover_families_to_try(self, peer, peer_ip=None):
+        """Ordered transports to attempt when reconnecting (LAN preferred unless serial is faster)."""
+        peer_lan_down = bool(peer_ip and self._peer_lan_recently_unreachable(peer_ip))
+        lan_up = (
+            physical_lan_reachable()
+            and self._has_online_family("udp")
+            and not peer_lan_down
+        )
+        serial_up = self._serial_transport_ready()
+        if lan_up and serial_up:
+            if self._serial_faster_than_lan(peer):
+                order = ("serial", "udp", "lan")
+            else:
+                order = ("udp", "lan", "serial")
+        elif lan_up:
+            order = ("udp", "lan", "serial")
+        elif serial_up:
+            order = ("serial", "udp", "lan")
+        else:
+            order = ("udp", "serial", "lan")
+        seen = set()
+        out = []
+        for fam in order:
+            if fam and fam not in seen:
+                seen.add(fam)
+                out.append(fam)
+        return out
 
     def _failover_announce(self, prefer_family, peer_ip=None):
         """Refresh RNS path on the target transport before failover reconnect."""
@@ -715,9 +799,11 @@ class MessagingBackend:
             return "serial"
         # LAN/UDP primary whenever physical ethernet/Wi-Fi is up and peer answers on LAN.
         if physical_lan and udp_up and not peer_lan_down:
-            if att_fam == "serial" and not serial_up:
+            if att_fam == "serial" and serial_up:
+                if self._serial_faster_than_lan(peer) and self._peer_has_path_on_family(peer, "serial"):
+                    return "serial"
                 return "udp"
-            if att_fam == "serial":
+            if att_fam == "serial" and not serial_up:
                 return "udp"
             return "udp"
         if physical_lan and lan_mesh_has_peer() and att_fam == "serial":
@@ -900,9 +986,12 @@ class MessagingBackend:
             and self._has_online_family("udp")
             and not in_grace
         ):
+            if self._serial_faster_than_lan(peer) and self._peer_has_path_on_family(peer, "serial"):
+                return False, ""
             path_iface = self._peer_path_interface(peer)
             if path_iface and interface_family(path_iface) == "serial":
-                return False, ""
+                if self._serial_faster_than_lan(peer):
+                    return False, ""
             return True, "LAN available, upgrading from serial"
 
         if len(self._pending_sends) >= RECEIPT_FAILOVER_MIN_PENDING:
@@ -963,6 +1052,8 @@ class MessagingBackend:
             return False, ""
         if self._last_link_lost_at and (time.time() - self._last_link_lost_at) < self._session_reconnect_min_idle():
             return False, ""
+        if self._transport_reconnect_pending:
+            return True, "transport available — reconnecting"
         if time.time() - self._failover_last_attempt < self._failover_cooldown():
             return False, ""
         return True, "link dropped — reconnecting"
@@ -1487,8 +1578,28 @@ class MessagingBackend:
         self.running = True
         self._queue_retry_thread = threading.Thread(target=self._queue_retry_loop, name="chatxz-queue-retry", daemon=True)
         self._queue_retry_thread.start()
+        try:
+            from chatxz.core.rns_interfaces import register_serial_hot_add_callback
+            register_serial_hot_add_callback(self.on_serial_transport_attached)
+        except Exception:
+            pass
         print(f"[messaging] Started (auto_announce={self.auto_announce})")
         return self.destination
+
+    def on_serial_transport_attached(self, iface=None):
+        """USB serial became available — announce on serial and nudge reconnect."""
+        if not self.running or not self.destination:
+            return
+        burst = self._burst_serial_announce()
+        if burst:
+            port = getattr(iface, "port", "?") if iface else "?"
+            print(f"[serial] Auto-announced on serial attach ({burst} burst on {port})")
+        peer = self.dest_hash_for(self.active_peer_hash or self._session_peer_hash or "")
+        if peer and not is_hub_peer_hash(peer) and not self.is_user_disconnected(peer):
+            request_paths_for_hash(peer, family="serial")
+            if not self._peer_link_active(peer):
+                self._transport_reconnect_pending = True
+                self._failover_last_attempt = 0
 
     def _queue_retry_loop(self):
         while self.running:
@@ -2776,22 +2887,13 @@ class MessagingBackend:
 
         self._failover_last_attempt = now
         self._failover_in_progress = True
+        self._transport_reconnect_pending = False
         try:
-            prefer = self._preferred_failover_family(peer, peer_ip=peer_ip)
-            if (
-                prefer == "serial"
-                and physical_lan_reachable()
-                and self._has_online_family("udp")
-                and (peer_ip or self._peer_has_path_on_family(peer, "udp"))
-            ):
-                prefer = "udp"
-            if prefer in ("udp", "lan") and not self._lan_transport_ready():
-                prefer = "serial" if self._serial_transport_ready() else prefer
-            if prefer == "serial" and not self._serial_transport_ready():
-                prefer = "udp" if self._has_online_family("udp") else (
-                    "lan" if lan_mesh_has_peer() else prefer
-                )
-            print(f"[connect] Failover reconnect to {peer[:16]}... ({reason})")
+            families = self._failover_families_to_try(peer, peer_ip=peer_ip)
+            print(
+                f"[connect] Failover reconnect to {peer[:16]}... ({reason}) "
+                f"[{', '.join(families)}]"
+            )
             self._teardown_stale_peer_links(peer, handoff=True)
             self._teardown_active_link(preserve_peer=True, handoff=True)
             pause_until = time.time() + 0.3
@@ -2799,57 +2901,48 @@ class MessagingBackend:
                 if self._interrupted():
                     return False
                 time.sleep(0.05)
-            if prefer == "serial" or (self._has_online_family("serial") and not physical_lan_reachable()):
-                peer_ip = None
-            elif peer_ip:
-                register_udp_peer_ip(peer_ip)
-            if self._interrupted():
-                return False
-            if not self._prepare_failover_path(
-                peer, prefer_family=prefer, peer_ip=peer_ip, peer_port=peer_port,
-            ):
-                if prefer in ("lan", "udp") and self._has_online_family("serial"):
-                    prefer = "serial"
-                    if not self._prepare_failover_path(
-                        peer, prefer_family=prefer, peer_ip=None, peer_port=peer_port,
-                    ):
-                        print("[connect] Serial failover blocked — plug in USB serial and ensure port is configured")
-                        return False
-                elif prefer in ("lan", "udp") and self._has_online_family("udp"):
-                    prefer = "udp"
-                    if not self._prepare_failover_path(
-                        peer, prefer_family=prefer, peer_ip=peer_ip, peer_port=peer_port,
-                    ):
-                        return False
-                elif prefer == "serial":
-                    print("[connect] Serial failover blocked — plug in USB serial and ensure port is configured")
+            for prefer in families:
+                use_ip = peer_ip
+                if prefer == "serial":
+                    use_ip = None
+                elif use_ip:
+                    register_udp_peer_ip(use_ip)
+                if self._interrupted():
                     return False
-                else:
+                if not self._prepare_failover_path(
+                    peer, prefer_family=prefer, peer_ip=use_ip, peer_port=peer_port,
+                ):
+                    print(f"[connect] {prefer} path not ready — trying next transport")
+                    continue
+                if (
+                    prefer in ("udp", "lan")
+                    and use_ip
+                    and self._lan_transport_ready()
+                    and physical_lan_reachable()
+                ):
+                    inbound_wait = INITIATOR_INBOUND_WAIT_S
+                    print(f"[connect] Failover waiting for inbound link on {prefer} ({inbound_wait}s)...")
+                    if self._wait_for_peer_link(peer, timeout_s=inbound_wait):
+                        print(f"[connect] Failover complete (inbound via {prefer})")
+                        return True
+                if self._interrupted():
                     return False
-            if (
-                peer_ip and self._lan_transport_ready() and physical_lan_reachable()
-                and prefer not in ("serial",)
-            ):
-                inbound_wait = INITIATOR_INBOUND_WAIT_S
-                print(f"[connect] Failover waiting for inbound link ({inbound_wait}s)...")
-                if self._wait_for_peer_link(peer, timeout_s=inbound_wait):
-                    print("[connect] Failover complete (inbound)")
+                result = self.connect_to(
+                    peer,
+                    use_ip,
+                    peer_port,
+                    peer_lookup,
+                    caller_ip,
+                    caller_port,
+                    replace=False,
+                    failover=True,
+                )
+                if result:
+                    self._adopt_healthy_peer_link(peer)
+                    print(f"[connect] Failover complete via {prefer}")
                     return True
-            if self._interrupted():
-                return False
-            result = self.connect_to(
-                peer,
-                peer_ip,
-                peer_port,
-                peer_lookup,
-                caller_ip,
-                caller_port,
-                replace=False,
-                failover=True,
-            )
-            if result:
-                self._adopt_healthy_peer_link(peer)
-            return result
+                print(f"[connect] Failover connect via {prefer} failed — trying next transport")
+            return False
         finally:
             self._failover_in_progress = False
 

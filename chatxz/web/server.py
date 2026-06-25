@@ -2003,6 +2003,7 @@ class ChatWebServer:
 
     async def _serial_watchdog_loop(self):
         serial_detach_sent = False
+        serial_was_online = False
         while True:
             await asyncio.sleep(5)
             if self._shutting_down:
@@ -2011,14 +2012,20 @@ class ChatWebServer:
             interfaces = normalize_interface_list(settings.get("rns_interfaces"))
             port, _ = configured_serial_port(interfaces)
             if not port:
+                serial_was_online = False
                 continue
             if serial_port_status(port) == "missing":
+                serial_was_online = False
                 if not serial_detach_sent:
                     self._disable_rns_serial_interfaces()
                     serial_detach_sent = True
             else:
                 serial_detach_sent = False
-                await self._run_blocking(ensure_runtime_serial, interfaces)
+                was_online = serial_was_online
+                iface = await self._run_blocking(ensure_runtime_serial, interfaces)
+                serial_was_online = iface is not None
+                if serial_was_online and not was_online and self.messaging:
+                    await self._run_blocking(self.messaging.on_serial_transport_attached, iface)
 
     def _peer_in_discovery(self, peer_hash, peer_ip=None):
         from chatxz.core.discovery import normalize_hash
@@ -2090,6 +2097,7 @@ class ChatWebServer:
 
     async def _link_failover_loop(self):
         """Detect dead or migrated RNS paths and reconnect without server restart."""
+        physical_lan_was_up = physical_lan_reachable()
         while not self._shutting_down:
             try:
                 await asyncio.sleep(8)
@@ -2102,6 +2110,13 @@ class ChatWebServer:
                 prune_stale_lan_paths,
                 suppress_offline_lan_transports,
             )
+            physical_lan_up = physical_lan_reachable()
+            if physical_lan_up and not physical_lan_was_up and self.messaging:
+                await self._run_blocking(self.messaging._silent_announce)
+                self.messaging._transport_reconnect_pending = True
+                self.messaging._failover_last_attempt = 0
+                print("[network] LAN restored — refreshing paths and reconnecting")
+            physical_lan_was_up = physical_lan_up
             await self._run_blocking(suppress_offline_lan_transports)
             await self._run_blocking(dedupe_serial_interfaces)
             if not serial_interface_online():

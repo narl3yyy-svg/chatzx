@@ -53,6 +53,8 @@ INTERFACE_PRESETS = {
 }
 
 SERIAL_DEFAULT_BAUD = 57600
+_serial_hot_add_callback = None
+_last_serial_unavail_log = 0.0
 
 SERIAL_BAUD_RATES = [
     1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600,
@@ -640,6 +642,22 @@ def prune_dead_serial_interfaces():
     return removed
 
 
+def register_serial_hot_add_callback(callback):
+    """Register callback invoked when a new SerialInterface is hot-added at runtime."""
+    global _serial_hot_add_callback
+    _serial_hot_add_callback = callback
+
+
+def _notify_serial_hot_add(iface):
+    cb = _serial_hot_add_callback
+    if not cb or not iface:
+        return
+    try:
+        cb(iface)
+    except Exception as exc:
+        print(f"[serial] Hot-add callback error: {exc}")
+
+
 def hot_add_serial_interface(port, speed=SERIAL_DEFAULT_BAUD, ifac_size=16):
     """Attach SerialInterface to a running RNS instance when USB is plugged in later."""
     port = (port or "").strip()
@@ -682,13 +700,7 @@ def hot_add_serial_interface(port, speed=SERIAL_DEFAULT_BAUD, ifac_size=16):
         RNS.Transport.add_interface(iface)
         dedupe_serial_interfaces(port)
         print(f"[serial] Hot-added RNS SerialInterface on {port}")
-        for attempt in range(3):
-            try:
-                RNS.Transport.identity.announce(attached_interface=iface)
-            except Exception:
-                pass
-            if attempt < 2:
-                time.sleep(0.4)
+        _notify_serial_hot_add(iface)
         return iface
     except Exception as exc:
         print(f"[serial] Hot-add failed for {port}: {exc}")
@@ -729,8 +741,12 @@ def ensure_runtime_serial(settings_interfaces=None):
         except Exception:
             pass
         return None
-    status = serial_port_status(port)
-    print(f"[serial] Runtime serial unavailable on {port} ({status})")
+    global _last_serial_unavail_log
+    now = time.time()
+    if now - _last_serial_unavail_log >= 30.0:
+        status = serial_port_status(port)
+        print(f"[serial] Runtime serial unavailable on {port} ({status})")
+        _last_serial_unavail_log = now
     return None
 
 
