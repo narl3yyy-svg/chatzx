@@ -5,8 +5,8 @@ cd "$DIR"
 export CHATXZ_ROOT="$DIR"
 export PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}"
 
-# Check for virtual env
-if [ -n "$VIRTUAL_ENV" ]; then
+# Check for virtual env (:- avoids nounset error when VIRTUAL_ENV is unset)
+if [ -n "${VIRTUAL_ENV:-}" ]; then
     PIP="$VIRTUAL_ENV/bin/pip"
     PYTHON="$VIRTUAL_ENV/bin/python"
 else
