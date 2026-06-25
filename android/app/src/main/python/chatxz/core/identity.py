@@ -31,6 +31,16 @@ class IdentityManager:
             return RNS.hexrep(h)
         return None
 
+    def get_connect_hash(self):
+        """Message destination hash — the hash peers use to connect."""
+        if not self.identity:
+            return ""
+        try:
+            from chatxz.core.discovery import message_dest_hash_for_identity
+            return message_dest_hash_for_identity(self.identity) or ""
+        except Exception:
+            return ""
+
     def regenerate(self):
         if os.path.exists(self.identity_path):
             os.remove(self.identity_path)

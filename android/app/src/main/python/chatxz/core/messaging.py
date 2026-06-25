@@ -368,11 +368,18 @@ class MessagingBackend:
             self._link_handoff = False
 
     def _peer_for_link(self, link, fallback=None):
+        identity_peer = self.dest_hash_for(self._peer_hash_from_link_identity(link))
+        if identity_peer and identity_peer != "unknown" and not self._is_self_hash(identity_peer):
+            self._cache_link_peer(link, identity_peer)
+            return identity_peer
         cached = self._link_peer_hashes.get(link.link_id) if link else None
         if cached and not self._is_self_hash(cached):
-            return self.dest_hash_for(cached)
+            mapped = self.dest_hash_for(cached)
+            if mapped and mapped != "unknown":
+                return mapped
         resolved = self._resolve_remote_peer(link, fallback=fallback)
         if resolved and resolved != "unknown" and not self._is_self_hash(resolved):
+            resolved = self.dest_hash_for(resolved)
             self._cache_link_peer(link, resolved)
             return resolved
         if fallback and not self._is_self_hash(fallback):

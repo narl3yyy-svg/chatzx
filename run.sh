@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
+export CHATXZ_ROOT="$DIR"
+export PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}"
 
 # Check for virtual env
 if [ -n "$VIRTUAL_ENV" ]; then
@@ -27,11 +29,11 @@ case "${1:-}" in
     web|server)
         install_deps
         chmod +x "$DIR/scripts/launch-server.sh" 2>/dev/null || true
-        PYTHON="$PYTHON" "$DIR/scripts/launch-server.sh" "${@:2}"
+        PYTHON="$PYTHON" CHATXZ_ROOT="$DIR" "$DIR/scripts/launch-server.sh" "${@:2}"
         ;;
     cli)
         install_deps
-        PYTHONPATH="$DIR" $PYTHON -m chatxz.app "${@:2}"
+        $PYTHON -m chatxz.app "${@:2}"
         ;;
     *)
         echo "chatxz - Reticulum Chat"
@@ -39,9 +41,11 @@ case "${1:-}" in
         echo "Usage: ./run.sh <command> [args]"
         echo
         echo "Commands:"
-        echo "  install          Install dependencies and package"
+        echo "  install          Install dependencies and package (stays in this folder)"
         echo "  web [--share] [--verbose] [--debug] [--force]  Start web server"
         echo "  cli [options]    Start CLI mode"
+        echo
+        echo "Also: ./install.sh (system install)  ./uninstall.sh (remove app data)"
         echo
         echo "Examples:"
         echo "  ./run.sh web"

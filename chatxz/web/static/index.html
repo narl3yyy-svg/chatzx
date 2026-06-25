@@ -1090,9 +1090,9 @@ body.sidebar-open #sidebar-backdrop { display: block; }
             <input id="settings-name" placeholder="Your name on the network...">
           </div>
           <div class="settings-section">
-            <label>Identity Hash</label>
+            <label>Connect hash</label>
             <input id="settings-hash" readonly style="font-family:ui-monospace,monospace;font-size:11px;color:var(--text2)">
-            <p class="field-hint">Share this hash so peers can connect to you.</p>
+            <p class="field-hint">Share this hash so peers can connect to you. This is your message destination — not the internal RNS transport identity.</p>
           </div>
         </div>
         <div class="settings-card">
@@ -1493,12 +1493,10 @@ function openSetupWizard(settings) {
   if (nameEl) nameEl.value = (settings && settings.name) || '';
   const autoEl = document.getElementById('setup-auto-announce');
   if (autoEl) autoEl.checked = !!(settings && settings.auto_announce);
-  fetch('/api/network').then(r => r.json()).then(d => {
-    populateLanInterfaceSelect(d.interfaces || d.available_interfaces, settings?.lan_interface);
-    const setupSel = document.getElementById('setup-lan-interface');
-    const mainSel = document.getElementById('settings-lan-interface');
-    if (setupSel && mainSel) setupSel.innerHTML = mainSel.innerHTML;
-    if (setupSel && settings?.lan_interface) setupSel.value = settings.lan_interface;
+  fetch('/api/network-status').then(r => r.json()).then(d => {
+    const ifaces = d.available_interfaces || d.interfaces || [];
+    populateLanInterfaceSelect(ifaces, settings?.lan_interface);
+    populateSetupLanSelect(ifaces, settings?.lan_interface);
   }).catch(() => {});
   wiz.classList.add('open');
 }
@@ -1772,9 +1770,10 @@ function fetchIdentity() {
   fetch('/api/identity')
     .then(r => r.json())
     .then(d => {
-      myHash = d.hash;
-      document.getElementById('identity-box').textContent = formatHashDisplay(myHash);
-      document.getElementById('identity-box').title = stripHashColons(myHash) + ' (click to copy)';
+      myHash = d.connect_hash || d.hash;
+      const label = formatHashDisplay(myHash);
+      document.getElementById('identity-box').textContent = label;
+      document.getElementById('identity-box').title = stripHashColons(myHash) + ' — connect hash (click to copy)';
       updateAndroidDebugLogHint(d.debug_log_path);
       const sh = document.getElementById('settings-hash');
       if (sh) sh.value = myHash;
@@ -2860,10 +2859,7 @@ function saveNetworkAutoReset() {
   }).catch(() => {});
 }
 
-function populateLanInterfaceSelect(interfaces, selected) {
-  const sel = document.getElementById('settings-lan-interface');
-  if (!sel) return;
-  const pinned = selected !== undefined ? selected : sel.value;
+function lanInterfaceSelectHtml(interfaces) {
   let html = '<option value="">Auto (Ethernet/Wi-Fi before VPN)</option>';
   (interfaces || []).forEach(iface => {
     const name = iface.name || 'iface';
@@ -2872,8 +2868,22 @@ function populateLanInterfaceSelect(interfaces, selected) {
     const kind = iface.kind && iface.kind !== 'other' ? ` · ${iface.kind}` : '';
     html += `<option value="${escapeHtml(name)}">${escapeHtml(name)} — ${escapeHtml(ip)} (${mark}${kind})</option>`;
   });
-  sel.innerHTML = html;
+  return html;
+}
+
+function populateLanInterfaceSelect(interfaces, selected) {
+  const sel = document.getElementById('settings-lan-interface');
+  if (!sel) return;
+  const pinned = selected !== undefined ? selected : sel.value;
+  sel.innerHTML = lanInterfaceSelectHtml(interfaces);
   sel.value = pinned || '';
+}
+
+function populateSetupLanSelect(interfaces, selected) {
+  const sel = document.getElementById('setup-lan-interface');
+  if (!sel) return;
+  sel.innerHTML = lanInterfaceSelectHtml(interfaces);
+  if (selected) sel.value = selected;
 }
 
 function saveLanInterface() {

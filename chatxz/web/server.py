@@ -1240,6 +1240,12 @@ class ChatWebServer:
                     identity_hash=new_peer.get("identity_hash"),
                 )
 
+        try:
+            from chatxz.core.peer_identity import purge_rns_paths_for_hashes
+            purge_rns_paths_for_hashes(removed_clean)
+        except Exception:
+            pass
+
         for old in removed_clean:
             if self.messaging:
                 self.messaging.disconnect_peer(old)
@@ -1281,7 +1287,10 @@ class ChatWebServer:
             return
         from chatxz.core.discovery import register_identity_from_peer
         register_identity_from_peer(peer)
-        dest = self._peer_dest_hash(peer.get("hash"))
+        dest = self.messaging._hash_from_peer_info(peer) or self._peer_dest_hash(peer.get("hash"))
+        if dest and dest != peer.get("hash"):
+            peer = dict(peer)
+            peer["hash"] = dest
         if peer.get("identity_hash"):
             self.messaging.register_peer_mapping(dest, peer.get("identity_hash"))
         if peer.get("ip") and any(
@@ -1451,14 +1460,32 @@ class ChatWebServer:
             except Exception:
                 pass
         from chatxz.core.discovery import normalize_hash
-        h = normalize_hash(self.destination_hash or self.identity_mgr.get_hex_hash())
+        from chatxz.core.peer_identity import connect_hash_for_manager
+
+        connect = ""
+        if self.messaging and self.messaging.my_dest_hash:
+            connect = normalize_hash(self.messaging.my_dest_hash)
+        elif self.messaging and self.messaging.destination:
+            connect = normalize_hash(RNS.hexrep(self.messaging.destination.hash))
+        else:
+            connect = connect_hash_for_manager(
+                self.identity_mgr,
+                getattr(self.messaging, "destination", None) if self.messaging else None,
+            )
+        if not connect:
+            connect = normalize_hash(self.destination_hash or "")
+        if not connect:
+            connect = self.identity_mgr.get_connect_hash()
+        identity_raw = normalize_hash(self.identity_mgr.get_hex_hash() if self.identity_mgr else "")
         contacts = list_contacts(self.config_dir)
-        discovered = self.discovery.get_peers() if self.discovery else []
+        discovered = self._scoped_peers()
         link_active = bool(self.messaging and self.messaging.active_link)
         connected = self.active_peer if link_active and self.active_peer else None
         linked_peers = self.messaging.linked_peers() if self.messaging else []
         return web.json_response({
-            "hash": h,
+            "hash": connect,
+            "connect_hash": connect,
+            "identity_hash": identity_raw,
             "connected": connected,
             "linked_peers": linked_peers,
             "contacts": contacts,
@@ -1829,17 +1856,32 @@ class ChatWebServer:
             return web.json_response({"error": str(e)}, status=400)
 
     def _beacon_payload(self):
-        dest = self._clean_hash(self.destination_hash or "")
+        from chatxz.core.peer_identity import connect_hash_for_manager
+
+        dest = ""
+        if self.messaging and self.messaging.my_dest_hash:
+            dest = self._clean_hash(self.messaging.my_dest_hash)
+        elif self.messaging and self.messaging.destination:
+            dest = self._clean_hash(RNS.hexrep(self.messaging.destination.hash))
+        if not dest:
+            dest = connect_hash_for_manager(
+                self.identity_mgr,
+                getattr(self.messaging, "destination", None) if self.messaging else None,
+            )
+        if not dest:
+            dest = self._clean_hash(self.destination_hash or "")
+        if not dest and self.identity_mgr:
+            dest = self.identity_mgr.get_connect_hash()
         ident = self._clean_hash(self.identity_mgr.get_hex_hash() if self.identity_mgr else "")
         payload = {
             "app": "chatxz",
             "v": 1,
-            "hash": dest or ident,
+            "hash": dest,
             "name": self.load_settings().get("name", ""),
             "ip": detect_lan_ip() or "",
             "port": self.port,
         }
-        if ident and ident != payload["hash"]:
+        if ident and ident != dest:
             payload["identity_hash"] = ident
         if self.identity:
             try:
@@ -2058,6 +2100,10 @@ class ChatWebServer:
                 print(f"[connect] Failover complete with {clean[:16]}...")
             else:
                 print(f"[connect] Failover attempt failed ({reason})")
+
+    async def handle_network(self, request):
+        """Alias for network-status — used by setup wizard and settings."""
+        return await self.handle_network_status(request)
 
     async def handle_network_status(self, request):
         try:
@@ -3486,6 +3532,7 @@ class ChatWebServer:
         app.router.add_post("/api/announce", self.handle_announce)
         app.router.add_post("/api/path_wake", self.handle_path_wake)
         app.router.add_get("/api/network-status", self.handle_network_status)
+        app.router.add_get("/api/network", self.handle_network)
         app.router.add_post("/api/network/reset", self.handle_network_reset)
         app.router.add_post("/api/disconnect", self.handle_disconnect)
         app.router.add_post("/api/file", self.handle_file_upload)

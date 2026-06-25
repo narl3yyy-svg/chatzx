@@ -26,45 +26,9 @@ def normalize_hash(h):
 
 def register_identity_from_beacon(data):
     """Cache peer identity from beacon pubkey so connect works without RNS announce."""
-    if not data:
-        return False
-    pubkey_b64 = data.get("pubkey")
-    if not pubkey_b64:
-        return False
     try:
-        pubkey = base64.b64decode(pubkey_b64, validate=True)
-    except Exception:
-        return False
-    if len(pubkey) != PUBKEY_SIZE:
-        return False
-
-    dest_hex = normalize_hash(data.get("hash"))
-    if len(dest_hex) != 32:
-        return False
-    try:
-        dest_bytes = bytes.fromhex(dest_hex)
-    except ValueError:
-        return False
-
-    app_data = None
-    name = (data.get("name") or "").strip()
-    if name:
-        try:
-            app_data = json.dumps({"app": APP_NAME, "name": name}).encode("utf-8")
-        except Exception:
-            app_data = None
-
-    identity_hex = normalize_hash(data.get("identity_hash"))
-    packet_bytes = dest_bytes
-    if identity_hex and len(identity_hex) == 32:
-        try:
-            packet_bytes = bytes.fromhex(identity_hex)
-        except ValueError:
-            packet_bytes = dest_bytes
-
-    try:
-        RNS.Identity.remember(packet_bytes, dest_bytes, pubkey, app_data)
-        return True
+        from chatxz.core.peer_identity import register_beacon_identity
+        return bool(register_beacon_identity(data))
     except Exception:
         return False
 
@@ -293,38 +257,38 @@ class PeerDiscovery:
             return False
         if data.get("app") != APP_NAME:
             return False
-        hash_hex = normalize_hash(data.get("hash"))
         my_dest = normalize_hash(my_dest_hash)
         my_ident = normalize_hash(my_identity_hash or my_dest_hash)
         identity_hex = normalize_hash(data.get("identity_hash"))
         if identity_hex and (identity_hex == my_ident or identity_hex == my_dest):
             return False
+        try:
+            from chatxz.core.peer_identity import peer_record_from_beacon
+            peer = peer_record_from_beacon(data)
+        except Exception:
+            peer = None
+        if not peer:
+            return False
+        hash_hex = normalize_hash(peer.get("hash"))
         if not hash_hex or hash_hex == my_dest or hash_hex == my_ident:
             return False
-        name = data.get("name", "") or hash_hex[:8]
-        peer = {
-            "hash": hash_hex,
-            "name": name,
-            "app": APP_NAME,
-            "ip": data.get("ip"),
-            "port": data.get("port", 8742),
-            "last_seen": time.time(),
-            "via": "beacon",
-        }
-        if identity_hex and identity_hex != hash_hex:
-            peer["identity_hash"] = identity_hex
-        if data.get("pubkey"):
-            peer["pubkey"] = data.get("pubkey")
+        if identity_hex and identity_hex == my_ident:
+            return False
+        peer["last_seen"] = time.time()
+        peer["ip"] = data.get("ip") or peer.get("ip")
+        peer["port"] = data.get("port", peer.get("port", 8742))
+        name = peer.get("name") or hash_hex[:8]
+        peer["name"] = name
         if register_identity_from_beacon(data):
             peer["via"] = "rns"
             self._log_once(
                 f"beacon-id:{hash_hex}",
-                f"[discovery] Beacon identity registered: {name} ({data.get('ip', '?')})",
+                f"[discovery] Beacon identity registered: {name} ({peer.get('ip', '?')})",
             )
         self._store_peer(peer)
         self._log_once(
             f"beacon:{hash_hex}",
-            f"[discovery] Beacon peer discovered: {name} ({data.get('ip', '?')})",
+            f"[discovery] Beacon peer discovered: {name} ({peer.get('ip', '?')})",
         )
         return True
 
@@ -335,17 +299,31 @@ class PeerDiscovery:
         self._last_log[key] = now
         print(message)
 
+    @staticmethod
+    def _same_peer_identity(a, b):
+        """True when two discovery records refer to the same RNS identity."""
+        a_ident = normalize_hash(a.get("identity_hash"))
+        b_ident = normalize_hash(b.get("identity_hash"))
+        if a_ident and b_ident and a_ident == b_ident:
+            return True
+        a_key = a.get("pubkey")
+        b_key = b.get("pubkey")
+        return bool(a_key and b_key and a_key == b_key)
+
     def _peer_rank(self, peer):
         score = 0
         if peer.get("via") == "rns":
-            score += 10
+            score += 20
+        if peer.get("pubkey"):
+            score += 8
         if len(normalize_hash(peer.get("hash"))) >= 32:
             score += 5
         if peer.get("ip"):
             score += 2
         name = peer.get("name", "")
-        if name and name != normalize_hash(peer.get("hash"))[:8]:
-            score += 1
+        hash_prefix = normalize_hash(peer.get("hash"))[:8]
+        if name and name != hash_prefix and not name.startswith(hash_prefix):
+            score += 3
         return score
 
     @staticmethod
@@ -377,7 +355,34 @@ class PeerDiscovery:
             if not existing:
                 deduped[key] = peer
                 continue
-            if peer.get("last_seen", 0) >= existing.get("last_seen", 0):
+            existing_hash = normalize_hash(existing.get("hash"))
+            peer_hash = normalize_hash(peer.get("hash"))
+            if existing_hash != peer_hash:
+                if self._same_peer_identity(existing, peer):
+                    peer_score = self._peer_rank(peer)
+                    existing_score = self._peer_rank(existing)
+                    if peer_score > existing_score:
+                        deduped[key] = peer
+                    elif (
+                        peer_score == existing_score
+                        and peer.get("last_seen", 0) >= existing.get("last_seen", 0)
+                    ):
+                        deduped[key] = peer
+                    continue
+                existing_verified = bool(existing.get("pubkey"))
+                peer_verified = bool(peer.get("pubkey"))
+                if peer_verified and not existing_verified:
+                    deduped[key] = peer
+                elif existing_verified and not peer_verified:
+                    pass
+                elif peer.get("last_seen", 0) >= existing.get("last_seen", 0):
+                    deduped[key] = peer
+                continue
+            peer_score = self._peer_rank(peer)
+            existing_score = self._peer_rank(existing)
+            if peer_score > existing_score:
+                deduped[key] = peer
+            elif peer_score == existing_score and peer.get("last_seen", 0) >= existing.get("last_seen", 0):
                 deduped[key] = peer
         return list(deduped.values())
 
