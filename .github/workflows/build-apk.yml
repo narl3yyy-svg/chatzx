@@ -90,6 +90,6 @@ jobs:
             | **Windows** | `git clone` → `run.bat web --share` |
             | **macOS / Linux** | `git clone` → `bash scripts/install-macos.sh` or `install-arch.sh` → `./run.sh web --share` |
 
-            Desktop builds are **source-only** (no portable exe / mac zip). Releases ship the Android APK only.
+            Desktop: clone repo and run — Windows `run.bat web --share` (cmd), macOS/Linux `./run.sh web --share`. Releases ship the Android APK only.
           files: ${{ steps.version.outputs.apk }}
           make_latest: true

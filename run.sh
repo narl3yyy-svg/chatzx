@@ -19,16 +19,19 @@ pip_cmd() {
 }
 
 install_deps() {
-    echo "Installing dependencies..."
+    if "$PYTHON" -c "import rns, aiohttp" 2>/dev/null; then
+        return 0
+    fi
+    echo "Installing dependencies (first run only)..."
     if ! "$PYTHON" -m pip --version >/dev/null 2>&1; then
         echo "pip not found for $PYTHON"
         echo "Fix: $PYTHON -m ensurepip --upgrade"
         echo "Or run: bash scripts/install-macos.sh"
         exit 1
     fi
-    pip_cmd install --user --break-system-packages rns aiohttp 2>/dev/null || \
-    pip_cmd install --user rns aiohttp 2>/dev/null || \
-    pip_cmd install rns aiohttp
+    pip_cmd install -q --user --break-system-packages rns aiohttp 2>/dev/null || \
+    pip_cmd install -q --user rns aiohttp 2>/dev/null || \
+    pip_cmd install -q rns aiohttp
 }
 
 case "${1:-}" in

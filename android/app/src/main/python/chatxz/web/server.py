@@ -3196,17 +3196,24 @@ class ChatWebServer:
             print(f"[restart] Spawning new process: {exe}")
             asyncio.get_event_loop().call_later(0.5, _win_restart)
             return web.json_response({"status": "restarting"})
-        if getattr(sys, "frozen", False):
-            args = [sys.executable]
-        else:
-            args = [sys.executable]
-            if sys.argv and (sys.argv[0].endswith('.py') or os.sep in sys.argv[0]):
-                args.append(sys.argv[0])
-            else:
-                args += ["-m", "chatxz.web.server"]
-            args += sys.argv[1:]
-        print(f"[restart] Re-exec'ing: {args}")
-        asyncio.get_event_loop().call_later(0.3, lambda: (sys.stdout.flush(), os.execv(sys.executable, args)))
+        def _source_restart():
+            sys.stdout.flush()
+            stop_stale_chatxz_servers(exclude_pid=os.getpid())
+            args = [sys.executable, "-m", "chatxz.web.server", *sys.argv[1:]]
+            env = os.environ.copy()
+            root = os.environ.get("CHATXZ_ROOT") or os.getcwd()
+            env["CHATXZ_ROOT"] = root
+            env["PYTHONPATH"] = root
+            subprocess.Popen(
+                args,
+                cwd=root,
+                env=env,
+                start_new_session=True,
+            )
+            os._exit(0)
+
+        print("[restart] Spawning new server process")
+        asyncio.get_event_loop().call_later(0.8, _source_restart)
         return web.json_response({"status": "restarting"})
 
     async def handle_temperature(self, request):
@@ -4257,6 +4264,16 @@ class ChatWebServer:
 
     def run(self):
         from aiohttp.web_runner import GracefulExit
+
+        if not is_android():
+            holders = _port_holder_pids(self.port, udp=False)
+            stale = [
+                p for p in holders
+                if p != os.getpid() and _is_chatxz_process(p)
+            ]
+            if stale or (self.force and holders):
+                stop_stale_chatxz_servers(exclude_pid=os.getpid())
+                time.sleep(0.4)
 
         app = web.Application()
         self._register_routes(app)

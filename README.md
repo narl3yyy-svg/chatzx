@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.120
+**Current version:** 0.3.121
 
 ## Download
 
@@ -16,9 +16,9 @@ Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum
 
 ---
 
-## Windows (cmd)
+## Windows (cmd + `run.bat` only)
 
-Use **Command Prompt (cmd)** in the repo folder. Clone, then run — no separate install step:
+**Use Command Prompt (cmd)** — not PowerShell, not `run.ps1` (removed). Clone the repo, `cd` into it, run one command:
 
 ```cmd
 git clone https://github.com/narl3yyy-svg/chatxz.git
@@ -26,12 +26,14 @@ cd chatxz
 run.bat web --share
 ```
 
+That starts the server in the **same cmd window** with live logs. Open **http://127.0.0.1:8742** in your browser. Press **Ctrl+C** to stop.
+
 | File | Purpose |
 |------|---------|
-| `run.bat` | Start server from this folder (first run auto-fetches rns + aiohttp into local `.venv`) |
-| `uninstall.bat` | Stop server, remove `.venv`, optionally delete app data |
+| `run.bat` | **Start here** — runs chatxz from the clone folder (first run only: fetches `rns` + `aiohttp` into `.venv`) |
+| `uninstall.bat` | Stop server, remove `.venv`, optionally delete identity/chats |
 
-**Prerequisite:** [Python 3.10+](https://www.python.org/downloads/windows/) (check **Add python.exe to PATH**). [Git](https://git-scm.com/download/win) for `git clone` / `git pull`.
+**Prerequisite:** [Python 3.10+](https://www.python.org/downloads/windows/) with **Add python.exe to PATH** checked during install.
 
 Debug logs:
 
@@ -39,15 +41,23 @@ Debug logs:
 run.bat web --share --debug
 ```
 
-All server logs stay in the cmd window where you ran `run.bat`. Press **Ctrl+C** to stop.
+If a previous server is still running:
 
-Browser: **http://127.0.0.1:8742**. Allow Windows Firewall on **private** networks (UDP 4242, 8743; TCP 8742).
+```cmd
+run.bat web --share --force
+```
 
-**Data:** `%USERPROFILE%\.config\chatxz\`. Portable/repo-local: `set CHATXZ_PORTABLE=C:\path\to\chatxz` before starting.
+Remove everything chatxz put in this folder:
 
-**Update:** `git pull` then `run.bat web --share`.
+```cmd
+uninstall.bat
+```
 
-**Git Bash on Windows** (alternative): `./run.sh web --share`
+**Update after `git pull`:** just `run.bat web --share` again (no reinstall unless you ran `uninstall.bat`).
+
+**Firewall:** allow **private** networks — UDP 4242, 8743; TCP 8742.
+
+**Data:** `%USERPROFILE%\.config\chatxz\`
 
 ---
 
@@ -69,9 +79,9 @@ cd chatxz
 ./run.sh web --share
 ```
 
-Open **http://localhost:8742**. Config in `~/.config/chatxz/`.
+Open **http://localhost:8742**. Config in `~/.config/chatxz/`. Dependencies install quietly on first run only.
 
-**Optional:** `bash scripts/install-macos.sh` — system-wide setup or voice support.
+**Optional:** `bash scripts/install-macos.sh` — voice support (pyaudio) and Homebrew packages.
 
 ---
 
@@ -172,6 +182,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.121** — Windows: faster **`run.bat`** (skip deps when `.venv` ready); removed `install.bat` and all PowerShell runners; Mac fix: no AutoInterface + UDP LAN duplicate (errno 48); restart no longer crashes on port 8742
 - **v0.3.120** — Windows: **`run.bat web --share`** only — runs from git clone folder, no separate install step; first run auto-fetches deps into local `.venv`
 - **v0.3.119** — Windows: **`install.bat`**, **`run.bat`**, **`uninstall.bat`** only (removed PowerShell runners); pure cmd workflow with live logs
 - **v0.3.118** — Windows: run from **cmd** with **`run.bat web --share`**; live logs in your cmd window; startup announce deferred for faster boot

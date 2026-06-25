@@ -1224,12 +1224,17 @@ def render_rns_config(
             if iface.get("ifac_size"):
                 lines.append(f"    ifac_size = {iface.get('ifac_size')}")
         lines.append("")
-    # AutoInterface only when UDP LAN is configured — serial-only setups stay on serial.
+    # AutoInterface also binds UDP 4242 — never combine with explicit UDP LAN preset.
     has_udp_lan = any(
         i.get("type") == "UDPInterface" and i.get("enabled", True)
         for i in normalized
     )
-    if has_udp_lan and auto_interface_enabled and not android and sys.platform != "win32":
+    if (
+        auto_interface_enabled
+        and not has_udp_lan
+        and not android
+        and sys.platform != "win32"
+    ):
         lines.extend([
             "  [[Default Interface]]",
             "    type = AutoInterface",

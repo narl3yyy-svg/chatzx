@@ -55,8 +55,17 @@ class StartupTests(unittest.TestCase):
         )
         if sys.platform == "win32":
             self.skipTest("AutoInterface not rendered on Windows")
-        self.assertIn("type = AutoInterface", with_auto)
+        # Explicit UDP LAN already binds :4242 — AutoInterface must not duplicate it.
+        self.assertNotIn("type = AutoInterface", with_auto)
         self.assertNotIn("type = AutoInterface", without_auto)
+        serial_only = ri.render_rns_config(
+            ri.normalize_interface_list([
+                {"id": "s1", "preset": "serial", "name": "Serial", "port": "/dev/ttyUSB0", "enabled": True},
+            ]),
+            auto_interface_enabled=True,
+        )
+        if sys.platform != "win32":
+            self.assertIn("type = AutoInterface", serial_only)
 
     def test_serial_user_disabled_stays_off(self):
         items = ri.normalize_interface_list([
