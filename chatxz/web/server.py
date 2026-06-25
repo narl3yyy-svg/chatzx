@@ -385,16 +385,27 @@ class ChatWebServer:
         return self._clean_hash(any_hash).lower()
 
     def _my_sender_hash(self):
-        return self._clean_hash(self.destination_hash or self.identity_mgr.get_hex_hash())
+        from chatxz.core.discovery import normalize_hash
+        if self.messaging and self.messaging.my_dest_hash:
+            return normalize_hash(self.messaging.my_dest_hash)
+        if self.identity_mgr:
+            connect = self.identity_mgr.get_connect_hash()
+            if connect:
+                return connect
+        return normalize_hash(self._clean_hash(self.destination_hash or ""))
 
     def _is_self_hash(self, h):
         from chatxz.core.discovery import normalize_hash
         clean = normalize_hash(h)
         if not clean:
             return False
+        my_connect = normalize_hash(
+            (self.messaging.my_dest_hash if self.messaging else None)
+            or (self.identity_mgr.get_connect_hash() if self.identity_mgr else "")
+            or self._clean_hash(self.destination_hash or "")
+        )
         my_ident = normalize_hash(self.identity_mgr.get_hex_hash() if self.identity_mgr else "")
-        my_dest = normalize_hash(self.destination_hash or "")
-        return clean in (my_dest, my_ident)
+        return clean in (my_connect, my_ident)
 
     def _peers_equivalent(self, hash_a, hash_b):
         if self.messaging:
@@ -472,7 +483,12 @@ class ChatWebServer:
                 return session_peer
 
         if ident_hex and not self._is_self_hash(ident_hex):
-            return self._peer_dest_hash(computed_dest or ident_hex)
+            if computed_dest and not self._is_self_hash(computed_dest):
+                return self._peer_dest_hash(computed_dest)
+            if self.messaging:
+                canon = self.messaging.canonical_connect_hash(ident_hex, link=link)
+                if canon:
+                    return canon
         return ""
 
     def _resolve_peer_hash(self, peer_hash):
@@ -989,7 +1005,13 @@ class ChatWebServer:
             chat_peer = HUB_GROUP_PEER
             sender = self._peer_dest_hash(sender_hash) if sender_hash and sender_hash != "system" else "system"
         elif sender_hash and sender_hash != "system":
-            chat_peer = self._peer_dest_hash(sender_hash)
+            if self.messaging:
+                chat_peer = (
+                    self.messaging.canonical_connect_hash(sender_hash)
+                    or self._peer_dest_hash(sender_hash)
+                )
+            else:
+                chat_peer = self._peer_dest_hash(sender_hash)
             sender = chat_peer
         else:
             chat_peer = self._peer_dest_hash(self.active_peer)
@@ -1188,9 +1210,19 @@ class ChatWebServer:
 
     def _peer_is_current(self, peer_hash):
         clean = self._peer_dest_hash(peer_hash)
-        if not clean or not self.discovery:
+        if not clean:
             return False
-        return self.discovery.peer_is_current(clean)
+        if self.messaging:
+            if self.messaging.active_peer_hash and self._peers_equivalent(
+                clean, self.messaging.active_peer_hash
+            ):
+                return True
+            for linked in self.messaging.linked_peers():
+                if self._peers_equivalent(clean, linked):
+                    return True
+        if self.discovery:
+            return self.discovery.peer_is_current(clean)
+        return False
 
     def _resolve_current_peer_hash(self, peer_hash, peer_ip=None):
         clean = self._peer_dest_hash(peer_hash)
@@ -1350,11 +1382,16 @@ class ChatWebServer:
             )
 
     def _on_link_established(self, peer_hash, link, background=False, promote_active=True):
-        resolved = self._peer_dest_hash(peer_hash)
-        if self._is_self_hash(resolved) and self.discovery:
+        if self.messaging and link:
+            resolved = self.messaging.canonical_connect_hash(peer_hash, link=link)
+        else:
+            resolved = self._peer_dest_hash(peer_hash)
+        if (not resolved or self._is_self_hash(resolved)) and self.discovery:
             fixed = self._resolve_incoming_peer(link=link)
             if fixed and not self._is_self_hash(fixed):
                 resolved = fixed
+        elif not resolved:
+            resolved = self._peer_dest_hash(peer_hash)
         if promote_active:
             self.active_peer = resolved
         self._prune_stale_session_system_messages()

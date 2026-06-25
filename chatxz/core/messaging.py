@@ -219,8 +219,11 @@ class MessagingBackend:
         return False
 
     def _cache_link_peer(self, link, peer_hash):
-        if link and peer_hash and peer_hash != "unknown" and not self._is_self_hash(peer_hash):
-            self._link_peer_hashes[link.link_id] = normalize_hash(peer_hash)
+        if not link or not peer_hash or peer_hash == "unknown":
+            return
+        canon = self.canonical_connect_hash(peer_hash, link=link)
+        if canon and not self._is_self_hash(canon):
+            self._link_peer_hashes[link.link_id] = canon
 
     def _link_for_peer(self, peer_hash):
         peer = self.dest_hash_for(peer_hash)
@@ -368,27 +371,30 @@ class MessagingBackend:
             self._link_handoff = False
 
     def _peer_for_link(self, link, fallback=None):
-        identity_peer = self.dest_hash_for(self._peer_hash_from_link_identity(link))
+        identity_peer = self._peer_hash_from_link_identity(link)
         if identity_peer and identity_peer != "unknown" and not self._is_self_hash(identity_peer):
             self._cache_link_peer(link, identity_peer)
             return identity_peer
         cached = self._link_peer_hashes.get(link.link_id) if link else None
         if cached and not self._is_self_hash(cached):
-            mapped = self.dest_hash_for(cached)
-            if mapped and mapped != "unknown":
-                return mapped
+            canon = self.canonical_connect_hash(cached, link=link)
+            if canon:
+                return canon
         resolved = self._resolve_remote_peer(link, fallback=fallback)
         if resolved and resolved != "unknown" and not self._is_self_hash(resolved):
-            resolved = self.dest_hash_for(resolved)
-            self._cache_link_peer(link, resolved)
-            return resolved
+            resolved = self.canonical_connect_hash(resolved, link=link)
+            if resolved:
+                self._cache_link_peer(link, resolved)
+                return resolved
         if fallback and not self._is_self_hash(fallback):
-            mapped = self.dest_hash_for(fallback)
-            if mapped and mapped != "unknown":
+            mapped = self.canonical_connect_hash(fallback, link=link)
+            if mapped:
                 self._cache_link_peer(link, mapped)
                 return mapped
         if cached and not self._is_self_hash(cached):
-            return self.dest_hash_for(cached)
+            canon = self.canonical_connect_hash(cached, link=link)
+            if canon:
+                return canon
         return "unknown"
 
     def register_peer_mapping(self, dest_hash, identity_hash=None):
@@ -411,6 +417,31 @@ class MessagingBackend:
         if mapped:
             return mapped
         return clean
+
+    def canonical_connect_hash(self, any_hash, link=None):
+        """Resolve identity or alias hashes to the message destination (connect) hash."""
+        clean = normalize_hash(any_hash)
+        if not clean or clean == "unknown" or self._is_self_hash(clean):
+            if link:
+                from_link = self._peer_hash_from_link_identity(link)
+                if from_link and from_link != "unknown" and not self._is_self_hash(from_link):
+                    return from_link
+            return ""
+        mapped = self.dest_hash_for(clean)
+        if mapped in self.dest_to_identity:
+            return mapped
+        ident = self._identity_for_hash(clean)
+        if ident:
+            dest = self._dest_hash_from_identity(ident)
+            if dest and not self._is_self_hash(dest):
+                return dest
+        if link:
+            from_link = self._peer_hash_from_link_identity(link)
+            if from_link and from_link != "unknown" and not self._is_self_hash(from_link):
+                return from_link
+        if mapped and len(mapped) == 32:
+            return mapped
+        return ""
 
     def hashes_equivalent(self, hash_a, hash_b):
         a = self.dest_hash_for(hash_a)
@@ -872,10 +903,21 @@ class MessagingBackend:
                 return ""
             dest = self._dest_hash_from_identity(ident)
             if dest and not self._is_self_hash(dest):
-                return self.dest_hash_for(dest)
-            ident_hex = normalize_hash(RNS.hexrep(ident.hash))
-            if ident_hex and not self._is_self_hash(ident_hex):
-                return self.dest_hash_for(ident_hex)
+                return dest
+            pub = None
+            try:
+                pub = ident.get_public_key()
+            except Exception:
+                pass
+            if pub:
+                with RNS.Identity.known_destinations_lock:
+                    for dest_hash_bytes, entry in RNS.Identity.known_destinations.items():
+                        if len(entry) > 2 and entry[2] == pub:
+                            found = normalize_hash(RNS.hexrep(dest_hash_bytes))
+                            ident_hex = normalize_hash(RNS.hexrep(ident.hash))
+                            if found and not self._is_self_hash(found):
+                                self.register_peer_mapping(found, ident_hex)
+                                return found
         except Exception:
             pass
         return ""
@@ -1881,11 +1923,14 @@ class MessagingBackend:
         return self._peer_for_link(link, fallback=fallback)
 
     def _notify_link_established(self, link, peer_hash=None, promote_active=True, background=False):
-        peer = self.dest_hash_for(peer_hash or "")
+        peer = self.canonical_connect_hash(peer_hash or "", link=link)
         if (not peer or peer == "unknown") and link:
-            peer = self.dest_hash_for(self._peer_hash_from_link_identity(link))
+            peer = self._peer_hash_from_link_identity(link)
         if not peer or peer == "unknown":
-            peer = self.dest_hash_for(self._peer_destination_hash(link, fallback=peer_hash))
+            peer = self.canonical_connect_hash(
+                self._peer_destination_hash(link, fallback=peer_hash),
+                link=link,
+            )
         if is_hub_peer_hash(peer):
             return
         if not peer or peer == "unknown":

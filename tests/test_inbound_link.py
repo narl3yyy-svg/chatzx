@@ -94,6 +94,14 @@ class InboundLinkTests(unittest.TestCase):
             found = backend._find_active_link_for_peer("4a2aa1dbbed382886b0333274e546ba8")
         self.assertIs(found, link)
 
+    def test_canonical_connect_hash_maps_identity_alias(self):
+        backend = _make_backend()
+        ident_hex = "f687bbff423a220af49f04edb8381ab2"
+        connect_hex = "4a2aa1dbbed382886b0333274e546ba8"
+        backend.register_peer_mapping(connect_hex, ident_hex)
+        self.assertEqual(backend.canonical_connect_hash(ident_hex), connect_hex)
+        self.assertEqual(backend.canonical_connect_hash(connect_hex), connect_hex)
+
     def test_notify_link_established_resolves_peer_from_link_identity(self):
         backend = _make_backend()
         remote_ident = "f687bbff423a220af49f04edb8381ab2"

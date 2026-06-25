@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.95
+**Current version:** 0.3.96
 
 ## Download
 
@@ -154,6 +154,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.96** — Link and message peer resolution always uses canonical connect hash (fixes wrong ID on connect/send and stale-hash reject while notifications still fire); send allowed when actively linked; `run.sh` fix for unset `VIRTUAL_ENV`
 - **v0.3.95** — Canonical connect hash everywhere (sidebar, beacon, discovery, messaging); separate `connect_hash` vs `identity_hash` in API; LAN interface picker lists all NICs in setup wizard and settings; `/api/network` alias; pubkey-verified RNS peers preferred over stale beacon hashes; purge stale RNS paths on identity supersession; improved `install.sh` / `uninstall.sh` / `run.sh` (repo-local portable mode)
 - **v0.3.94** — Linux fresh install defaults to UDP LAN (fixes no discovery until manual config); first-run setup wizard (name, LAN interface, auto-announce off by default); auto-announce setting in Network; instant manual announce (0.4s debounce, 1s peer broadcast); subnet-scoped discovery per selected interface; hub group no longer hijacks 1:1 links (`__hub_group__` leak fix); large hub messages use resource transfer; reorganized Settings → Network layout
 - **v0.3.93** — Immediate peer supersession: one hash per LAN IP, old hash evicted on new Announce (no 30s wait); block Connect/send to stale hashes; migrate or remove saved contacts when peer identity changes; disconnect stale links
