@@ -46,7 +46,13 @@ switch ($Command) {
     }
     { $_ -in 'web', 'server' } {
         Install-Deps
-        & (Join-Path $RepoRoot 'scripts\launch-server.ps1') @Rest
+        $py = Resolve-Python
+        if (-not $py) { $py = Ensure-WindowsDeps -Quiet }
+        $env:PYTHONUNBUFFERED = '1'
+        Write-Host 'chatxz web server — logs below. Press Ctrl+C to stop.'
+        Write-Host ''
+        & $py -u -m chatxz.web.server @Rest
+        exit $LASTEXITCODE
     }
     'cli' {
         Install-Deps
@@ -55,7 +61,8 @@ switch ($Command) {
     default {
         Write-Host 'chatxz - Reticulum Chat'
         Write-Host ''
-        Write-Host 'Usage: run.cmd <command> [args]   (or .\run.ps1)'
+        Write-Host 'Usage: run.cmd <command> [args]   (from cmd — do NOT use .\run.ps1 in cmd)'
+        Write-Host '       .\run.ps1 <command> [args]  (from PowerShell only)'
         Write-Host ''
         Write-Host 'Commands:'
         Write-Host '  web [--share] [--verbose] [--debug] [--force]  Start web server'

@@ -8,6 +8,7 @@ $ErrorActionPreference = 'Stop'
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $env:CHATXZ_ROOT = $RepoRoot
+$env:PYTHONUNBUFFERED = '1'
 if ($env:PYTHONPATH) {
     $env:PYTHONPATH = "$RepoRoot;$env:PYTHONPATH"
 } else {
@@ -25,7 +26,7 @@ if (Test-Path $venvPy) {
     $python = $localPy313
 } elseif (Get-Command py -ErrorAction SilentlyContinue) {
     $python = 'py'
-    $ServerArgs = @('-3', '-m', 'chatxz.web.server') + $ServerArgs
+    $ServerArgs = @('-3', '-u', '-m', 'chatxz.web.server') + $ServerArgs
     & $python @ServerArgs
     exit $LASTEXITCODE
 } elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
@@ -37,5 +38,5 @@ if (Test-Path $venvPy) {
     exit 1
 }
 
-& $python -m chatxz.web.server @ServerArgs
+& $python -u -m chatxz.web.server @ServerArgs
 exit $LASTEXITCODE

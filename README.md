@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.116
+**Current version:** 0.3.117
 
 ## Download
 
@@ -28,7 +28,9 @@ cd chatxz
 run.cmd web --share
 ```
 
-From **PowerShell** instead of cmd: `.\run.ps1 web --share` (same thing).
+**Important:** use `run.cmd` from cmd — **not** `.\run.ps1`. Windows opens `.ps1` files in an editor (VS Code/Cursor), so the server never starts and you see no logs.
+
+From **PowerShell**: `.\run.ps1 web --share` (shows live logs in that window).
 
 From **Git Bash** (same script as Linux/Mac): `./run.sh web --share`
 
@@ -157,6 +159,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.117** — Windows cmd: **`run.cmd web --share`** runs server in foreground with live logs (`python -u`); fix `.\run.ps1` in cmd opening VS Code instead of starting server; faster setup wizard save
 - **v0.3.116** — Windows: **`run.cmd web --share`** from cmd (no separate install); auto-setup `.venv` on first run; Git Bash can use `./run.sh` like Linux/Mac
 - **v0.3.115** — Windows/macOS desktop: **source-only** (`run.ps1` / `run.sh`); CI releases **Android APK only** (no Windows exe zip, no macOS zip)
 - **v0.3.114** — Windows: setup wizard **Get started** no longer hangs (single config write, lighter announce); IPv4 picker lists **every address** on each adapter (custom aliases included), stored as `NIC|ip`; faster first-run interface scan

@@ -1706,15 +1706,16 @@ function refreshLanInterfaces(showToast) {
 }
 
 function loadSetupInterfacesWithRetry(attempt, settings) {
-  fetch('/api/interfaces?refresh=1')
+  const refresh = attempt > 0 ? '?refresh=1' : '';
+  fetch('/api/interfaces' + refresh)
     .then(r => r.json())
     .then(d => {
       const ifaces = d.interfaces || [];
       populateLanInterfaceSelect(ifaces, settings?.lan_interface);
       populateSetupLanSelect(ifaces, settings?.lan_interface);
       renderLanInterfaceSummary(ifaces);
-      if (ifaces.length === 0 && attempt < 10) {
-        setTimeout(() => loadSetupInterfacesWithRetry(attempt + 1, settings), 500);
+      if (ifaces.length === 0 && attempt < 4) {
+        setTimeout(() => loadSetupInterfacesWithRetry(attempt + 1, settings), 300);
       }
     })
     .catch(() => {
@@ -1768,6 +1769,8 @@ function completeSetupWizard() {
   const history_retention = document.getElementById('setup-retention')?.value || 'never';
   const received_dir = document.getElementById('setup-received-dir')?.value.trim() || '';
   const lan_transport = document.getElementById('setup-lan-transport')?.value || 'udp_lan';
+  document.getElementById('setup-wizard')?.classList.remove('open');
+  toast('Saving setup…');
   fetch('/api/settings', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -1788,10 +1791,8 @@ function completeSetupWizard() {
     window._appSettings = d.settings || {};
     window._hubRole = d.settings?.hub_role || 'off';
     updateHubUi();
-    document.getElementById('setup-wizard')?.classList.remove('open');
     toast('Setup complete');
-    if (auto_announce) announceSelf();
-    else toast('Tap 📡 Announce when ready to discover peers');
+    if (!auto_announce) toast('Tap 📡 Announce when ready to discover peers');
   }).catch(() => toast('Setup failed'))
   .finally(() => {
     if (btn) {

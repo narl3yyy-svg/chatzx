@@ -3041,8 +3041,21 @@ class ChatWebServer:
                 )
             settings = self._apply_hub_settings(settings)
             self.save_settings(settings)
+            setup_fast = bool(data.get("setup_complete"))
+            if setup_fast:
+                if self.messaging:
+                    self.messaging.display_name = settings.get("name", "")
+                if config_dirty or hub_changed:
+                    asyncio.create_task(
+                        asyncio.to_thread(self._write_rns_config, settings)
+                    )
+                if hub_changed:
+                    asyncio.create_task(self._apply_hub_runtime(settings))
+                if "auto_announce" in data:
+                    self._apply_auto_announce_settings(settings)
+                return web.json_response({"status": "ok", "settings": settings})
             if config_dirty or hub_changed:
-                self._write_rns_config(settings)
+                await asyncio.to_thread(self._write_rns_config, settings)
             if hub_changed:
                 await asyncio.to_thread(self._apply_hub_runtime, settings)
             if "auto_announce" in data:
