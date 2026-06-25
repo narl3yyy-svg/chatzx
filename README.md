@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.128
+**Current version:** 0.3.132
 
 ## Download
 
@@ -31,6 +31,8 @@ run.bat web --share
 ```
 
 Open **http://127.0.0.1:8742**. Logs stay in that cmd window.
+
+**Voice notes (Helium / Chrome):** use `127.0.0.1` (secure context). If mic is blocked, allow it via the site lock icon and **Settings → Privacy & security → Microphone** (desktop apps on).
 
 **Stop:** **Ctrl+C** — server exits and **all ports close** (8742, 4242, 8743). Nothing keeps listening after `run.bat` ends.
 
@@ -135,7 +137,7 @@ bash scripts/check.sh
 
 | Feature | Details |
 |---------|---------|
-| Messaging | Per-peer threads, delivery receipts, offline queue, emoji |
+| Messaging | Per-peer threads, delivery receipts, offline queue, searchable emoji picker |
 | Files | Any size via encrypted RNS resources; drag & drop; live speed in dock |
 | Network | LAN discovery (UDP LAN or **TCP LAN**), USB serial failover, pinned NIC/VPN, saved contacts |
 | Privacy | E2E encrypted links (AES-256-CBC); HTTP :8742 is local UI only |
@@ -193,6 +195,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.132** — Windows: saved contact IP updates live when peer moves subnet (no server restart); searchable emoji picker; clearer microphone permission hints (Helium + Windows Privacy); quieter file-preview disconnect logs; macOS Apple Silicon CPU temp via ioreg/powermetrics/thermal estimate (`~` when approximate)
 - **v0.3.131** — Windows: fix large-file preview/send (`WinError 87` sendfile); CPU/temp status bar on Windows + macOS; discovered peer IP updates in GUI when same identity moves subnet
 - **v0.3.130** — TCP LAN fix: hot-added TCP server no longer crashes on incoming connections (`ifac_netname`); UDP preferred over TCP when both enabled; less TCP client reconnect spam
 - **v0.3.129** — Windows: graceful **Ctrl+C** shutdown (no traceback, no “Terminate batch job”, in-flight transfers cancelled cleanly)

@@ -879,10 +879,20 @@ body.modal-open #save-contact-dialog * { pointer-events: auto; user-select: auto
 #emoji-picker {
   display: none; position: absolute; bottom: calc(100% + 8px); left: 0;
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius-lg); padding: 10px; width: 340px; max-height: 220px;
-  overflow-y: auto; z-index: 20; box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-lg); padding: 10px; width: 340px; max-height: 260px;
+  overflow: hidden; z-index: 20; box-shadow: var(--shadow-lg); flex-direction: column;
 }
-#emoji-picker.open { display: flex; flex-wrap: wrap; gap: 2px; }
+#emoji-picker.open { display: flex; }
+#emoji-search {
+  width: 100%; margin-bottom: 8px; padding: 8px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px;
+}
+#emoji-grid {
+  display: flex; flex-wrap: wrap; gap: 2px; overflow-y: auto; max-height: 200px;
+}
+#emoji-picker .emoji-empty {
+  width: 100%; padding: 12px 8px; text-align: center; color: var(--text3); font-size: 12px;
+}
 .emoji-item {
   width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
   cursor: pointer; border-radius: var(--radius-sm); font-size: 20px;
@@ -1361,7 +1371,10 @@ body.sidebar-open #sidebar-backdrop { display: block; }
 
     <div id="input-area" style="display:none">
       <div class="composer">
-        <div id="emoji-picker"></div>
+        <div id="emoji-picker">
+          <input type="text" id="emoji-search" placeholder="Search emoji..." oninput="filterEmojiPicker(this.value)">
+          <div id="emoji-grid"></div>
+        </div>
         <div id="input-row">
           <textarea id="msg-input" rows="1" placeholder="Message..." onkeydown="onInputKey(event)" oninput="onComposerInput(this)" onfocus="onComposerFocus()" onblur="onComposerBlur()"></textarea>
           <div class="composer-tools">
@@ -1485,6 +1498,18 @@ let allContacts = [];
 let sidebarOpen = true;
 let appPlatform = 'desktop';
 const peerAliasGroups = new Map();
+
+const EMOJI_SEARCH_GROUPS = [
+  {terms: 'smile happy face grin laugh joy tear wink cool sick mask', from: 0, to: 59},
+  {terms: 'cat dog animal pet bear lion monkey bird fish ocean whale shark', from: 60, to: 179},
+  {terms: 'hand wave thumbs clap pray muscle finger point ok peace', from: 60, to: 95},
+  {terms: 'heart love romance kiss valentine red pink', from: 96, to: 118},
+  {terms: 'plant flower tree leaf sun moon star weather rain snow cloud fire', from: 180, to: 280},
+  {terms: 'food fruit apple pizza burger drink coffee beer wine cake dessert', from: 281, to: 400},
+  {terms: 'sport ball game trophy medal music guitar piano drum phone computer', from: 401, to: 520},
+  {terms: 'travel car bus train plane house tool money work office', from: 521, to: 620},
+  {terms: 'symbol arrow check cross warning sign flag color square circle', from: 621, to: 9999},
+];
 
 const EMOJIS = ['😀','😃','😄','😁','😅','😂','🤣','😊','😇','🙂','😉','😌','😍','🥰','😘','😋','😛','😜','🤪','😝','🤗','🤭','🤫','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','🤥','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🥴','😵','🤯','🤠','🥳','🥺','😢','😭','😤','😠','😡','🤬','💀','💩','🤡','👻','👽','🤖','😺','😸','😹','😻','😼','😽','🙀','😿','😾','🙌','👏','👍','👎','👊','✊','🤛','🤜','🤞','✌️','🤟','🤘','👌','👈','👉','👆','👇','☝️','✋','🤚','🖐','🖖','👋','🤙','💪','🦾','🖕','✍️','🙏','💯','🔥','⭐','🌟','✨','💥','💫','💦','💨','❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🙈','🙉','🙊','🐔','🐧','🐦','🐤','🐣','🐥','🦆','🦅','🦉','🦇','🐺','🐗','🐴','🦄','🐝','🐛','🦋','🐌','🐞','🐜','🦟','🦗','🕷','🦂','🐢','🐍','🦎','🦖','🦕','🐙','🦑','🦐','🦀','🐡','🐠','🐟','🐬','🐳','🐋','🦈','🐊','🐅','🐆','🦓','🦍','🐘','🦛','🦏','🐪','🐫','🦒','🦘','🐃','🐂','🐄','🐎','🐖','🐏','🐑','🦙','🐐','🦌','🐕','🐩','🐈','🐓','🦃','🦚','🦜','🦢','🦩','🕊','🐇','🦝','🦡','🦨','🦦','🦥','🐁','🐀','🐿','🦔','🌵','🎄','🌲','🌳','🌴','🌱','🌿','☘️','🍀','🍃','🍂','🍁','🍄','🌾','💐','🌷','🌹','🥀','🌺','🌸','🌼','🌻','🌞','🌝','🌛','🌜','🌚','🌕','🌖','🌗','🌘','🌑','🌒','🌓','🌔','🌙','🌎','🌍','🌏','🪐','💫','⚡','☄️','🔥','🌪','🌈','☀️','🌤','⛅','🌥','☁️','🌦','🌧','⛈','🌩','🌨','❄️','☃️','⛄','🌬','💧','💦','☔','🌊','🍏','🍎','🍐','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍈','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🥬','🥒','🌶','🌽','🥕','🧄','🧅','🥔','🍠','🥐','🍞','🥖','🥨','🧀','🥚','🍳','🥞','🧇','🥓','🥩','🍗','🍖','🌭','🍔','🍟','🍕','🥪','🥙','🌮','🌯','🥗','🥘','🍝','🍜','🍲',' curry','🍣','🍱','🥟','🍤','🍙','🍚','🍘','🍥','🥠','🥮','🍢','🍡','🍧','🍨','🍦','🥧','🧁','🍰','🎂','🍮','🍭','🍬','🍫','🍿','🍩','🍪','🌰','🥜','🍯','🥛','🍼','☕','🫖','🍵','🧃','🥤','🧋','🍶','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🧉','🍾','🧊','🥄','🍴','🥢','🥡','🥣','🧂','⚽','🏀','🏈','⚾','🥎','🎾','🏐','🏉','🥏','🎱','🪀','🏓','🏸','🏒','🏑','🥍','🏏','🥅','⛳','🪁','🏹','🎣','🤿','🥊','🥋','🎽','⛸','🥌','sled','🎿','⛷','🏂','🪐','🏋️','🤼','🤸','⛹️','🤺','🏌️','🏇','🧘','🏄','🏊','🤽','🚣','🧗','🚵','🚴','🏆','🥇','🥈','🥉','🏅','🎖','🏵','🎗','🎫','🎟','🎪','🤹','🎭','🩰','🎨','🎬','🎤','🎧','🎼','🎹','🥁','🪘','🎷','🎺','🎸','🪕','🎻','🎲','♟','🎯','🎳','🎮','🎰','🧩','⌚','📱','📲','💻','⌨️','🖥','🖨','🖱','🖲','🕹','🗜','💽','💾','💿','📀','📼','📷','📸','📹','🎥','📽','🎞','📞','☎️','📟','📠','📺','📻','🎙','🎚','🎛','🧭','⏱','⏲','⏰','🕰','⌛','⏳','📡','🔋','🔌','💡','🔦','🕯','🪔','🧯','🛢','💸','💵','💴','💶','💷','🪙','💰','💳','💎','⚖️','🪜','🧰','🪛','🔧','🔨','⚒','🛠','⛏','🪚','🔩','⚙️','🪤','🧱','⛓','🧲','🔫','💣','🧨','🪓','🔪','🗡','⚔️','盾','🚬','⚰️','🪦','⚱️','🏺','🔮','📿','🧿','💈','⚗️','🔭','🔬','🕳','🩹','🩺','💊','💉','🩸','🧬','🦠','🧫','🧬','🔬','🔭','📡','💡','🔦','🕯','🪔','🧯','🛢','🔋','🔌','💻','⌨️','🖥','🖨','🖱','🖲','🕹','🗜','💽','💾','💿','📀','📼','📷','📸','📹','🎥','📽','🎞','📞','☎️','📟','📠','📺','📻','🎙','🎚','🎛','🧭','⌚','📱','📲','⏱','⏲','⏰','🕰','⌛','⏳','📊','📈','📉','📌','📍','📎','🖇','📏','📐','✂️','🗃','🗄','🗑','🔒','🔓','🔏','🔐','🔑','🗝','🔨','🪓','⛏','⚒','🛠','🗡','⚔️','🔫','弓','🛡','🔧','🔩','⚙️','🧰','🧲','🧪','🧫','🧬','🔬','🔭','📡','💉','💊','🩹','🩺','🩻','🚪','🛏','🛋','🪑','🚽','🚿','🛁','🪒','🧴','🧷','🧹','🧺','🧻','🪣','🧼','🪥','🧽','🧯','🛒','🚬','⚰️','🪦','⚱️','🗿','🪧','🪪','🏧','🚮','🚰','🚹','🚺','🚻','🚼','🚾','🛂','🛃','🛄','🛅','⚠️','🚸','⛔','🚫','🚳','🚭','🚯','🚱','🚷','📵','🔞','☢️','☣️','⬆️','↗️','➡️','↘️','⬇️','↙️','⬅️','↖️','↕️','↔️','↩️','↪️','⤴️','⤵️','🔃','🔄','🔙','🔚','🔛','🔜','🔝','🛐','⚛️','🕉','✡️','☸️','☯️','✝️','☦️','☪️','☮️','🕎','🔯','♈','♉','♊','♋','♌','♍','♎','♏','♐','♑','♒','♓','⛎','🔀','🔁','🔂','▶️','⏩','⏭','⏯','◀️','⏪','⏮','🔼','⏫','🔽','⏬','⏸','⏹','⏺','⏏','🎦','🔅','🔆','📶','📳','📴','♀️','♂️','⚧','✖️','➕','➖','➗','♾','‼️','⁉️','❓','❔','❕','❗','〰️','💱','💲','⚕️','♻️','⚜️','🔱','📛','🔰','⭕','✅','☑️','✔️','❌','❎','➰','➿','〽️','✳️','✴️','❇️','©️','®️','™️','#️⃣','*️⃣','0️⃣','1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟','🔞','🔠','🔡','🔢','🔣','🔤','🅰️','🆎','🅱️','🆑','🆒','🆓','ℹ️','🆔','Ⓜ️','🆕','🆖','🅾️','🆗','🅿️','🆘','🆙','🆚','🈁','🈂️','🈷️','🈶','🈯','🉐','🈹','🈚','🈲','🉑','🈸','🈴','🈳','㊗️','㊙️','🈺','🈵','🔴','🟠','🟡','🟢','🔵','🟣','🟤','⚫','⚪','🟥','🟧','🟨','🟩','🟦','🟪','🟫','⬛','⬜','◼️','◻️','◾','◽','▪️','▫️','🔶','🔷','🔸','🔹','🔺','🔻','💠','🔘','🔲','🔳','🏁','🚩','🎌','🏴','🏳️','🏴‍☠️'];
 
@@ -2212,6 +2237,11 @@ function handleWSMessage(msg) {
   } else if (msg.type === 'peers') {
     console.log('[ws] Peers received:', msg.data ? msg.data.length : 0, msg.data);
     renderDiscovered(msg.data);
+  } else if (msg.type === 'contacts') {
+    if (Array.isArray(msg.data)) {
+      renderContacts(msg.data);
+      syncContactIpsFromDiscovered(window._discoveredPeers || []);
+    }
   } else if (msg.type === 'identity_changed') {
     const data = msg.data || {};
     applyIdentityChange(data.hash, data.identity_hash, data.old_hash || data.old_identity_hash);
@@ -2464,7 +2494,8 @@ function pollTemperature() {
     .then(r => r.json())
     .then(d => {
       const el = document.getElementById('temp-display');
-      el.textContent = d.avg_celsius != null ? '🌡 ' + d.avg_celsius + '°C' : '🌡 --°C';
+      const approx = d.approx ? '~' : '';
+      el.textContent = d.avg_celsius != null ? '🌡 ' + approx + d.avg_celsius + '°C' : '🌡 --°C';
     })
     .catch(() => {
       document.getElementById('temp-display').textContent = '🌡 --°C';
@@ -2571,6 +2602,7 @@ function renderDiscovered(peers) {
   const merged = mergeDiscoveredPeers(prev, peers);
   if (merged.length) window._discoveredPeersAt = Date.now();
   window._discoveredPeers = merged.length ? merged : peers;
+  syncContactIpsFromDiscovered(window._discoveredPeers);
   const el = document.getElementById('discovered-list');
   el.innerHTML = '';
   let hasLink = linkedPeers.size > 0;
@@ -2584,7 +2616,6 @@ function renderDiscovered(peers) {
     el.innerHTML = '<div class="empty-state small"><span class="empty-icon">📡</span><span>No peers on LAN yet</span><span class="empty-hint">Try Announce to broadcast</span></div>';
     if (!hasLink) return;
   }
-  syncContactIpsFromDiscovered(window._discoveredPeers);
   discovered.forEach(p => {
     if (p.identity_hash) registerPeerAliases(p.hash, p.identity_hash);
     const div = document.createElement('div');
@@ -3323,15 +3354,23 @@ function peerMergeKey(p) {
   return peerKey(p.identity_hash) || peerKey(p.hash) || (p.pubkey ? String(p.pubkey).slice(0, 48) : '');
 }
 
+function contactMatchesPeer(c, p) {
+  if (!c || !p) return false;
+  if (peersMatch(c.hash, p.hash)) return true;
+  if (p.identity_hash && (peersMatch(c.identity_hash, p.hash) || peersMatch(c.hash, p.identity_hash))) return true;
+  if (c.identity_hash && p.identity_hash && peerKey(c.identity_hash) === peerKey(p.identity_hash)) return true;
+  const cn = (c.name || '').trim().toLowerCase();
+  const pn = (p.name || '').trim().toLowerCase();
+  if (cn && pn && cn === pn) return true;
+  return false;
+}
+
 function syncContactIpsFromDiscovered(peers) {
   let changed = false;
   (peers || []).forEach(p => {
     if (!p || !p.ip) return;
     allContacts = allContacts.map(c => {
-      const same = peersMatch(c.hash, p.hash)
-        || (p.identity_hash && peersMatch(c.identity_hash, p.hash))
-        || (p.identity_hash && peersMatch(c.hash, p.identity_hash));
-      if (!same) return c;
+      if (!contactMatchesPeer(c, p)) return c;
       const port = p.port || c.port || 8742;
       if (c.ip === p.ip && (c.port || 8742) === port) return c;
       changed = true;
@@ -4021,22 +4060,62 @@ function addMessage(data, opts) {
 }
 
 function toggleEmoji() {
-  document.getElementById('emoji-picker').classList.toggle('open');
+  const picker = document.getElementById('emoji-picker');
+  const open = picker.classList.toggle('open');
+  if (open) {
+    const search = document.getElementById('emoji-search');
+    if (search) {
+      search.value = '';
+      filterEmojiPicker('');
+      search.focus();
+    }
+  }
+}
+
+function emojiSearchTerms(index) {
+  const terms = [];
+  EMOJI_SEARCH_GROUPS.forEach(g => {
+    if (index >= g.from && index <= g.to) terms.push(g.terms);
+  });
+  return terms.join(' ');
+}
+
+function filterEmojiPicker(query) {
+  const q = (query || '').trim().toLowerCase();
+  const items = document.querySelectorAll('#emoji-grid .emoji-item');
+  let visible = 0;
+  items.forEach(el => {
+    const hay = (el.dataset.search || '').toLowerCase();
+    const show = !q || hay.includes(q) || (el.textContent || '').includes(query.trim());
+    el.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  let empty = document.getElementById('emoji-empty');
+  if (!empty) {
+    empty = document.createElement('div');
+    empty.id = 'emoji-empty';
+    empty.className = 'emoji-empty';
+    document.getElementById('emoji-grid')?.appendChild(empty);
+  }
+  empty.style.display = visible ? 'none' : 'block';
+  empty.textContent = visible ? '' : 'No emoji match';
 }
 
 function buildEmojiPicker() {
-  const picker = document.getElementById('emoji-picker');
-  EMOJIS.forEach(e => {
+  const grid = document.getElementById('emoji-grid');
+  if (!grid) return;
+  EMOJIS.forEach((e, idx) => {
     const span = document.createElement('span');
     span.className = 'emoji-item';
     span.textContent = e;
+    span.dataset.search = emojiSearchTerms(idx);
     span.onclick = () => {
       const input = document.getElementById('msg-input');
       input.value += e;
       input.focus();
       onComposerInput(input);
     };
-    picker.appendChild(span);
+    grid.appendChild(span);
   });
 }
 
@@ -4079,9 +4158,40 @@ window.onChatxzAudioPermissionGranted = function() {
   refreshNetworkStatus();
 };
 
-function startVoice(skipPermissionCheck) {
+function micAccessHint(err) {
+  if (!window.isSecureContext) {
+    return 'Microphone needs a secure page — use http://127.0.0.1:8742 (not a raw LAN IP in Helium)';
+  }
+  const name = err?.name || '';
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+    return 'No microphone found — plug one in or enable it in Windows Sound settings';
+  }
+  if (name === 'NotReadableError' || name === 'TrackStartError') {
+    return 'Microphone busy — close other apps using it, then try again';
+  }
+  if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || name === 'SecurityError') {
+    return 'Microphone blocked — in Helium click the lock/site icon → Site settings → Allow microphone for this site. Also check Windows Settings → Privacy → Microphone → allow desktop apps.';
+  }
+  return 'Microphone access denied — allow mic for this site in Helium and Windows Privacy settings';
+}
+
+async function queryMicPermissionState() {
+  if (!navigator.permissions?.query) return null;
+  try {
+    const status = await navigator.permissions.query({name: 'microphone'});
+    return status?.state || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function startVoice(skipPermissionCheck) {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    toast('Voice recording not supported');
+    toast('Voice recording not supported in this browser');
+    return;
+  }
+  if (!window.isSecureContext) {
+    toast(micAccessHint({name: 'SecurityError'}));
     return;
   }
   if (!skipPermissionCheck && window.chatxzAndroid && !window.chatxzAndroid.hasAudioPermission()) {
@@ -4090,9 +4200,23 @@ function startVoice(skipPermissionCheck) {
     toast('Allow microphone access to record');
     return;
   }
+  if (!skipPermissionCheck) {
+    const perm = await queryMicPermissionState();
+    if (perm === 'denied') {
+      toast(micAccessHint({name: 'NotAllowedError'}));
+      return;
+    }
+  }
   const mimeType = pickVoiceRecorderMime();
   const recorderOpts = mimeType ? {mimeType} : {};
-  navigator.mediaDevices.getUserMedia({audio: true})
+  const audioConstraints = {
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  };
+  navigator.mediaDevices.getUserMedia(audioConstraints)
     .then(stream => {
       recording = true;
       voiceChunks = [];
@@ -4134,7 +4258,7 @@ function startVoice(skipPermissionCheck) {
         toast('Microphone blocked — open Settings to allow');
         window.chatxzAndroid.openAppSettings();
       } else {
-        toast('Microphone access denied');
+        toast(micAccessHint(err));
       }
     });
 }

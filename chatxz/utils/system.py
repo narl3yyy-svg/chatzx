@@ -240,28 +240,76 @@ def _darwin_cpu_percent():
     return None
 
 
-def _darwin_cpu_temperature():
+def _parse_powermetrics_temps(text):
+    readings = []
+    for line in (text or "").splitlines():
+        m = re.search(r"CPU die temperature:\s*([\d.]+)\s*C", line, re.I)
+        if m:
+            readings.append(float(m.group(1)))
+        m = re.search(r"GPU die temperature:\s*([\d.]+)\s*C", line, re.I)
+        if m:
+            readings.append(float(m.group(1)))
+        m = re.search(r"ANE die temperature:\s*([\d.]+)\s*C", line, re.I)
+        if m:
+            readings.append(float(m.group(1)))
+    return readings
+
+
+def _run_powermetrics_smc():
+    cmds = [
+        ["powermetrics", "--samplers", "smc", "-n", "1", "-i", "100"],
+        ["sudo", "-n", "powermetrics", "--samplers", "smc", "-n", "1", "-i", "100"],
+        ["powermetrics", "--samplers", "thermal", "-n", "1", "-i", "100"],
+    ]
+    for cmd in cmds:
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                readings = _parse_powermetrics_temps(result.stdout)
+                if readings:
+                    return readings
+        except Exception:
+            pass
+    return []
+
+
+def _darwin_ioreg_temps():
     readings = []
     try:
         result = subprocess.run(
-            ["powermetrics", "--samplers", "smc", "-n", "1", "-i", "100"],
-            capture_output=True, text=True, timeout=4,
+            ["ioreg", "-l", "-w", "0"],
+            capture_output=True, text=True, timeout=8,
         )
-        if result.returncode == 0:
-            for line in result.stdout.splitlines():
-                m = re.search(r"CPU die temperature:\s*([\d.]+)\s*C", line, re.I)
-                if m:
-                    readings.append(float(m.group(1)))
-                m = re.search(r"GPU die temperature:\s*([\d.]+)\s*C", line, re.I)
-                if m:
-                    readings.append(float(m.group(1)))
+        if result.returncode != 0:
+            return readings
+        text = result.stdout
+        patterns = [
+            r"CPU\s+die\s+temperature[^0-9]*([\d.]+)",
+            r"GPU\s+die\s+temperature[^0-9]*([\d.]+)",
+            r"thermal-temperature[^0-9]*([\d.]+)",
+            r'"temperature"\s*=\s*([\d.]+)',
+        ]
+        for pattern in patterns:
+            for m in re.finditer(pattern, text, re.I):
+                try:
+                    t = float(m.group(1))
+                except ValueError:
+                    continue
+                if t > 200:
+                    t /= 1000.0
+                if 20 < t < 120:
+                    readings.append(t)
     except Exception:
         pass
-    if readings:
-        return round(sum(readings) / len(readings), 1)
+    return readings
+
+
+def _darwin_thermal_pressure_estimate():
     try:
         result = subprocess.run(
-            ["osascript", "-e", 'do shell script "sysctl -n machdep.xcpm.cpu_thermal_level"'],
+            ["sysctl", "-n", "machdep.xcpm.cpu_thermal_level"],
             capture_output=True, text=True, timeout=3,
         )
         if result.returncode == 0 and result.stdout.strip().isdigit():
@@ -270,7 +318,49 @@ def _darwin_cpu_temperature():
                 return round(35.0 + min(level, 50) * 0.8, 1)
     except Exception:
         pass
+    try:
+        result = subprocess.run(
+            ["pmset", "-g", "therm"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if "CPU_Speed_Limit" not in line:
+                    continue
+                m = re.search(r"CPU_Speed_Limit\s*=\s*(\d+)", line)
+                if not m:
+                    continue
+                limit = int(m.group(1))
+                if limit < 100:
+                    return round(40.0 + (100 - limit) * 0.45, 1)
+    except Exception:
+        pass
     return None
+
+
+def _darwin_cpu_temperature():
+    """Return (celsius, approx) for macOS."""
+    readings = _run_powermetrics_smc()
+    if not readings:
+        readings = _darwin_ioreg_temps()
+    if readings:
+        return round(sum(readings) / len(readings), 1), False
+    estimate = _darwin_thermal_pressure_estimate()
+    if estimate is not None:
+        return estimate, True
+    return None, False
+
+
+def get_cpu_temperature_detail():
+    """Return {avg_celsius, approx} for the status bar."""
+    if sys.platform == "win32":
+        temp = _windows_cpu_temperature()
+        return {"avg_celsius": temp, "approx": False}
+    if sys.platform == "darwin" and not is_android():
+        temp, approx = _darwin_cpu_temperature()
+        return {"avg_celsius": temp, "approx": approx}
+    temp = get_avg_cpu_temperature()
+    return {"avg_celsius": temp, "approx": False}
 
 
 def get_avg_cpu_temperature():
@@ -278,7 +368,8 @@ def get_avg_cpu_temperature():
     if sys.platform == "win32":
         return _windows_cpu_temperature()
     if sys.platform == "darwin" and not is_android():
-        return _darwin_cpu_temperature()
+        temp, _approx = _darwin_cpu_temperature()
+        return temp
 
     if is_android():
         readings = _collect_thermal_zone_temps()

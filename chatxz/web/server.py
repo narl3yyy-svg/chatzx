@@ -93,7 +93,7 @@ from chatxz.utils.platform import (
     patch_embedded_signals,
     list_network_interfaces,
 )
-from chatxz.utils.system import get_avg_cpu_temperature, get_cpu_percent
+from chatxz.utils.system import get_cpu_percent, get_cpu_temperature_detail
 from chatxz._version import __version__ as APP_VERSION
 
 CONFIG_DIR = get_config_dir()
@@ -1654,6 +1654,15 @@ class ChatWebServer:
             except Exception:
                 self.websockets.discard(ws)
 
+    def _schedule_contacts_broadcast(self):
+        if not (self.websockets and self._loop):
+            return
+        contacts = list_contacts(self.config_dir)
+        asyncio.run_coroutine_threadsafe(
+            self._broadcast({"type": "contacts", "data": contacts}),
+            self._loop,
+        )
+
     def _current_peer_for_ip(self, ip):
         if not ip or not self.discovery:
             return None
@@ -1782,6 +1791,7 @@ class ChatWebServer:
             peer["hash"] = dest
         if peer.get("identity_hash"):
             self.messaging.register_peer_mapping(dest, peer.get("identity_hash"))
+        contacts_dirty = False
         if peer.get("ip") and any(
             (c.get("ip") or "").strip() == peer.get("ip")
             for c in list_contacts(self.config_dir)
@@ -1794,6 +1804,7 @@ class ChatWebServer:
                 port=peer.get("port"),
                 identity_hash=peer.get("identity_hash"),
             )
+            contacts_dirty = True
         contact_updated = update_contact_endpoint(
             self.config_dir,
             dest,
@@ -1802,6 +1813,10 @@ class ChatWebServer:
             identity_hash=peer.get("identity_hash"),
             peers_equivalent=self._peers_equivalent,
         )
+        if contact_updated:
+            contacts_dirty = True
+        if contacts_dirty:
+            self._schedule_contacts_broadcast()
         if self.discovery and self.websockets and self._loop:
             peers = self._scoped_peers()
             asyncio.run_coroutine_threadsafe(
@@ -2047,6 +2062,7 @@ class ChatWebServer:
                 port=data.get("port"),
                 identity_hash=data.get("identity_hash"),
             )
+            self._schedule_contacts_broadcast()
             return web.json_response({"status": "ok", "contact": entry})
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
@@ -3433,10 +3449,10 @@ class ChatWebServer:
 
     async def handle_temperature(self, request):
         try:
-            avg = await asyncio.to_thread(get_avg_cpu_temperature)
+            detail = await asyncio.to_thread(get_cpu_temperature_detail)
         except Exception:
-            avg = None
-        return web.json_response({"avg_celsius": avg})
+            detail = {"avg_celsius": None, "approx": False}
+        return web.json_response(detail)
 
     async def handle_cpu(self, request):
         pct = await asyncio.to_thread(get_cpu_percent)

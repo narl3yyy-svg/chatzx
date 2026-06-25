@@ -1,9 +1,19 @@
 """Chunked HTTP file responses (avoids Windows sendfile / WinError 87 on large files)."""
 
+import asyncio
 import os
 import mimetypes
 
 from aiohttp import web
+from aiohttp.client_exceptions import ClientConnectionResetError
+
+_CLIENT_ABORT_ERRORS = (
+    ClientConnectionResetError,
+    ConnectionResetError,
+    ConnectionError,
+    BrokenPipeError,
+    asyncio.CancelledError,
+)
 
 
 async def stream_file_response(request, path, content_type=None, chunk_size=256 * 1024):
@@ -56,7 +66,7 @@ async def stream_file_response(request, path, content_type=None, chunk_size=256 
                     break
                 await resp.write(chunk)
                 remaining -= len(chunk)
-    except Exception:
-        raise
+    except _CLIENT_ABORT_ERRORS:
+        return resp
     await resp.write_eof()
     return resp
