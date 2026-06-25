@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.117
+**Current version:** 0.3.118
 
 ## Download
 
@@ -11,7 +11,7 @@ Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum
 | Platform | Run |
 |----------|-----|
 | **Android** | `chatxz-X.Y.Z.apk` from Releases — sideload (arm64) |
-| **Windows (cmd)** | `git clone` → `run.cmd web --share` |
+| **Windows (cmd)** | `git clone` → `run web --share` |
 | **Windows / macOS / Linux (bash)** | `git clone` → `./run.sh web --share` |
 
 First run auto-installs Python dependencies (`rns`, `aiohttp`) into a local `.venv` on Windows, or via `pip` on Linux/macOS.
@@ -25,12 +25,13 @@ First run auto-installs Python dependencies (`rns`, `aiohttp`) into a local `.ve
 ```cmd
 git clone https://github.com/narl3yyy-svg/chatxz.git
 cd chatxz
-run.cmd web --share
+run web --share
+run web --share --debug
 ```
 
-**Important:** use `run.cmd` from cmd — **not** `.\run.ps1`. Windows opens `.ps1` files in an editor (VS Code/Cursor), so the server never starts and you see no logs.
+**Do not use `.\run.ps1` from cmd** — Windows opens `.ps1` in VS Code/Cursor. The server never starts and you see no logs. Use **`run`** or **`run.bat`** instead (same folder).
 
-From **PowerShell**: `.\run.ps1 web --share` (shows live logs in that window).
+From **PowerShell**: `.\run.ps1 web --share --debug`
 
 From **Git Bash** (same script as Linux/Mac): `./run.sh web --share`
 
@@ -40,7 +41,7 @@ Browser: **http://127.0.0.1:8742**. Allow Windows Firewall on **private** networ
 
 **Data:** `%USERPROFILE%\.config\chatxz\`. Old portable data: `$env:CHATXZ_PORTABLE = "C:\path\to\folder"` before starting.
 
-**Update:** `git pull` then `run.cmd web --share`
+**Update:** `git pull` then `run web --share`
 
 **Optional:** `install-windows.cmd` — voice notes (`pyaudio`) only; not required for chat.
 
@@ -159,6 +160,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.118** — Windows cmd: use **`run web --share --debug`** (not `.\run.ps1`) — live logs in your cmd window; startup announce deferred for faster boot; line-buffered console output
 - **v0.3.117** — Windows cmd: **`run.cmd web --share`** runs server in foreground with live logs (`python -u`); fix `.\run.ps1` in cmd opening VS Code instead of starting server; faster setup wizard save
 - **v0.3.116** — Windows: **`run.cmd web --share`** from cmd (no separate install); auto-setup `.venv` on first run; Git Bash can use `./run.sh` like Linux/Mac
 - **v0.3.115** — Windows/macOS desktop: **source-only** (`run.ps1` / `run.sh`); CI releases **Android APK only** (no Windows exe zip, no macOS zip)

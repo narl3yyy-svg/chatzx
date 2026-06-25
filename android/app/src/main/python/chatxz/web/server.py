@@ -1148,8 +1148,10 @@ class ChatWebServer:
 
         if self.debug and not (self.embedded or is_android()):
             loglevel = getattr(RNS, "LOG_EXTREME", RNS.LOG_DEBUG)
+            print("[startup] Debug logging enabled (RNS extreme + chatxz trace)")
         elif self.debug or self.verbose:
             loglevel = RNS.LOG_DEBUG
+            print("[startup] Verbose logging enabled (RNS debug)")
         else:
             loglevel = RNS.LOG_NOTICE
         if getattr(sys, "frozen", False):
@@ -1290,18 +1292,30 @@ class ChatWebServer:
             prune_stale_lan_paths()
             if configured_serial_enabled(interfaces) and not lan_discovery_configured(interfaces):
                 self.messaging._burst_serial_announce()
+                print("[network] Startup RNS announce burst on serial")
             else:
                 self.messaging._silent_announce()
-            if (
-                lan_discovery_configured(interfaces)
-                and lan_ip_reachable()
-                and self.lan_beacon
-            ):
-                self.lan_beacon.send(1, subnet_probe=False)
-            elif configured_serial_enabled(interfaces):
-                print("[network] Startup RNS announce burst on serial")
             if not auto_announce:
-                print("[network] Startup announce sent once (tap Announce for more)")
+                print("[network] Startup announce queued (tap Announce for more)")
+
+            def _deferred_startup_announce():
+                try:
+                    if (
+                        lan_discovery_configured(interfaces)
+                        and lan_ip_reachable()
+                        and self.lan_beacon
+                    ):
+                        self.lan_beacon.send(1, subnet_probe=False)
+                        if not auto_announce:
+                            print("[network] Startup announce sent once (tap Announce for more)")
+                except Exception as exc:
+                    print(f"[network] Startup announce failed: {exc}")
+
+            threading.Thread(
+                target=_deferred_startup_announce,
+                name="chatxz-startup-announce",
+                daemon=True,
+            ).start()
         except Exception as exc:
             print(f"[network] Startup announce failed: {exc}")
 
@@ -4263,6 +4277,12 @@ class ChatWebServer:
 
 def main():
     import argparse
+    if sys.platform == "win32":
+        try:
+            sys.stdout.reconfigure(line_buffering=True)
+            sys.stderr.reconfigure(line_buffering=True)
+        except Exception:
+            pass
     parser = argparse.ArgumentParser(description="chatxz web server")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address")
     parser.add_argument("--port", type=int, default=8742, help="Port")
