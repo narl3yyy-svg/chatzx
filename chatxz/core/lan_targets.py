@@ -2,10 +2,18 @@
 
 from chatxz.utils.platform import (
     _filter_interfaces_for_lan,
+    get_lan_interface_preference,
     is_android,
     lan_ip,
     list_network_interfaces,
 )
+
+
+def _up_broadcast_ifaces(entries):
+    return [
+        iface for iface in entries
+        if iface.get("up") and iface.get("broadcast") and iface.get("kind") != "vpn"
+    ]
 
 
 def _broadcast_interface_entries():
@@ -14,16 +22,24 @@ def _broadcast_interface_entries():
     if is_android():
         return entries
     scoped = _filter_interfaces_for_lan(entries)
-    active = [
-        iface for iface in scoped
-        if iface.get("up") and iface.get("broadcast")
-    ]
+    if not get_lan_interface_preference():
+        gateway = _up_broadcast_ifaces([
+            iface for iface in scoped if iface.get("gateway_iface")
+        ])
+        if gateway:
+            return gateway
+        physical = _up_broadcast_ifaces([
+            iface for iface in scoped
+            if iface.get("kind") in ("wifi", "ethernet")
+        ])
+        if physical:
+            return physical[:2]
+    active = _up_broadcast_ifaces(scoped)
     if active:
         return active
-    return [
-        iface for iface in entries
-        if iface.get("gateway_iface") and iface.get("up") and iface.get("broadcast")
-    ]
+    return _up_broadcast_ifaces([
+        iface for iface in entries if iface.get("gateway_iface")
+    ])
 
 
 def directed_broadcasts(ip=None):

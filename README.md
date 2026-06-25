@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.125
+**Current version:** 0.3.126
 
 ## Download
 
@@ -180,6 +180,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.126** — Windows: beacon broadcasts scoped to default-route NIC (fixes slowness on PCs with many virtual adapters); **v0.3.125** restart fix included
 - **v0.3.125** — Windows: fix **Restart server** 500 error (`UnboundLocalError` on `sys`); restart reloads network stack in-process without closing cmd
 - **v0.3.124** — Windows: fix settings save, Explorer folder picker, in-process restart (cmd stays open); faster NIC scan (ipconfig default); ↻ refresh spins
 - **v0.3.123** — Windows: **Ctrl+C releases all ports** (`stop-chatxz.bat` + RNS teardown); README/docs: **cmd + `run.bat` only** (no PowerShell install/run)
