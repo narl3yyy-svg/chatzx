@@ -1446,6 +1446,10 @@ class MessagingBackend:
             return False, ""
         if self.is_user_disconnected(peer):
             return False, ""
+        if self._peer_expected_transport_families(peer) == {"serial"}:
+            if configured_serial_enabled(load_settings_interfaces(self.config_dir)):
+                if serial_interface_online() is None:
+                    return False, ""
         adopted = self._adopt_healthy_peer_link(peer)
         if adopted:
             if self.active_link and self._link_interface_healthy(self.active_link):
@@ -3698,6 +3702,10 @@ class MessagingBackend:
             if self._peer_link_active(peer):
                 return True
             return False
+        if self._peer_expected_transport_families(peer) == {"serial"}:
+            if configured_serial_enabled(load_settings_interfaces(self.config_dir)):
+                if serial_interface_online() is None:
+                    return False
         if self._peer_link_active(peer):
             link = self._link_for_peer(peer) or self.active_link
             if link and self._link_interface_healthy(link):

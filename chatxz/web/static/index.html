@@ -809,6 +809,10 @@ body.settings-open { overflow: hidden; }
   color: var(--text);
 }
 .settings-nav-item .nav-icon { font-size: 16px; width: 22px; text-align: center; }
+.settings-nav-item.sub-item {
+  margin-left: 14px; padding-left: 12px; font-size: 12px;
+  border-left: 2px solid rgba(124,106,239,0.25);
+}
 .settings-main {
   flex: 1; overflow-y: auto; padding: 24px 28px 32px;
 }
@@ -1496,6 +1500,9 @@ body.sidebar-open #sidebar-backdrop { display: block; }
       <button type="button" class="settings-nav-item" data-section="network" onclick="showSettingsSection('network')">
         <span class="nav-icon">📡</span> Network
       </button>
+      <button type="button" class="settings-nav-item sub-item" data-section="status" onclick="showSettingsSection('status')">
+        <span class="nav-icon">🌐</span> Live status
+      </button>
       <button type="button" class="settings-nav-item" data-section="system" onclick="showSettingsSection('system')">
         <span class="nav-icon">⚙</span> System
       </button>
@@ -1546,10 +1553,10 @@ body.sidebar-open #sidebar-backdrop { display: block; }
         </div>
       </section>
 
-      <section id="settings-section-network" class="settings-pane">
+      <section id="settings-section-status" class="settings-pane">
         <div class="settings-block">
           <h3>Live network status</h3>
-          <p class="block-lead">Discovery, active links, transports, and interface health. Refreshes automatically while you are on this page.</p>
+          <p class="block-lead">Discovery, active links, transports, and interface health. Refreshes automatically while you are on this tab.</p>
           <div class="network-status-actions">
             <button type="button" class="btn-block" onclick="refreshNetworkStatus()">↻ Refresh status</button>
             <button type="button" class="btn-block" onclick="announceSelf()">📡 Announce</button>
@@ -1557,7 +1564,9 @@ body.sidebar-open #sidebar-backdrop { display: block; }
           <button type="button" class="btn-block danger" style="margin-bottom:12px;max-width:280px" onclick="resetNetwork()">Reset network</button>
           <div id="network-status-panel" class="network-status-block">Loading network status...</div>
         </div>
+      </section>
 
+      <section id="settings-section-network" class="settings-pane">
         <div class="settings-block">
           <h3>LAN discovery</h3>
           <p class="block-lead">Pin the IPv4 subnet peers should use to reach you. Auto picks the default route interface.</p>
@@ -1640,10 +1649,12 @@ body.sidebar-open #sidebar-backdrop { display: block; }
             <input id="settings-hub-port" type="number" min="1" max="65535" value="4242">
           </div>
         </div>
+      </section>
 
+      <section id="settings-section-system" class="settings-pane">
         <div class="settings-block">
           <h3>Network maintenance</h3>
-          <p class="block-lead">Background upkeep for discovery counters.</p>
+          <p class="block-lead">Background upkeep for discovery counters and network state.</p>
           <label class="settings-toggle-card">
             <div class="toggle-text">
               <strong>Auto-reset</strong>
@@ -1654,9 +1665,6 @@ body.sidebar-open #sidebar-backdrop { display: block; }
             </div>
           </label>
         </div>
-      </section>
-
-      <section id="settings-section-system" class="settings-pane">
         <div class="settings-block danger">
           <h3>System</h3>
           <p class="block-lead">Destructive actions — use with care.</p>
@@ -3606,7 +3614,7 @@ function showSettingsSection(section) {
   document.querySelectorAll('.settings-pane').forEach(pane => {
     pane.classList.toggle('active', pane.id === 'settings-section-' + name);
   });
-  if (name === 'network') {
+  if (name === 'status') {
     refreshNetworkStatus();
     startNetworkAutoRefresh();
   } else {
@@ -3651,11 +3659,11 @@ function closeSettings() {
 }
 
 function openSettingsFromNetwork() {
-  openSettings('network');
+  openSettings('status');
 }
 
 function openNetworkSettings() {
-  openSettings('network');
+  openSettings('status');
 }
 
 function resetNetwork() {
@@ -3897,7 +3905,7 @@ function saveLanInterface() {
 function startNetworkAutoRefresh() {
   stopNetworkAutoRefresh();
   networkRefreshTimer = setInterval(() => {
-    if (settingsShown && window._settingsSection === 'network') refreshNetworkStatus(true);
+    if (settingsShown && window._settingsSection === 'status') refreshNetworkStatus(true);
   }, 5000);
 }
 

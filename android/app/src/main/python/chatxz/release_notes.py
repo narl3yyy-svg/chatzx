@@ -3,6 +3,10 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.3.156": [
+        "Settings nav split: Live status is its own tab under Network; Network tab is config only; Network maintenance moved to System.",
+        "Serial failover waits for USB serial to come back online instead of hammering reconnect while the port is down.",
+    ],
     "0.3.155": [
         "Settings toggle cards fixed — checkboxes no longer stretch full width; text and switch lay out cleanly.",
         "Serial link stability: accept inbound serial links before peer hash resolves; stop failover from tearing down healthy serial sessions.",
