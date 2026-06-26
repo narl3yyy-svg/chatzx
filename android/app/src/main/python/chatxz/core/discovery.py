@@ -201,7 +201,10 @@ class PeerDiscovery:
 
     def _evict_superseded_peers(self, peer):
         """Drop older entries for the same host when identity/hash changes."""
-        peer = self._attach_peer_ip(dict(peer), scope_only=bool(self._scope_ip()))
+        peer = dict(peer)
+        new_via = (peer.get("via") or "").strip()
+        if new_via != "serial":
+            peer = self._attach_peer_ip(peer, scope_only=bool(self._scope_ip()))
         ip = (peer.get("ip") or "").strip()
         new_hash = normalize_hash(peer.get("hash"))
         new_ident = normalize_hash(peer.get("identity_hash"))
@@ -217,6 +220,7 @@ class PeerDiscovery:
             same_pubkey = new_pubkey and existing.get("pubkey") == new_pubkey
             same_hash = normalize_hash(existing.get("hash")) == new_hash
             existing_name = (existing.get("name") or "").strip()
+            existing_via = (existing.get("via") or "").strip()
             same_name = (
                 name
                 and existing_name
@@ -226,7 +230,16 @@ class PeerDiscovery:
             )
             if same_hash:
                 continue
-            if same_host or same_ident or same_pubkey or same_name:
+            if same_ident or same_pubkey:
+                continue
+            if serial_discovery_active() and same_name and not same_host:
+                continue
+            if same_name and {"serial", "rns"} & {new_via, existing_via}:
+                if new_ident and normalize_hash(existing.get("identity_hash")) == new_ident:
+                    continue
+                if new_pubkey and existing.get("pubkey") == new_pubkey:
+                    continue
+            if same_host or same_name:
                 removed.append(normalize_hash(existing.get("hash")) or key)
                 del self.peers[key]
         return removed, peer

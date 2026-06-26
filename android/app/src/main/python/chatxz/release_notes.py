@@ -3,6 +3,12 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.3.154": [
+        "Network status, Refresh, Announce, and Reset moved into Settings → Network — sidebar Network button removed.",
+        "Serial file transfers: no failover during active transfers; link close no longer hijacks to a different peer; longer serial timeouts.",
+        "False \"peer identity changed\" fixes: dual-transport (serial + LAN) discoveries no longer supersede the same peer; contacts migrate instead of being deleted.",
+        "Settings toggles use cleaner toggle cards instead of bare checkboxes.",
+    ],
     "0.3.153": [
         "Settings opens as a full-page view with left navigation (Profile, Storage, Network, System) instead of a cramped sidebar overlay.",
         "Network settings reorganized: LAN discovery, transport cards, USB serial, and hub each have their own section — no duplicate Advanced UDP/TCP buttons.",

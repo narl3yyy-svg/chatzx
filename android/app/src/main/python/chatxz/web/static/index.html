@@ -659,6 +659,39 @@ body::before {
 }
 .setup-toggle input { margin-top: 2px; }
 .setup-toggle strong { display: block; color: var(--text); margin-bottom: 2px; }
+.settings-toggle-card {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 14px 16px; border-radius: var(--radius-md);
+  border: 1px solid var(--border); background: rgba(0,0,0,0.12);
+  margin-bottom: 10px; cursor: pointer; user-select: none;
+  transition: border-color var(--transition), background var(--transition);
+}
+.settings-toggle-card:hover { border-color: var(--border-strong); background: rgba(255,255,255,0.04); }
+.settings-toggle-card input[type="checkbox"] {
+  width: 18px; height: 18px; flex-shrink: 0; margin: 0; cursor: pointer;
+  accent-color: var(--primary);
+}
+.settings-toggle-card .toggle-text { flex: 1; min-width: 0; }
+.settings-toggle-card .toggle-text strong {
+  display: block; font-size: 13px; color: var(--text); margin-bottom: 3px;
+}
+.settings-toggle-card .toggle-text span {
+  display: block; font-size: 12px; color: var(--text2); line-height: 1.45;
+}
+.network-status-block {
+  margin-top: 4px; padding: 14px 16px; border-radius: var(--radius-md);
+  border: 1px solid var(--border); background: rgba(0,0,0,0.18);
+  font-size: 12px; line-height: 1.5;
+}
+.network-status-block .net-row {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.network-status-block .net-row:last-child { border-bottom: none; }
+.network-status-actions {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;
+}
+@media (max-width: 520px) { .network-status-actions { grid-template-columns: 1fr; } }
 .settings-subhead {
   font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
   text-transform: uppercase; color: var(--text3); margin: 14px 0 8px;
@@ -1284,12 +1317,6 @@ body.sidebar-open #sidebar-backdrop { display: block; }
           <span>📡</span> Announce
         </button>
       </div>
-      <div class="sidebar-actions" style="margin-top:-8px">
-        <button class="sidebar-btn" onclick="toggleNetworkPanel()" title="Live network status and discovery">
-          <span>🌐</span> Network
-        </button>
-      </div>
-
       <div class="contacts-scroll">
         <div id="hub-group-section" style="display:none">
           <div class="section-header">
@@ -1328,22 +1355,6 @@ body.sidebar-open #sidebar-backdrop { display: block; }
         <button class="action-btn" onclick="actionSaveContact()">💾 Save as contact</button>
         <button class="action-btn danger" onclick="actionClearPeerHistory()">🧹 Clear chat history</button>
         <button class="action-btn danger" onclick="actionDelete()">🗑 Delete contact</button>
-      </div>
-    </div>
-
-    <div id="network-panel" class="overlay-panel">
-      <div class="panel-header">
-        <h3>Network</h3>
-        <button class="panel-close" onclick="toggleNetworkPanel()" title="Close">&times;</button>
-      </div>
-      <div class="settings-scroll">
-        <p class="field-hint" style="margin-bottom:12px">Live discovery, link, and transport status. Configure IPv4, UDP/TCP LAN, hub, and serial in <a href="#" onclick="openSettingsFromNetwork();return false" style="color:var(--accent)">Settings → Network</a>.</p>
-        <div class="settings-row-split" style="margin-bottom:10px">
-          <button type="button" class="btn-block" onclick="refreshNetworkStatus()">Refresh status</button>
-          <button type="button" class="btn-block" onclick="announceSelf()">📡 Announce</button>
-        </div>
-        <button type="button" class="btn-block danger" style="margin-bottom:12px" onclick="resetNetwork()">Reset network</button>
-        <div id="network-status-panel" class="network-status">Tap Refresh to load network status.</div>
       </div>
     </div>
 
@@ -1533,6 +1544,17 @@ body.sidebar-open #sidebar-backdrop { display: block; }
 
       <section id="settings-section-network" class="settings-pane">
         <div class="settings-block">
+          <h3>Live network status</h3>
+          <p class="block-lead">Discovery, active links, transports, and interface health. Refreshes automatically while you are on this page.</p>
+          <div class="network-status-actions">
+            <button type="button" class="btn-block" onclick="refreshNetworkStatus()">↻ Refresh status</button>
+            <button type="button" class="btn-block" onclick="announceSelf()">📡 Announce</button>
+          </div>
+          <button type="button" class="btn-block danger" style="margin-bottom:12px;max-width:280px" onclick="resetNetwork()">Reset network</button>
+          <div id="network-status-panel" class="network-status-block">Loading network status...</div>
+        </div>
+
+        <div class="settings-block">
           <h3>LAN discovery</h3>
           <p class="block-lead">Pin the IPv4 subnet peers should use to reach you. Auto picks the default route interface.</p>
           <div class="settings-section">
@@ -1545,9 +1567,12 @@ body.sidebar-open #sidebar-backdrop { display: block; }
             </div>
             <div id="lan-interface-summary"></div>
           </div>
-          <label class="setup-toggle" style="margin-top:4px">
+          <label class="settings-toggle-card" style="margin-top:4px">
+            <div class="toggle-text">
+              <strong>Auto-announce</strong>
+              <span>Broadcast on LAN every ~30s. Turn off to announce manually with the sidebar 📡 button.</span>
+            </div>
             <input type="checkbox" id="settings-auto-announce" onchange="saveAutoAnnounce()">
-            <span><strong>Auto-announce</strong>Broadcast on LAN every ~30s. Turn off to announce manually from the Network panel.</span>
           </label>
         </div>
 
@@ -1569,9 +1594,12 @@ body.sidebar-open #sidebar-backdrop { display: block; }
             </div>
           </div>
           <p id="settings-lan-transport-hint" class="field-hint" style="margin-top:12px">Restart chatxz after changing transport.</p>
-          <label id="auto-interface-toggle" style="display:none;align-items:flex-start;gap:10px;font-size:13px;color:var(--text2);margin-top:14px;padding:12px;border-radius:var(--radius-md);border:1px solid var(--border);background:rgba(0,0,0,0.12)">
-            <input type="checkbox" id="settings-auto-interface" onchange="saveAutoInterface()" style="margin-top:3px">
-            <span><strong style="color:var(--text)">RNS AutoInterface</strong>IPv6 mesh discovery on Linux/macOS when UDP LAN is active.</span>
+          <label id="auto-interface-toggle" class="settings-toggle-card" style="display:none;margin-top:14px">
+            <div class="toggle-text">
+              <strong>RNS AutoInterface</strong>
+              <span>IPv6 mesh discovery on Linux/macOS when UDP LAN is active.</span>
+            </div>
+            <input type="checkbox" id="settings-auto-interface" onchange="saveAutoInterface()">
           </label>
         </div>
 
@@ -1607,12 +1635,14 @@ body.sidebar-open #sidebar-backdrop { display: block; }
 
         <div class="settings-block">
           <h3>Network maintenance</h3>
-          <p class="block-lead">Counters, live status, and discovery tools.</p>
-          <label class="setup-toggle" style="margin-bottom:14px">
+          <p class="block-lead">Background upkeep for discovery counters.</p>
+          <label class="settings-toggle-card">
+            <div class="toggle-text">
+              <strong>Auto-reset</strong>
+              <span>Clear beacon counters weekly so discovery stats stay readable.</span>
+            </div>
             <input type="checkbox" id="settings-network-auto-reset" onchange="saveNetworkAutoReset()">
-            <span><strong>Auto-reset</strong>Clear beacon counters weekly</span>
           </label>
-          <p class="field-hint" style="margin:0">Live discovery, link status, and manual 📡 Announce are in the sidebar <a href="#" class="settings-inline-link" onclick="openNetworkFromSettings();return false">Network panel</a>.</p>
         </div>
       </section>
 
@@ -2527,8 +2557,17 @@ function handleWSMessage(msg) {
     renderContacts(allContacts);
     renderDiscovered(window._discoveredPeers || []);
     updatePeerHeader();
-    setLinkStatus('disconnected', 'Inactive');
-    if (removed.length) toast('Peer identity changed — use the new hash in Discovered');
+    if (removed.length) {
+      const repl = data.replacement || (data.replacement_peer && data.replacement_peer.hash);
+      toast(repl
+        ? 'Peer list updated — your contact was refreshed automatically'
+        : 'Peer list updated — pick the peer from Discovered');
+      if (repl && viewingPeer && removed.some(h => peerKey(h) === peerKey(viewingPeer))) {
+        openChat(repl, false, data.replacement_peer);
+      } else if (!repl) {
+        setLinkStatus('disconnected', 'Inactive');
+      }
+    }
   } else if (msg.type === 'progress') {
     showProgress(msg.data);
   } else if (msg.type === 'link_established') {
@@ -3112,7 +3151,7 @@ window.onChatxzFolderPickError = function(message) {
 };
 
 let settingsShown = false;
-let networkShown = false;
+
 let connectShown = false;
 
 function netClass(ok) {
@@ -3548,28 +3587,6 @@ function deleteRnsInterface(id) {
   }).catch(() => toast('Delete failed'));
 }
 
-function toggleNetworkPanel() {
-  networkShown = !networkShown;
-  if (settingsShown) closeSettings();
-  if (connectShown) {
-    connectShown = false;
-    document.getElementById('connect-panel')?.classList.remove('open');
-  }
-  if (actionShown) {
-    actionShown = false;
-    document.getElementById('action-panel')?.classList.remove('open');
-  }
-  const panel = document.getElementById('network-panel');
-  if (networkShown) {
-    panel?.classList.add('open');
-    refreshNetworkStatus();
-    startNetworkAutoRefresh();
-  } else {
-    panel?.classList.remove('open');
-    if (!settingsShown) stopNetworkAutoRefresh();
-  }
-}
-
 function showSettingsSection(section) {
   const name = section || 'profile';
   window._settingsSection = name;
@@ -3579,13 +3596,15 @@ function showSettingsSection(section) {
   document.querySelectorAll('.settings-pane').forEach(pane => {
     pane.classList.toggle('active', pane.id === 'settings-section-' + name);
   });
+  if (name === 'network') {
+    refreshNetworkStatus();
+    startNetworkAutoRefresh();
+  } else {
+    stopNetworkAutoRefresh();
+  }
 }
 
 function openSettings(section) {
-  if (networkShown) {
-    networkShown = false;
-    document.getElementById('network-panel')?.classList.remove('open');
-  }
   if (connectShown) {
     connectShown = false;
     document.getElementById('connect-panel')?.classList.remove('open');
@@ -3618,21 +3637,15 @@ function closeSettings() {
   document.getElementById('settings-screen')?.classList.remove('open');
   document.getElementById('settings-btn')?.classList.remove('active');
   document.body.classList.remove('settings-open');
-  if (!networkShown) stopNetworkAutoRefresh();
+  stopNetworkAutoRefresh();
 }
 
 function openSettingsFromNetwork() {
-  if (networkShown) toggleNetworkPanel();
   openSettings('network');
 }
 
-function openNetworkFromSettings() {
-  closeSettings();
-  if (!networkShown) toggleNetworkPanel();
-}
-
 function openNetworkSettings() {
-  toggleNetworkPanel();
+  openSettings('network');
 }
 
 function resetNetwork() {
@@ -3874,7 +3887,7 @@ function saveLanInterface() {
 function startNetworkAutoRefresh() {
   stopNetworkAutoRefresh();
   networkRefreshTimer = setInterval(() => {
-    if (networkShown || settingsShown) refreshNetworkStatus(true);
+    if (settingsShown && window._settingsSection === 'network') refreshNetworkStatus(true);
   }, 5000);
 }
 
@@ -4082,7 +4095,6 @@ function dismissReleaseNotes() {
 
 function toggleConnectPanel() {
   connectShown = !connectShown;
-  if (networkShown) { networkShown = false; document.getElementById('network-panel')?.classList.remove('open'); }
   if (settingsShown) closeSettings();
   if (actionShown) { actionShown = false; document.getElementById('action-panel').classList.remove('open'); }
   const panel = document.getElementById('connect-panel');

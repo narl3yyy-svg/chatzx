@@ -1426,7 +1426,9 @@ class MessagingBackend:
         """True when the primary session peer's RNS link is missing or unhealthy."""
         if self._connect_in_progress:
             return False, ""
-        peer = self.dest_hash_for(self.active_peer_hash or self._session_peer_hash or "")
+        if self._has_active_transfer():
+            return False, ""
+        peer = self.dest_hash_for(self._session_peer_hash or self.active_peer_hash or "")
         if not peer or peer == "unknown":
             return False, ""
         if self.is_user_disconnected(peer):
@@ -1450,8 +1452,6 @@ class MessagingBackend:
             return False, ""
         if self.active_link:
             return self.link_needs_failover()
-        if self._has_active_transfer():
-            return False, ""
         if self._last_link_lost_at and (time.time() - self._last_link_lost_at) < self._session_reconnect_min_idle():
             return False, ""
         if self._transport_reconnect_pending:
@@ -3250,7 +3250,18 @@ class MessagingBackend:
                 else:
                     self._unlink_peer(peer)
             if not self._link_handoff:
-                self._flush_pending_files_failed(link.link_id)
+                xfer_peer = self.dest_hash_for(
+                    self._session_peer_hash or self.active_peer_hash or remote_hash or ""
+                )
+                alt_link = self._link_for_peer(xfer_peer) if xfer_peer else None
+                if (
+                    self._has_active_transfer()
+                    and alt_link
+                    and alt_link.link_id != link.link_id
+                ):
+                    self._migrate_pending_files(link.link_id, alt_link.link_id)
+                else:
+                    self._flush_pending_files_failed(link.link_id)
             closing_active = self.active_link and self.active_link.link_id == link.link_id
             if closing_active and not self._link_handoff:
                 lost_peer = self.dest_hash_for(self.active_peer_hash)
@@ -3264,16 +3275,12 @@ class MessagingBackend:
                 self.active_peer_hash = None
                 if lost_peer and not self.is_user_disconnected(lost_peer):
                     self._last_link_lost_at = time.time()
-                remaining = [
-                    p for p in self.linked_peers()
-                    if p and not is_hub_peer_hash(p)
-                ]
-                if remaining:
-                    next_peer = remaining[0]
-                    next_link = self._link_for_peer(next_peer)
-                    if next_link:
+                session_peer = self.dest_hash_for(self._session_peer_hash or "")
+                if session_peer and not self.is_user_disconnected(session_peer):
+                    next_link = self._link_for_peer(session_peer)
+                    if next_link and next_link.link_id != link.link_id:
                         self.active_link = next_link
-                        self.active_peer_hash = next_peer
+                        self.active_peer_hash = session_peer
                         self._send_link = next_link
             if self._send_link and self._send_link.link_id == link.link_id:
                 self._send_link = self.active_link
@@ -3661,13 +3668,15 @@ class MessagingBackend:
             return False
         if now - self._failover_last_attempt < self._failover_cooldown():
             return False
-        peer = self.dest_hash_for(self.active_peer_hash or self._session_peer_hash or "")
+        peer = self.dest_hash_for(self._session_peer_hash or self.active_peer_hash or "")
         if not peer or peer == "unknown":
             return False
         if self.is_user_disconnected(peer):
             return False
         if not self.active_peer_hash:
             self.active_peer_hash = peer
+        if not self._session_peer_hash:
+            self._session_peer_hash = peer
 
         self._failover_last_attempt = now
         self._failover_in_progress = True

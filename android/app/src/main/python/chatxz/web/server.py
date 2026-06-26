@@ -18,6 +18,7 @@ from chatxz.core.contacts import (
     contact_connect_meta,
     delete_contact as delete_saved_contact,
     migrate_contact_by_ip,
+    migrate_contact_hash,
     list_contacts,
     save_contact,
     update_contact_endpoint,
@@ -1887,6 +1888,17 @@ class ChatWebServer:
             pass
 
         for old in removed_clean:
+            same_peer = bool(
+                replacement
+                and (
+                    self._peers_equivalent(old, replacement)
+                    or (
+                        new_peer
+                        and new_peer.get("identity_hash")
+                        and self._peers_equivalent(old, new_peer.get("identity_hash"))
+                    )
+                )
+            )
             still_linked = bool(
                 self.messaging
                 and (
@@ -1895,6 +1907,15 @@ class ChatWebServer:
                 )
             )
             if self.messaging:
+                if replacement:
+                    self.messaging.register_peer_mapping(
+                        replacement,
+                        (new_peer or {}).get("identity_hash"),
+                    )
+                    self.messaging.register_peer_mapping(
+                        old,
+                        (new_peer or {}).get("identity_hash") or replacement,
+                    )
                 if still_linked and replacement:
                     canon = replacement
                     if self.messaging.active_peer_hash and self._peers_equivalent(
@@ -1913,12 +1934,23 @@ class ChatWebServer:
                     if link:
                         self.messaging._register_peer_link(link, canon)
                         self.messaging._cache_link_peer(link, canon)
-                else:
+                elif not same_peer:
                     self.messaging.disconnect_peer(old)
                     self.messaging.clear_queue(old)
-            delete_saved_contact(self.config_dir, old)
-            self._clear_history_for_peer(old)
-            self._clear_queue_for_peer(old)
+            if same_peer and replacement:
+                migrate_contact_hash(
+                    self.config_dir,
+                    old,
+                    replacement,
+                    name=(new_peer or {}).get("name"),
+                    ip=(new_peer or {}).get("ip"),
+                    port=(new_peer or {}).get("port"),
+                    identity_hash=(new_peer or {}).get("identity_hash"),
+                )
+            else:
+                delete_saved_contact(self.config_dir, old)
+                self._clear_history_for_peer(old)
+                self._clear_queue_for_peer(old)
             if self.active_peer and self._peers_equivalent(self.active_peer, old):
                 self.active_peer = replacement
             if self._ui_state.get("viewing_peer") and self._peers_equivalent(
@@ -2879,8 +2911,8 @@ class ChatWebServer:
             if serial_peers:
                 await self._run_blocking(prune_cross_zone_paths, serial_peers)
             peer = self._peer_dest_hash(
-                self.messaging.active_peer_hash
-                or getattr(self.messaging, "_session_peer_hash", None)
+                getattr(self.messaging, "_session_peer_hash", None)
+                or self.messaging.active_peer_hash
                 or self.active_peer
             )
             if not peer:

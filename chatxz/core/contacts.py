@@ -77,6 +77,39 @@ def list_contacts(config_dir):
     return out
 
 
+def migrate_contact_hash(config_dir, old_hash, new_hash, name=None, ip=None, port=None, identity_hash=None):
+    """Rename a saved contact when discovery supersedes an alias hash."""
+    old_clean = (old_hash or "").strip().replace(":", "")
+    new_clean = (new_hash or "").strip().replace(":", "")
+    if not old_clean or not new_clean or old_clean == new_clean:
+        return False
+    entry = load_contact(config_dir, old_clean)
+    if not entry:
+        return False
+    if name is not None and str(name).strip():
+        entry["name"] = str(name).strip()
+    if ip is not None and str(ip).strip():
+        entry["ip"] = str(ip).strip()
+    if port is not None:
+        try:
+            entry["port"] = int(port)
+        except (TypeError, ValueError):
+            pass
+    if identity_hash is not None and str(identity_hash).strip():
+        entry["identity_hash"] = str(identity_hash).strip().replace(":", "")
+    entry["hash"] = new_clean
+    delete_contact(config_dir, old_clean)
+    save_contact(
+        config_dir,
+        new_clean,
+        name=entry.get("name"),
+        ip=entry.get("ip"),
+        port=entry.get("port"),
+        identity_hash=entry.get("identity_hash"),
+    )
+    return True
+
+
 def migrate_contact_by_ip(config_dir, ip, new_hash, name=None, port=None, identity_hash=None):
     """Replace any saved contact on this LAN IP with the peer's current hash."""
     ip = (ip or "").strip()
