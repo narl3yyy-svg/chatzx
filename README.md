@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.150
+**Current version:** 0.3.160
 
 ## Download
 
@@ -238,6 +238,14 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.160** — **Serial connect + offline queue:** path priming works during connect/failover; queued messages drain on all reconnect paths; discovery prefers in-scope LAN when both transports are up; stale contact IPs no longer force LAN to USB peers
+- **v0.3.159** — **Serial discovery symmetry:** IP-less announces always tagged serial; path pinned on SerialInterface during connect; 22s+ link-establishment timeout on serial
+- **v0.3.158** — **Serial inbound fix:** Arch no longer rejects Ubuntu serial links when a stale UDP path exists on the shared LAN
+- **v0.3.157** — **Consolidated serial connect:** single prime/inbound/outbound attempt; discovery prefers `via=serial`; reconnect blocked during active connect
+- **v0.3.156** — **Settings:** Live status is its own Network tab; serial failover waits for USB to return instead of hammering reconnect
+- **v0.3.155** — **Serial stability:** inbound serial accepted before hash resolves; serial-only peers use longer reconnect cooldown
+- **v0.3.154** — **Network in Settings:** status/Announce/Reset moved out of sidebar; serial transfers block failover while active
+- **v0.3.153** — **Full-page settings UI** with left nav (Profile, Storage, Network, System)
 - **v0.3.152** — **Serial file transfers:** window=2 confirmed chunks at 57600 baud, longer timeouts, no compression on serial; stricter serial/LAN inbound rejection; network settings UI overhaul
 - **v0.3.151** — **Serial session stability:** switching peers no longer hijacks failover to the previous LAN peer; stale hash checks honor active serial links; announce rebroadcast stays on the receiving transport; bridged multi-hop LAN paths pruned
 - **v0.3.150** — **Cross-talk fix:** serial and LAN transports are isolated — messages to Ubuntu cannot leak to Windows; rebroadcasted LAN peers no longer appear on serial discovery

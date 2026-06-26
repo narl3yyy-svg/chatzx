@@ -48,7 +48,10 @@ sed -i "s/val releaseVersionCodeForCi = [0-9]\\+/val releaseVersionCodeForCi = $
 sed -i "s/^version = \"[^\"]*\"/version = \"$NEW_NAME\"/" "$ROOT/pyproject.toml"
 sed -i "s/^    version=\"[^\"]*\"/    version=\"$NEW_NAME\"/" "$ROOT/setup.py"
 
+bash "$ROOT/scripts/sync-android.sh" >/dev/null
+
 echo "Bumped to $NEW_NAME (versionCode $NEW_CODE)"
 echo "  version.properties  -> Gradle versionName/versionCode"
 echo "  chatxz/_version.py -> server APP_VERSION"
 echo "  android/app/build.gradle.kts -> CI release metadata"
+echo "  android Python bundle synced via scripts/sync-android.sh"
