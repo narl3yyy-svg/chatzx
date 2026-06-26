@@ -1131,7 +1131,7 @@ body.sidebar-open #sidebar-backdrop { display: block; }
         </button>
       </div>
       <div class="sidebar-actions" style="margin-top:-8px">
-        <button class="sidebar-btn" onclick="openNetworkSettings()" title="Network interfaces and discovery status">
+        <button class="sidebar-btn" onclick="toggleNetworkPanel()" title="Live network status and discovery">
           <span>🌐</span> Network
         </button>
       </div>
@@ -1275,18 +1275,7 @@ body.sidebar-open #sidebar-backdrop { display: block; }
             <input type="checkbox" id="settings-network-auto-reset" onchange="saveNetworkAutoReset()">
             Auto-reset beacon counters weekly
           </label>
-
-          <details style="margin-top:8px">
-            <summary style="cursor:pointer;font-size:12px;color:var(--text2);user-select:none">Technical network status</summary>
-            <div style="margin-top:10px">
-          <div class="settings-subhead">Status</div>
-          <div class="settings-row-split" style="margin-bottom:10px">
-            <button type="button" class="btn-block" onclick="refreshNetworkStatus()">Refresh status</button>
-            <button type="button" class="btn-block danger" onclick="resetNetwork()">Reset network</button>
-          </div>
-          <div id="network-status-panel" class="network-status">Tap Refresh to load network status.</div>
-            </div>
-          </details>
+          <p class="field-hint" style="margin-top:8px">Live link status, beacon counters, and Announce are on the sidebar <strong>Network</strong> panel.</p>
 
           <div class="settings-subhead">Hub group chat (optional)</div>
           <div class="settings-section">
@@ -1315,6 +1304,30 @@ body.sidebar-open #sidebar-backdrop { display: block; }
       </div>
       <div class="settings-footer">
         <button class="btn-block primary" onclick="saveSettings()">Save settings</button>
+      </div>
+    </div>
+
+    <div id="network-panel" class="overlay-panel">
+      <div class="panel-header">
+        <h3>Network</h3>
+        <button class="panel-close" onclick="toggleNetworkPanel()" title="Close">&times;</button>
+      </div>
+      <div class="settings-scroll">
+        <p class="field-hint" style="margin-bottom:12px">Live discovery, link, and transport status. Configure IPv4, UDP/TCP LAN, hub, and serial under <a href="#" onclick="openSettingsFromNetwork();return false" style="color:var(--accent)">Settings → Network</a>.</p>
+        <div class="settings-row-split" style="margin-bottom:10px">
+          <button type="button" class="btn-block" onclick="refreshNetworkStatus()">Refresh status</button>
+          <button type="button" class="btn-block" onclick="announceSelf()">📡 Announce</button>
+        </div>
+        <button type="button" class="btn-block danger" style="margin-bottom:12px" onclick="resetNetwork()">Reset network</button>
+        <div id="network-status-panel" class="network-status">Tap Refresh to load network status.</div>
+      </div>
+    </div>
+
+    <div id="release-notes-overlay" class="setup-overlay" style="display:none">
+      <div class="setup-card" style="max-width:480px">
+        <h2>What&apos;s new in <span id="release-notes-version"></span></h2>
+        <ul id="release-notes-list" style="margin:12px 0 16px;padding-left:20px;line-height:1.55;font-size:13px;color:var(--text2)"></ul>
+        <button type="button" class="btn-block primary" onclick="dismissReleaseNotes()">Got it</button>
       </div>
     </div>
 
@@ -1665,7 +1678,11 @@ function init() {
     window._appSettings = s;
     applySettingsToForm(s);
     updateHubUi();
-    if (!s.setup_complete) openSetupWizard(s);
+    if (!s.setup_complete) {
+      openSetupWizard(s);
+    } else {
+      maybeShowReleaseNotes(s);
+    }
   }).catch(() => {});
   connectWS();
   loadEmojiKeywords();
@@ -1861,6 +1878,7 @@ function completeSetupWizard() {
     window._hubRole = d.settings?.hub_role || 'off';
     updateHubUi();
     toast('Setup complete');
+    maybeShowReleaseNotes(d.settings || {});
     if (!auto_announce) toast('Tap 📡 Announce when ready to discover peers');
   }).catch(() => toast('Setup failed'))
   .finally(() => {
@@ -2855,6 +2873,7 @@ window.onChatxzFolderPickError = function(message) {
 };
 
 let settingsShown = false;
+let networkShown = false;
 let connectShown = false;
 
 function netClass(ok) {
@@ -3255,13 +3274,42 @@ function deleteRnsInterface(id) {
   }).catch(() => toast('Delete failed'));
 }
 
-function openNetworkSettings() {
+function toggleNetworkPanel() {
+  networkShown = !networkShown;
+  if (settingsShown) {
+    settingsShown = false;
+    document.getElementById('settings-panel')?.classList.remove('open');
+    document.getElementById('settings-btn')?.classList.remove('active');
+  }
+  if (connectShown) {
+    connectShown = false;
+    document.getElementById('connect-panel')?.classList.remove('open');
+  }
+  if (actionShown) {
+    actionShown = false;
+    document.getElementById('action-panel')?.classList.remove('open');
+  }
+  const panel = document.getElementById('network-panel');
+  if (networkShown) {
+    panel?.classList.add('open');
+    refreshNetworkStatus();
+    startNetworkAutoRefresh();
+  } else {
+    panel?.classList.remove('open');
+    if (!settingsShown) stopNetworkAutoRefresh();
+  }
+}
+
+function openSettingsFromNetwork() {
+  if (networkShown) toggleNetworkPanel();
   if (!settingsShown) toggleSettings();
-  refreshNetworkStatus();
-  loadRnsInterfaces();
   setTimeout(() => {
     document.getElementById('network-settings-card')?.scrollIntoView({behavior: 'smooth', block: 'start'});
   }, 80);
+}
+
+function openNetworkSettings() {
+  toggleNetworkPanel();
 }
 
 function resetNetwork() {
@@ -3380,7 +3428,6 @@ function sameSubnet(ipA, ipB) {
   const a1 = parseInt(a[1], 10);
   const b0 = parseInt(b[0], 10);
   const b1 = parseInt(b[1], 10);
-  if (a0 === 10 && b0 === 10) return true;
   if (a0 === 172 && b0 === 172 && a1 >= 16 && a1 <= 31 && b1 >= 16 && b1 <= 31) return true;
   if (a0 === 192 && b0 === 192 && a1 === 168 && b1 === 168) return true;
   return false;
@@ -3492,7 +3539,7 @@ function saveLanInterface() {
 function startNetworkAutoRefresh() {
   stopNetworkAutoRefresh();
   networkRefreshTimer = setInterval(() => {
-    if (settingsShown) refreshNetworkStatus(true);
+    if (networkShown || settingsShown) refreshNetworkStatus(true);
   }, 5000);
 }
 
@@ -3532,7 +3579,7 @@ function refreshNetworkStatus(silent) {
       }
       html += row('RNS UDP', d.rns_udp_port ? d.rns_udp_port + ' (required for chat)' : '4242', true);
       html += row('Beacon UDP', d.beacon_udp_port || 8743);
-      if (Array.isArray(d.available_interfaces)) {
+      if (settingsShown && Array.isArray(d.available_interfaces)) {
         populateLanInterfaceSelect(d.available_interfaces, d.lan_interface || '');
       }
       if (d.lan_interface) {
@@ -3658,6 +3705,10 @@ function refreshNetworkStatus(silent) {
 
 function toggleSettings() {
   settingsShown = !settingsShown;
+  if (networkShown) {
+    networkShown = false;
+    document.getElementById('network-panel')?.classList.remove('open');
+  }
   if (connectShown) { connectShown = false; document.getElementById('connect-panel').classList.remove('open'); }
   if (actionShown) { actionShown = false; document.getElementById('action-panel').classList.remove('open'); }
   const panel = document.getElementById('settings-panel');
@@ -3666,8 +3717,6 @@ function toggleSettings() {
     panel.classList.add('open');
     btn?.classList.add('active');
     applySettingsToForm(window._appSettings || {});
-    refreshNetworkStatus();
-    startNetworkAutoRefresh();
     loadRnsInterfaces();
     Promise.all([
       fetch('/api/settings').then(r => r.json()),
@@ -3681,12 +3730,50 @@ function toggleSettings() {
   } else {
     panel.classList.remove('open');
     btn?.classList.remove('active');
-    stopNetworkAutoRefresh();
+    if (!networkShown) stopNetworkAutoRefresh();
   }
+}
+
+function maybeShowReleaseNotes(settings) {
+  if (!settings) return;
+  const version = settings.app_version || settings.version || '';
+  const seen = settings.last_release_notes_seen || '';
+  const notes = settings.notes || settings.release_notes || [];
+  if (!version || !notes.length) return;
+  if (seen === version) return;
+  showReleaseNotesModal(version, notes);
+}
+
+function showReleaseNotesModal(version, notes) {
+  const overlay = document.getElementById('release-notes-overlay');
+  const verEl = document.getElementById('release-notes-version');
+  const listEl = document.getElementById('release-notes-list');
+  if (!overlay || !verEl || !listEl) return;
+  verEl.textContent = 'v' + version;
+  listEl.innerHTML = (notes || []).map(n => `<li>${escapeHtml(n)}</li>`).join('');
+  overlay.style.display = 'flex';
+  window._pendingReleaseNotesVersion = version;
+}
+
+function dismissReleaseNotes() {
+  const overlay = document.getElementById('release-notes-overlay');
+  if (overlay) overlay.style.display = 'none';
+  const version = window._pendingReleaseNotesVersion || '';
+  if (version) {
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({last_release_notes_seen: version}),
+    }).then(r => r.json()).then(d => {
+      if (d.settings) window._appSettings = d.settings;
+    }).catch(() => {});
+  }
+  window._pendingReleaseNotesVersion = '';
 }
 
 function toggleConnectPanel() {
   connectShown = !connectShown;
+  if (networkShown) { networkShown = false; document.getElementById('network-panel')?.classList.remove('open'); }
   if (settingsShown) { settingsShown = false; document.getElementById('settings-panel').classList.remove('open'); document.getElementById('settings-btn')?.classList.remove('active'); }
   if (actionShown) { actionShown = false; document.getElementById('action-panel').classList.remove('open'); }
   const panel = document.getElementById('connect-panel');

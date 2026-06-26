@@ -196,7 +196,9 @@ class LanBeacon:
                 continue
             if not payload.get("ip"):
                 payload["ip"] = addr[0]
-            if self.discovery._on_beacon(payload, self.dest_hash, self.identity_hash):
+            if self.discovery._on_beacon(
+                payload, self.dest_hash, self.identity_hash, source_ip=addr[0],
+            ):
                 self.packets_received += 1
                 register_udp_peer_ip(payload.get("ip") or addr[0])
 

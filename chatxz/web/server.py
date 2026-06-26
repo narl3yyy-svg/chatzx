@@ -634,16 +634,16 @@ class ChatWebServer:
         if not lan_discovery_configured(settings.get("rns_interfaces")):
             return None
         pinned = (settings.get("lan_interface") or "").strip()
-        if not pinned:
-            return None
-        name, ip = parse_lan_interface_value(pinned)
-        if ip:
-            return ip
-        for entry in enumerate_lan_interfaces():
-            if entry.get("name") == (name or pinned):
-                entry_ip = entry.get("ip")
-                if entry_ip and entry_ip != "disconnected":
-                    return entry_ip
+        if pinned:
+            name, ip = parse_lan_interface_value(pinned)
+            if ip:
+                return ip
+            for entry in enumerate_lan_interfaces():
+                if entry.get("name") == (name or pinned):
+                    entry_ip = entry.get("ip")
+                    if entry_ip and entry_ip != "disconnected":
+                        return entry_ip
+        # Auto mode: scope discovery to primary LAN /24 (not entire 10/8 or all NICs).
         return detect_lan_ip()
 
     def _interfaces_for_picker(self, refresh=False):
@@ -1068,6 +1068,7 @@ class ChatWebServer:
             "auto_interface_enabled": True,
             "auto_announce": False,
             "setup_complete": False,
+            "last_release_notes_seen": "",
         }
         try:
             with open(SETTINGS_FILE) as f:
@@ -3032,8 +3033,16 @@ class ChatWebServer:
         })
         return web.json_response({"status": "ok"})
 
+    def _settings_api_payload(self, settings):
+        from chatxz.release_notes import release_notes_payload
+        payload = dict(settings)
+        payload["app_version"] = APP_VERSION
+        payload.update(release_notes_payload())
+        return payload
+
     async def handle_settings_get(self, request):
-        return web.json_response(self._apply_hub_settings(self.load_settings()))
+        settings = self._apply_hub_settings(self.load_settings())
+        return web.json_response(self._settings_api_payload(settings))
 
     def _abs_path_hint(self):
         if sys.platform == "win32":
@@ -3253,6 +3262,10 @@ class ChatWebServer:
                 settings["auto_announce"] = bool(data["auto_announce"])
             if "setup_complete" in data:
                 settings["setup_complete"] = bool(data["setup_complete"])
+            if "last_release_notes_seen" in data:
+                settings["last_release_notes_seen"] = (
+                    str(data.get("last_release_notes_seen") or "").strip()
+                )
             hub_changed = any(
                 k in data for k in ("hub_role", "hub_host", "hub_port")
             )
@@ -3275,7 +3288,10 @@ class ChatWebServer:
                     asyncio.create_task(self._apply_hub_runtime(settings))
                 if "auto_announce" in data:
                     self._apply_auto_announce_settings(settings)
-                return web.json_response({"status": "ok", "settings": settings})
+                return web.json_response({
+                    "status": "ok",
+                    "settings": self._settings_api_payload(settings),
+                })
             if config_dirty or hub_changed:
                 await asyncio.to_thread(self._write_rns_config, settings)
             if hub_changed:
@@ -3287,7 +3303,10 @@ class ChatWebServer:
             self._apply_received_dir(settings)
             self._apply_retention()
             self._save_history()
-            return web.json_response({"status": "ok", "settings": settings})
+            return web.json_response({
+                "status": "ok",
+                "settings": self._settings_api_payload(settings),
+            })
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
 

@@ -20,7 +20,9 @@ from chatxz.core.contacts import (
     migrate_contact_by_ip,
     list_contacts,
     save_contact,
+    update_contact_endpoint,
 )
+from chatxz.utils.file_serve import stream_file_response
 from chatxz.core.lan_rns import (
     lan_ip_reachable,
     patch_udp_interface_unicast,
@@ -75,6 +77,7 @@ from chatxz.utils.debug_log import (
 )
 from chatxz.utils.android_notify import show_message_notification
 from chatxz.utils.platform import (
+    host_platform,
     is_android,
     apply_lan_interface_preference,
     enumerate_lan_interfaces,
@@ -91,7 +94,7 @@ from chatxz.utils.platform import (
     patch_embedded_signals,
     list_network_interfaces,
 )
-from chatxz.utils.system import get_avg_cpu_temperature, get_cpu_percent
+from chatxz.utils.system import get_cpu_percent, get_cpu_temperature_detail
 from chatxz._version import __version__ as APP_VERSION
 
 CONFIG_DIR = get_config_dir()
@@ -501,6 +504,7 @@ class ChatWebServer:
         if self.messaging:
             self.messaging.shutdown_requested = True
             self.messaging.running = False
+            self.messaging.cancel_all_transfers()
         for task in list(self._background_tasks):
             task.cancel()
 
@@ -630,16 +634,16 @@ class ChatWebServer:
         if not lan_discovery_configured(settings.get("rns_interfaces")):
             return None
         pinned = (settings.get("lan_interface") or "").strip()
-        if not pinned:
-            return None
-        name, ip = parse_lan_interface_value(pinned)
-        if ip:
-            return ip
-        for entry in enumerate_lan_interfaces():
-            if entry.get("name") == (name or pinned):
-                entry_ip = entry.get("ip")
-                if entry_ip and entry_ip != "disconnected":
-                    return entry_ip
+        if pinned:
+            name, ip = parse_lan_interface_value(pinned)
+            if ip:
+                return ip
+            for entry in enumerate_lan_interfaces():
+                if entry.get("name") == (name or pinned):
+                    entry_ip = entry.get("ip")
+                    if entry_ip and entry_ip != "disconnected":
+                        return entry_ip
+        # Auto mode: scope discovery to primary LAN /24 (not entire 10/8 or all NICs).
         return detect_lan_ip()
 
     def _interfaces_for_picker(self, refresh=False):
@@ -1064,6 +1068,7 @@ class ChatWebServer:
             "auto_interface_enabled": True,
             "auto_announce": False,
             "setup_complete": False,
+            "last_release_notes_seen": "",
         }
         try:
             with open(SETTINGS_FILE) as f:
@@ -1651,6 +1656,15 @@ class ChatWebServer:
             except Exception:
                 self.websockets.discard(ws)
 
+    def _schedule_contacts_broadcast(self):
+        if not (self.websockets and self._loop):
+            return
+        contacts = list_contacts(self.config_dir)
+        asyncio.run_coroutine_threadsafe(
+            self._broadcast({"type": "contacts", "data": contacts}),
+            self._loop,
+        )
+
     def _current_peer_for_ip(self, ip):
         if not ip or not self.discovery:
             return None
@@ -1779,6 +1793,7 @@ class ChatWebServer:
             peer["hash"] = dest
         if peer.get("identity_hash"):
             self.messaging.register_peer_mapping(dest, peer.get("identity_hash"))
+        contacts_dirty = False
         if peer.get("ip") and any(
             (c.get("ip") or "").strip() == peer.get("ip")
             for c in list_contacts(self.config_dir)
@@ -1791,6 +1806,21 @@ class ChatWebServer:
                 port=peer.get("port"),
                 identity_hash=peer.get("identity_hash"),
             )
+            contacts_dirty = True
+        contact_updated = update_contact_endpoint(
+            self.config_dir,
+            dest,
+            ip=peer.get("ip"),
+            port=peer.get("port"),
+            identity_hash=peer.get("identity_hash"),
+            peers_equivalent=self._peers_equivalent,
+            name=peer.get("name"),
+            local_scope_ip=self._discovery_scope_ip(),
+        )
+        if contact_updated:
+            contacts_dirty = True
+        if contacts_dirty:
+            self._schedule_contacts_broadcast()
         if self.discovery and self.websockets and self._loop:
             peers = self._scoped_peers()
             asyncio.run_coroutine_threadsafe(
@@ -2036,6 +2066,7 @@ class ChatWebServer:
                 port=data.get("port"),
                 identity_hash=data.get("identity_hash"),
             )
+            self._schedule_contacts_broadcast()
             return web.json_response({"status": "ok", "contact": entry})
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
@@ -2429,9 +2460,9 @@ class ChatWebServer:
         return payload
 
     def _platform_name(self):
-        if is_android() or self.embedded:
-            return "android"
-        return "desktop"
+        if self.embedded and not is_android():
+            return host_platform()
+        return host_platform()
 
     def _reset_network_state(self, update_settings=True):
         if self.messaging:
@@ -3002,8 +3033,16 @@ class ChatWebServer:
         })
         return web.json_response({"status": "ok"})
 
+    def _settings_api_payload(self, settings):
+        from chatxz.release_notes import release_notes_payload
+        payload = dict(settings)
+        payload["app_version"] = APP_VERSION
+        payload.update(release_notes_payload())
+        return payload
+
     async def handle_settings_get(self, request):
-        return web.json_response(self._apply_hub_settings(self.load_settings()))
+        settings = self._apply_hub_settings(self.load_settings())
+        return web.json_response(self._settings_api_payload(settings))
 
     def _abs_path_hint(self):
         if sys.platform == "win32":
@@ -3223,6 +3262,10 @@ class ChatWebServer:
                 settings["auto_announce"] = bool(data["auto_announce"])
             if "setup_complete" in data:
                 settings["setup_complete"] = bool(data["setup_complete"])
+            if "last_release_notes_seen" in data:
+                settings["last_release_notes_seen"] = (
+                    str(data.get("last_release_notes_seen") or "").strip()
+                )
             hub_changed = any(
                 k in data for k in ("hub_role", "hub_host", "hub_port")
             )
@@ -3245,7 +3288,10 @@ class ChatWebServer:
                     asyncio.create_task(self._apply_hub_runtime(settings))
                 if "auto_announce" in data:
                     self._apply_auto_announce_settings(settings)
-                return web.json_response({"status": "ok", "settings": settings})
+                return web.json_response({
+                    "status": "ok",
+                    "settings": self._settings_api_payload(settings),
+                })
             if config_dirty or hub_changed:
                 await asyncio.to_thread(self._write_rns_config, settings)
             if hub_changed:
@@ -3257,7 +3303,10 @@ class ChatWebServer:
             self._apply_received_dir(settings)
             self._apply_retention()
             self._save_history()
-            return web.json_response({"status": "ok", "settings": settings})
+            return web.json_response({
+                "status": "ok",
+                "settings": self._settings_api_payload(settings),
+            })
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
 
@@ -3422,10 +3471,10 @@ class ChatWebServer:
 
     async def handle_temperature(self, request):
         try:
-            avg = await asyncio.to_thread(get_avg_cpu_temperature)
+            detail = await asyncio.to_thread(get_cpu_temperature_detail)
         except Exception:
-            avg = None
-        return web.json_response({"avg_celsius": avg})
+            detail = {"avg_celsius": None, "approx": False}
+        return web.json_response(detail)
 
     async def handle_cpu(self, request):
         pct = await asyncio.to_thread(get_cpu_percent)
@@ -3912,12 +3961,10 @@ class ChatWebServer:
                     "mpeg": "video/mpeg",
                     "mpg": "video/mpeg",
                 }.get(ext)
-        resp = web.FileResponse(full_path)
-        if ct:
-            resp.headers['Content-Type'] = ct
-        if ct and ct.startswith("video/"):
-            resp.headers['Accept-Ranges'] = 'bytes'
-        return resp
+        resp = await stream_file_response(request, full_path, content_type=ct)
+        if resp is not None:
+            return resp
+        return web.Response(text="Not found", status=404)
 
     async def handle_queue(self, request):
         if not self.messaging:
@@ -4497,7 +4544,7 @@ class ChatWebServer:
             time.sleep(0.25)
 
     def run(self):
-        from aiohttp.web_runner import GracefulExit
+        from aiohttp.web_runner import GracefulExit, AppRunner, TCPSite
 
         self._prepare_listen_ports()
 
@@ -4512,10 +4559,53 @@ class ChatWebServer:
         print("[startup] HTTP listening — RNS/network stack starting in background")
         print("Press Ctrl+C to stop")
 
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        runner = AppRunner(app, access_log=None)
+        stopping = False
+
+        async def _start():
+            await runner.setup()
+            site = TCPSite(runner, self.host, self.port, reuse_address=True)
+            await site.start()
+
+        def _stop_loop():
+            nonlocal stopping
+            if stopping:
+                return
+            stopping = True
+            loop.call_soon_threadsafe(loop.stop)
+
+        if sys.platform != "win32":
+            try:
+                loop.add_signal_handler(signal.SIGINT, _stop_loop)
+                loop.add_signal_handler(signal.SIGTERM, _stop_loop)
+            except (NotImplementedError, RuntimeError, ValueError):
+                pass
+
         try:
-            web.run_app(app, host=self.host, port=self.port, print=lambda _: None)
-        except GracefulExit:
-            pass
+            loop.run_until_complete(_start())
+            try:
+                loop.run_forever()
+            except KeyboardInterrupt:
+                stopping = True
+        except (GracefulExit, KeyboardInterrupt):
+            stopping = True
+        finally:
+            if not stopping:
+                stopping = True
+            try:
+                loop.run_until_complete(runner.cleanup())
+            except Exception:
+                try:
+                    self._teardown_network_stack()
+                except Exception:
+                    pass
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                pass
+            loop.close()
 
 
 def main():
@@ -4538,7 +4628,11 @@ def main():
     args = parser.parse_args()
     host = "0.0.0.0" if args.share else args.host
     server = ChatWebServer(host=host, port=args.port, verbose=args.verbose, debug=args.debug, force=args.force)
-    server.run()
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        pass
+    raise SystemExit(0)
 
 
 if __name__ == "__main__":

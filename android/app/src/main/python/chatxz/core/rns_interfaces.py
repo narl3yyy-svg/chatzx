@@ -435,7 +435,17 @@ def set_primary_lan_transport(interfaces, preset_key):
         kept.append(iface)
     if any(i.get("preset") == preset_key for i in kept):
         return kept
-    return add_interface(kept, preset_key)
+    preset = INTERFACE_PRESETS.get(preset_key)
+    if not preset:
+        return kept
+    entry = {
+        "id": _new_id(),
+        "preset": preset_key,
+        "name": f"{preset['label']} {_new_id()}",
+        **copy.deepcopy(preset["defaults"]),
+    }
+    # Avoid add_interface([]) — normalize_interface_list([]) re-inserts UDP LAN.
+    return normalize_interface_list(kept + [entry] if kept else [entry])
 
 
 def delete_interface(items, iface_id):
@@ -637,10 +647,32 @@ def _finalize_rns_interface(iface, ifac_size=16):
     iface.announce_rate_target = None
     iface.announce_rate_grace = None
     iface.announce_rate_penalty = None
+    if not hasattr(iface, "ifac_netname"):
+        iface.ifac_netname = None
+    if not hasattr(iface, "ifac_netkey"):
+        iface.ifac_netkey = None
     if hasattr(iface, "optimise_mtu"):
         iface.optimise_mtu()
     if hasattr(iface, "final_init"):
         iface.final_init()
+
+
+def _register_hot_rns_interface(iface, ifac_size=16):
+    """Register a runtime-hot-added interface the same way Reticulum config load does."""
+    import RNS
+
+    _finalize_rns_interface(iface, ifac_size=ifac_size)
+    inst = RNS.Reticulum.get_instance()
+    if inst is not None and hasattr(inst, "_add_interface"):
+        inst._add_interface(
+            iface,
+            ifac_size=ifac_size,
+            ifac_netname=getattr(iface, "ifac_netname", None),
+            ifac_netkey=getattr(iface, "ifac_netkey", None),
+        )
+    else:
+        RNS.Transport.add_interface(iface)
+    return iface
 
 
 def dedupe_serial_interfaces(port=None):
@@ -782,8 +814,7 @@ def hot_add_serial_interface(port, speed=SERIAL_DEFAULT_BAUD, ifac_size=16):
             "speed": int(speed),
             "ifac_size": ifac_size,
         })
-        _finalize_rns_interface(iface, ifac_size=ifac_size)
-        RNS.Transport.add_interface(iface)
+        _register_hot_rns_interface(iface, ifac_size=ifac_size)
         dedupe_serial_interfaces(port)
         print(f"[serial] Hot-added RNS SerialInterface on {port}")
         _notify_serial_hot_add(iface)
@@ -856,8 +887,7 @@ def hot_add_tcp_server_interface(
             "listen_port": listen_port,
             "ifac_size": ifac_size,
         })
-        _finalize_rns_interface(iface, ifac_size=ifac_size)
-        RNS.Transport.add_interface(iface)
+        _register_hot_rns_interface(iface, ifac_size=ifac_size)
         print(f"[{log_tag}] Hot-added TCP server on {listen_ip}:{listen_port}")
         return iface
     except Exception as exc:
@@ -906,16 +936,8 @@ def hot_add_tcp_client_interface(target_host, target_port=4242, ifac_size=16, lo
             or getattr(iface, "port", None)
             or 4242
         )
-        if (
-            host == target_host
-            and port == target_port
-            and getattr(iface, "online", False)
-        ):
+        if host == target_host and port == target_port:
             return iface
-        try:
-            RNS.Transport.remove_interface(iface)
-        except Exception:
-            pass
 
     name = f"TCP Client {target_host}:{target_port}"
     try:
@@ -925,8 +947,7 @@ def hot_add_tcp_client_interface(target_host, target_port=4242, ifac_size=16, lo
             "target_port": target_port,
             "ifac_size": ifac_size,
         })
-        _finalize_rns_interface(iface, ifac_size=ifac_size)
-        RNS.Transport.add_interface(iface)
+        _register_hot_rns_interface(iface, ifac_size=ifac_size)
         print(f"[{log_tag}] Hot-added TCP client to {target_host}:{target_port}")
         return iface
     except Exception as exc:
@@ -1225,14 +1246,19 @@ def render_rns_config(
             if iface.get("ifac_size"):
                 lines.append(f"    ifac_size = {iface.get('ifac_size')}")
         lines.append("")
-    # AutoInterface also binds UDP 4242 — never combine with explicit UDP LAN preset.
+    # AutoInterface also binds UDP 4242 — never combine with explicit LAN presets.
     has_udp_lan = any(
         i.get("type") == "UDPInterface" and i.get("enabled", True)
         for i in normalized
     )
+    has_lan_preset = any(
+        i.get("preset") in ("udp_lan", "tcp_lan") for i in normalized
+    )
     if (
         auto_interface_enabled
         and not has_udp_lan
+        and not has_tcp_lan
+        and not has_lan_preset
         and not android
         and sys.platform != "win32"
     ):

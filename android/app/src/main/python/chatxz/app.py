@@ -31,6 +31,8 @@ class ChatxzApp:
 
     def start(self):
         if not self._rns_initialized:
+            from chatxz.core.rns_tuning import apply_chatxz_rns_tuning
+            apply_chatxz_rns_tuning()
             RNS.Reticulum(self.config_dir)
             self._rns_initialized = True
 

@@ -879,10 +879,20 @@ body.modal-open #save-contact-dialog * { pointer-events: auto; user-select: auto
 #emoji-picker {
   display: none; position: absolute; bottom: calc(100% + 8px); left: 0;
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius-lg); padding: 10px; width: 340px; max-height: 220px;
-  overflow-y: auto; z-index: 20; box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-lg); padding: 10px; width: 340px; max-height: 260px;
+  overflow: hidden; z-index: 20; box-shadow: var(--shadow-lg); flex-direction: column;
 }
-#emoji-picker.open { display: flex; flex-wrap: wrap; gap: 2px; }
+#emoji-picker.open { display: flex; }
+#emoji-search {
+  width: 100%; margin-bottom: 8px; padding: 8px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px;
+}
+#emoji-grid {
+  display: flex; flex-wrap: wrap; gap: 2px; overflow-y: auto; max-height: 200px;
+}
+#emoji-picker .emoji-empty {
+  width: 100%; padding: 12px 8px; text-align: center; color: var(--text3); font-size: 12px;
+}
 .emoji-item {
   width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
   cursor: pointer; border-radius: var(--radius-sm); font-size: 20px;
@@ -1121,7 +1131,7 @@ body.sidebar-open #sidebar-backdrop { display: block; }
         </button>
       </div>
       <div class="sidebar-actions" style="margin-top:-8px">
-        <button class="sidebar-btn" onclick="openNetworkSettings()" title="Network interfaces and discovery status">
+        <button class="sidebar-btn" onclick="toggleNetworkPanel()" title="Live network status and discovery">
           <span>🌐</span> Network
         </button>
       </div>
@@ -1265,18 +1275,7 @@ body.sidebar-open #sidebar-backdrop { display: block; }
             <input type="checkbox" id="settings-network-auto-reset" onchange="saveNetworkAutoReset()">
             Auto-reset beacon counters weekly
           </label>
-
-          <details style="margin-top:8px">
-            <summary style="cursor:pointer;font-size:12px;color:var(--text2);user-select:none">Technical network status</summary>
-            <div style="margin-top:10px">
-          <div class="settings-subhead">Status</div>
-          <div class="settings-row-split" style="margin-bottom:10px">
-            <button type="button" class="btn-block" onclick="refreshNetworkStatus()">Refresh status</button>
-            <button type="button" class="btn-block danger" onclick="resetNetwork()">Reset network</button>
-          </div>
-          <div id="network-status-panel" class="network-status">Tap Refresh to load network status.</div>
-            </div>
-          </details>
+          <p class="field-hint" style="margin-top:8px">Live link status, beacon counters, and Announce are on the sidebar <strong>Network</strong> panel.</p>
 
           <div class="settings-subhead">Hub group chat (optional)</div>
           <div class="settings-section">
@@ -1305,6 +1304,30 @@ body.sidebar-open #sidebar-backdrop { display: block; }
       </div>
       <div class="settings-footer">
         <button class="btn-block primary" onclick="saveSettings()">Save settings</button>
+      </div>
+    </div>
+
+    <div id="network-panel" class="overlay-panel">
+      <div class="panel-header">
+        <h3>Network</h3>
+        <button class="panel-close" onclick="toggleNetworkPanel()" title="Close">&times;</button>
+      </div>
+      <div class="settings-scroll">
+        <p class="field-hint" style="margin-bottom:12px">Live discovery, link, and transport status. Configure IPv4, UDP/TCP LAN, hub, and serial under <a href="#" onclick="openSettingsFromNetwork();return false" style="color:var(--accent)">Settings → Network</a>.</p>
+        <div class="settings-row-split" style="margin-bottom:10px">
+          <button type="button" class="btn-block" onclick="refreshNetworkStatus()">Refresh status</button>
+          <button type="button" class="btn-block" onclick="announceSelf()">📡 Announce</button>
+        </div>
+        <button type="button" class="btn-block danger" style="margin-bottom:12px" onclick="resetNetwork()">Reset network</button>
+        <div id="network-status-panel" class="network-status">Tap Refresh to load network status.</div>
+      </div>
+    </div>
+
+    <div id="release-notes-overlay" class="setup-overlay" style="display:none">
+      <div class="setup-card" style="max-width:480px">
+        <h2>What&apos;s new in <span id="release-notes-version"></span></h2>
+        <ul id="release-notes-list" style="margin:12px 0 16px;padding-left:20px;line-height:1.55;font-size:13px;color:var(--text2)"></ul>
+        <button type="button" class="btn-block primary" onclick="dismissReleaseNotes()">Got it</button>
       </div>
     </div>
 
@@ -1361,7 +1384,10 @@ body.sidebar-open #sidebar-backdrop { display: block; }
 
     <div id="input-area" style="display:none">
       <div class="composer">
-        <div id="emoji-picker"></div>
+        <div id="emoji-picker">
+          <input type="text" id="emoji-search" placeholder="Search emoji..." oninput="filterEmojiPicker(this.value)">
+          <div id="emoji-grid"></div>
+        </div>
         <div id="input-row">
           <textarea id="msg-input" rows="1" placeholder="Message..." onkeydown="onInputKey(event)" oninput="onComposerInput(this)" onfocus="onComposerFocus()" onblur="onComposerBlur()"></textarea>
           <div class="composer-tools">
@@ -1485,6 +1511,18 @@ let allContacts = [];
 let sidebarOpen = true;
 let appPlatform = 'desktop';
 const peerAliasGroups = new Map();
+
+const EMOJI_SEARCH_GROUPS = [
+  {terms: 'smile happy face grin laugh joy tear wink cool sick mask', from: 0, to: 59},
+  {terms: 'hand wave thumbs clap pray muscle finger point ok peace', from: 60, to: 95},
+  {terms: 'heart love romance kiss valentine red pink', from: 96, to: 118},
+  {terms: 'plant flower tree leaf sun moon star weather rain snow cloud fire', from: 180, to: 280},
+  {terms: 'food fruit apple pizza burger drink coffee beer wine cake dessert', from: 281, to: 400},
+  {terms: 'sport ball game trophy medal music guitar piano drum phone computer', from: 401, to: 520},
+  {terms: 'travel car bus train plane house tool money work office', from: 521, to: 620},
+  {terms: 'symbol arrow check cross warning sign flag color square circle', from: 621, to: 9999},
+];
+let EMOJI_KEYWORD_MAP = {};
 
 const EMOJIS = ['😀','😃','😄','😁','😅','😂','🤣','😊','😇','🙂','😉','😌','😍','🥰','😘','😋','😛','😜','🤪','😝','🤗','🤭','🤫','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','🤥','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🥴','😵','🤯','🤠','🥳','🥺','😢','😭','😤','😠','😡','🤬','💀','💩','🤡','👻','👽','🤖','😺','😸','😹','😻','😼','😽','🙀','😿','😾','🙌','👏','👍','👎','👊','✊','🤛','🤜','🤞','✌️','🤟','🤘','👌','👈','👉','👆','👇','☝️','✋','🤚','🖐','🖖','👋','🤙','💪','🦾','🖕','✍️','🙏','💯','🔥','⭐','🌟','✨','💥','💫','💦','💨','❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🙈','🙉','🙊','🐔','🐧','🐦','🐤','🐣','🐥','🦆','🦅','🦉','🦇','🐺','🐗','🐴','🦄','🐝','🐛','🦋','🐌','🐞','🐜','🦟','🦗','🕷','🦂','🐢','🐍','🦎','🦖','🦕','🐙','🦑','🦐','🦀','🐡','🐠','🐟','🐬','🐳','🐋','🦈','🐊','🐅','🐆','🦓','🦍','🐘','🦛','🦏','🐪','🐫','🦒','🦘','🐃','🐂','🐄','🐎','🐖','🐏','🐑','🦙','🐐','🦌','🐕','🐩','🐈','🐓','🦃','🦚','🦜','🦢','🦩','🕊','🐇','🦝','🦡','🦨','🦦','🦥','🐁','🐀','🐿','🦔','🌵','🎄','🌲','🌳','🌴','🌱','🌿','☘️','🍀','🍃','🍂','🍁','🍄','🌾','💐','🌷','🌹','🥀','🌺','🌸','🌼','🌻','🌞','🌝','🌛','🌜','🌚','🌕','🌖','🌗','🌘','🌑','🌒','🌓','🌔','🌙','🌎','🌍','🌏','🪐','💫','⚡','☄️','🔥','🌪','🌈','☀️','🌤','⛅','🌥','☁️','🌦','🌧','⛈','🌩','🌨','❄️','☃️','⛄','🌬','💧','💦','☔','🌊','🍏','🍎','🍐','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍈','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🥬','🥒','🌶','🌽','🥕','🧄','🧅','🥔','🍠','🥐','🍞','🥖','🥨','🧀','🥚','🍳','🥞','🧇','🥓','🥩','🍗','🍖','🌭','🍔','🍟','🍕','🥪','🥙','🌮','🌯','🥗','🥘','🍝','🍜','🍲',' curry','🍣','🍱','🥟','🍤','🍙','🍚','🍘','🍥','🥠','🥮','🍢','🍡','🍧','🍨','🍦','🥧','🧁','🍰','🎂','🍮','🍭','🍬','🍫','🍿','🍩','🍪','🌰','🥜','🍯','🥛','🍼','☕','🫖','🍵','🧃','🥤','🧋','🍶','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🧉','🍾','🧊','🥄','🍴','🥢','🥡','🥣','🧂','⚽','🏀','🏈','⚾','🥎','🎾','🏐','🏉','🥏','🎱','🪀','🏓','🏸','🏒','🏑','🥍','🏏','🥅','⛳','🪁','🏹','🎣','🤿','🥊','🥋','🎽','⛸','🥌','sled','🎿','⛷','🏂','🪐','🏋️','🤼','🤸','⛹️','🤺','🏌️','🏇','🧘','🏄','🏊','🤽','🚣','🧗','🚵','🚴','🏆','🥇','🥈','🥉','🏅','🎖','🏵','🎗','🎫','🎟','🎪','🤹','🎭','🩰','🎨','🎬','🎤','🎧','🎼','🎹','🥁','🪘','🎷','🎺','🎸','🪕','🎻','🎲','♟','🎯','🎳','🎮','🎰','🧩','⌚','📱','📲','💻','⌨️','🖥','🖨','🖱','🖲','🕹','🗜','💽','💾','💿','📀','📼','📷','📸','📹','🎥','📽','🎞','📞','☎️','📟','📠','📺','📻','🎙','🎚','🎛','🧭','⏱','⏲','⏰','🕰','⌛','⏳','📡','🔋','🔌','💡','🔦','🕯','🪔','🧯','🛢','💸','💵','💴','💶','💷','🪙','💰','💳','💎','⚖️','🪜','🧰','🪛','🔧','🔨','⚒','🛠','⛏','🪚','🔩','⚙️','🪤','🧱','⛓','🧲','🔫','💣','🧨','🪓','🔪','🗡','⚔️','盾','🚬','⚰️','🪦','⚱️','🏺','🔮','📿','🧿','💈','⚗️','🔭','🔬','🕳','🩹','🩺','💊','💉','🩸','🧬','🦠','🧫','🧬','🔬','🔭','📡','💡','🔦','🕯','🪔','🧯','🛢','🔋','🔌','💻','⌨️','🖥','🖨','🖱','🖲','🕹','🗜','💽','💾','💿','📀','📼','📷','📸','📹','🎥','📽','🎞','📞','☎️','📟','📠','📺','📻','🎙','🎚','🎛','🧭','⌚','📱','📲','⏱','⏲','⏰','🕰','⌛','⏳','📊','📈','📉','📌','📍','📎','🖇','📏','📐','✂️','🗃','🗄','🗑','🔒','🔓','🔏','🔐','🔑','🗝','🔨','🪓','⛏','⚒','🛠','🗡','⚔️','🔫','弓','🛡','🔧','🔩','⚙️','🧰','🧲','🧪','🧫','🧬','🔬','🔭','📡','💉','💊','🩹','🩺','🩻','🚪','🛏','🛋','🪑','🚽','🚿','🛁','🪒','🧴','🧷','🧹','🧺','🧻','🪣','🧼','🪥','🧽','🧯','🛒','🚬','⚰️','🪦','⚱️','🗿','🪧','🪪','🏧','🚮','🚰','🚹','🚺','🚻','🚼','🚾','🛂','🛃','🛄','🛅','⚠️','🚸','⛔','🚫','🚳','🚭','🚯','🚱','🚷','📵','🔞','☢️','☣️','⬆️','↗️','➡️','↘️','⬇️','↙️','⬅️','↖️','↕️','↔️','↩️','↪️','⤴️','⤵️','🔃','🔄','🔙','🔚','🔛','🔜','🔝','🛐','⚛️','🕉','✡️','☸️','☯️','✝️','☦️','☪️','☮️','🕎','🔯','♈','♉','♊','♋','♌','♍','♎','♏','♐','♑','♒','♓','⛎','🔀','🔁','🔂','▶️','⏩','⏭','⏯','◀️','⏪','⏮','🔼','⏫','🔽','⏬','⏸','⏹','⏺','⏏','🎦','🔅','🔆','📶','📳','📴','♀️','♂️','⚧','✖️','➕','➖','➗','♾','‼️','⁉️','❓','❔','❕','❗','〰️','💱','💲','⚕️','♻️','⚜️','🔱','📛','🔰','⭕','✅','☑️','✔️','❌','❎','➰','➿','〽️','✳️','✴️','❇️','©️','®️','™️','#️⃣','*️⃣','0️⃣','1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟','🔞','🔠','🔡','🔢','🔣','🔤','🅰️','🆎','🅱️','🆑','🆒','🆓','ℹ️','🆔','Ⓜ️','🆕','🆖','🅾️','🆗','🅿️','🆘','🆙','🆚','🈁','🈂️','🈷️','🈶','🈯','🉐','🈹','🈚','🈲','🉑','🈸','🈴','🈳','㊗️','㊙️','🈺','🈵','🔴','🟠','🟡','🟢','🔵','🟣','🟤','⚫','⚪','🟥','🟧','🟨','🟩','🟦','🟪','🟫','⬛','⬜','◼️','◻️','◾','◽','▪️','▫️','🔶','🔷','🔸','🔹','🔺','🔻','💠','🔘','🔲','🔳','🏁','🚩','🎌','🏴','🏳️','🏴‍☠️'];
 
@@ -1640,10 +1678,14 @@ function init() {
     window._appSettings = s;
     applySettingsToForm(s);
     updateHubUi();
-    if (!s.setup_complete) openSetupWizard(s);
+    if (!s.setup_complete) {
+      openSetupWizard(s);
+    } else {
+      maybeShowReleaseNotes(s);
+    }
   }).catch(() => {});
   connectWS();
-  buildEmojiPicker();
+  loadEmojiKeywords();
   startPeerPolling();
   setupGlobalHandlers();
   setupVisibilitySync();
@@ -1836,6 +1878,7 @@ function completeSetupWizard() {
     window._hubRole = d.settings?.hub_role || 'off';
     updateHubUi();
     toast('Setup complete');
+    maybeShowReleaseNotes(d.settings || {});
     if (!auto_announce) toast('Tap 📡 Announce when ready to discover peers');
   }).catch(() => toast('Setup failed'))
   .finally(() => {
@@ -2212,6 +2255,11 @@ function handleWSMessage(msg) {
   } else if (msg.type === 'peers') {
     console.log('[ws] Peers received:', msg.data ? msg.data.length : 0, msg.data);
     renderDiscovered(msg.data);
+  } else if (msg.type === 'contacts') {
+    if (Array.isArray(msg.data)) {
+      renderContacts(msg.data);
+      syncContactIpsFromDiscovered(window._discoveredPeers || []);
+    }
   } else if (msg.type === 'identity_changed') {
     const data = msg.data || {};
     applyIdentityChange(data.hash, data.identity_hash, data.old_hash || data.old_identity_hash);
@@ -2464,7 +2512,8 @@ function pollTemperature() {
     .then(r => r.json())
     .then(d => {
       const el = document.getElementById('temp-display');
-      el.textContent = d.avg_celsius != null ? '🌡 ' + d.avg_celsius + '°C' : '🌡 --°C';
+      const approx = d.approx ? '~' : '';
+      el.textContent = d.avg_celsius != null ? '🌡 ' + approx + d.avg_celsius + '°C' : '🌡 --°C';
     })
     .catch(() => {
       document.getElementById('temp-display').textContent = '🌡 --°C';
@@ -2571,6 +2620,7 @@ function renderDiscovered(peers) {
   const merged = mergeDiscoveredPeers(prev, peers);
   if (merged.length) window._discoveredPeersAt = Date.now();
   window._discoveredPeers = merged.length ? merged : peers;
+  syncContactIpsFromDiscovered(window._discoveredPeers);
   const el = document.getElementById('discovered-list');
   el.innerHTML = '';
   let hasLink = linkedPeers.size > 0;
@@ -2823,6 +2873,7 @@ window.onChatxzFolderPickError = function(message) {
 };
 
 let settingsShown = false;
+let networkShown = false;
 let connectShown = false;
 
 function netClass(ok) {
@@ -2833,11 +2884,16 @@ const SERIAL_BAUD_RATES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 
 const SERIAL_DEFAULT_BAUD = 57600;
 
 function updatePlatformHints() {
+  const os = detectClientPlatform();
   const serialHint = document.getElementById('serial-setup-hint');
   if (serialHint) {
-    serialHint.textContent = appPlatform === 'android'
-      ? 'Use a USB OTG cable, plug in your serial adapter, tap Refresh devices, grant USB access, pick baud (default 57600), click Apply, then restart the app.'
-      : 'Plug in USB serial, pick device + baud (default 57600), click Apply. Start with ./run.sh web --share for dialout permissions. Restart chatxz after applying.';
+    if (os === 'android') {
+      serialHint.textContent = 'Use a USB OTG cable, plug in your serial adapter, tap Refresh devices, grant USB access, pick baud (default 57600), click Apply, then restart the app.';
+    } else if (os === 'windows') {
+      serialHint.textContent = 'Plug in USB serial, pick device + baud (default 57600), click Apply, then restart chatxz (run.bat web --share).';
+    } else {
+      serialHint.textContent = 'Plug in USB serial, pick device + baud (default 57600), click Apply. Start with ./run.sh web --share for dialout permissions. Restart chatxz after applying.';
+    }
   }
 }
 
@@ -3218,13 +3274,42 @@ function deleteRnsInterface(id) {
   }).catch(() => toast('Delete failed'));
 }
 
-function openNetworkSettings() {
+function toggleNetworkPanel() {
+  networkShown = !networkShown;
+  if (settingsShown) {
+    settingsShown = false;
+    document.getElementById('settings-panel')?.classList.remove('open');
+    document.getElementById('settings-btn')?.classList.remove('active');
+  }
+  if (connectShown) {
+    connectShown = false;
+    document.getElementById('connect-panel')?.classList.remove('open');
+  }
+  if (actionShown) {
+    actionShown = false;
+    document.getElementById('action-panel')?.classList.remove('open');
+  }
+  const panel = document.getElementById('network-panel');
+  if (networkShown) {
+    panel?.classList.add('open');
+    refreshNetworkStatus();
+    startNetworkAutoRefresh();
+  } else {
+    panel?.classList.remove('open');
+    if (!settingsShown) stopNetworkAutoRefresh();
+  }
+}
+
+function openSettingsFromNetwork() {
+  if (networkShown) toggleNetworkPanel();
   if (!settingsShown) toggleSettings();
-  refreshNetworkStatus();
-  loadRnsInterfaces();
   setTimeout(() => {
     document.getElementById('network-settings-card')?.scrollIntoView({behavior: 'smooth', block: 'start'});
   }, 80);
+}
+
+function openNetworkSettings() {
+  toggleNetworkPanel();
 }
 
 function resetNetwork() {
@@ -3317,17 +3402,103 @@ function lanInterfaceSelectHtml(interfaces) {
   return html;
 }
 
+function peerMergeKey(p) {
+  if (!p) return '';
+  return peerKey(p.identity_hash) || peerKey(p.hash) || (p.pubkey ? String(p.pubkey).slice(0, 48) : '');
+}
+
+function contactMatchesPeer(c, p) {
+  if (!c || !p) return false;
+  if (peersMatch(c.hash, p.hash)) return true;
+  if (p.identity_hash && (peersMatch(c.identity_hash, p.hash) || peersMatch(c.hash, p.identity_hash))) return true;
+  if (c.identity_hash && p.identity_hash && peerKey(c.identity_hash) === peerKey(p.identity_hash)) return true;
+  const cn = (c.name || '').trim().toLowerCase();
+  const pn = (p.name || '').trim().toLowerCase();
+  if (cn && pn && cn === pn) return true;
+  return false;
+}
+
+function sameSubnet(ipA, ipB) {
+  if (!ipA || !ipB) return false;
+  const a = String(ipA).split('.');
+  const b = String(ipB).split('.');
+  if (a.length !== 4 || b.length !== 4) return false;
+  if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) return true;
+  const a0 = parseInt(a[0], 10);
+  const a1 = parseInt(a[1], 10);
+  const b0 = parseInt(b[0], 10);
+  const b1 = parseInt(b[1], 10);
+  if (a0 === 172 && b0 === 172 && a1 >= 16 && a1 <= 31 && b1 >= 16 && b1 <= 31) return true;
+  if (a0 === 192 && b0 === 192 && a1 === 168 && b1 === 168) return true;
+  return false;
+}
+
+function detectClientPlatform() {
+  if (window.chatxzAndroid?.isAndroid?.()) return 'android';
+  const ua = navigator.userAgent || '';
+  const uad = navigator.userAgentData;
+  if (uad?.platform) {
+    const p = String(uad.platform).toLowerCase();
+    if (p.includes('win')) return 'windows';
+    if (p.includes('mac')) return 'darwin';
+    if (p.includes('linux')) return 'linux';
+    if (p.includes('android')) return 'android';
+  }
+  if (/mac os x|macintosh/i.test(ua)) return 'darwin';
+  if (/windows|win32|win64/i.test(ua)) return 'windows';
+  if (/android/i.test(ua)) return 'android';
+  if (/linux/i.test(ua)) return 'linux';
+  const plat = (navigator.platform || '').toLowerCase();
+  if (/mac/i.test(plat)) return 'darwin';
+  if (/win/i.test(plat)) return 'windows';
+  if (/linux/i.test(plat)) return 'linux';
+  if (['windows', 'darwin', 'linux', 'android'].includes(appPlatform)) return appPlatform;
+  return 'desktop';
+}
+
+function bestPeerForContact(peers, contact) {
+  const matches = (peers || []).filter(p => contactMatchesPeer(contact, p) && p.ip);
+  if (!matches.length) return null;
+  const scope = window._localLanIp;
+  if (scope) {
+    const local = matches.filter(p => sameSubnet(p.ip, scope));
+    if (local.length) {
+      local.sort((a, b) => (b.last_seen || 0) - (a.last_seen || 0));
+      return local[0];
+    }
+  }
+  matches.sort((a, b) => (b.last_seen || 0) - (a.last_seen || 0));
+  return matches[0];
+}
+
+function syncContactIpsFromDiscovered(peers) {
+  let changed = false;
+  allContacts = allContacts.map(c => {
+    const p = bestPeerForContact(peers, c);
+    if (!p) return c;
+    const port = p.port || c.port || 8742;
+    if (c.ip === p.ip && (c.port || 8742) === port) return c;
+    const scope = window._localLanIp;
+    if (scope && c.ip && sameSubnet(c.ip, scope) && !sameSubnet(p.ip, scope)) return c;
+    changed = true;
+    return {...c, ip: p.ip, port, identity_hash: p.identity_hash || c.identity_hash};
+  });
+  if (changed) renderContacts(allContacts);
+}
+
 function mergeDiscoveredPeers(prev, incoming) {
   if (!incoming || !incoming.length) return prev || [];
   const byKey = {};
   (prev || []).forEach(p => {
-    const k = peerKey(p.hash);
+    const k = peerMergeKey(p);
     if (k) byKey[k] = p;
   });
   incoming.forEach(p => {
-    const k = peerKey(p.hash);
+    const k = peerMergeKey(p);
     if (!k) return;
-    byKey[k] = {...(byKey[k] || {}), ...p};
+    const merged = {...(byKey[k] || {}), ...p};
+    if (p.identity_hash) registerPeerAliases(p.hash, p.identity_hash);
+    byKey[k] = merged;
   });
   return Object.values(byKey);
 }
@@ -3368,7 +3539,7 @@ function saveLanInterface() {
 function startNetworkAutoRefresh() {
   stopNetworkAutoRefresh();
   networkRefreshTimer = setInterval(() => {
-    if (settingsShown) refreshNetworkStatus(true);
+    if (networkShown || settingsShown) refreshNetworkStatus(true);
   }, 5000);
 }
 
@@ -3399,6 +3570,7 @@ function refreshNetworkStatus(silent) {
         `<div class="net-row"><span class="net-label">${label}</span><span class="net-value ${ok === undefined ? '' : netClass(ok)}">${escapeHtml(String(value ?? '—'))}</span></div>`;
       const platform = (window.chatxzAndroid?.isAndroid?.() ? 'android' : null) || d.platform;
       if (platform) appPlatform = platform;
+      if (d.lan_ip && d.lan_ip !== 'not configured') window._localLanIp = d.lan_ip;
       html += row('Platform', platform);
       html += row('HTTP bind', d.http_webview ? `${d.http_bind} (WebView ${d.http_webview})` : d.http_bind);
       html += row('Discovery listening', d.discovery_active ? 'yes' : 'no (tap Announce)', !!d.discovery_active);
@@ -3407,7 +3579,7 @@ function refreshNetworkStatus(silent) {
       }
       html += row('RNS UDP', d.rns_udp_port ? d.rns_udp_port + ' (required for chat)' : '4242', true);
       html += row('Beacon UDP', d.beacon_udp_port || 8743);
-      if (Array.isArray(d.available_interfaces)) {
+      if (settingsShown && Array.isArray(d.available_interfaces)) {
         populateLanInterfaceSelect(d.available_interfaces, d.lan_interface || '');
       }
       if (d.lan_interface) {
@@ -3533,6 +3705,10 @@ function refreshNetworkStatus(silent) {
 
 function toggleSettings() {
   settingsShown = !settingsShown;
+  if (networkShown) {
+    networkShown = false;
+    document.getElementById('network-panel')?.classList.remove('open');
+  }
   if (connectShown) { connectShown = false; document.getElementById('connect-panel').classList.remove('open'); }
   if (actionShown) { actionShown = false; document.getElementById('action-panel').classList.remove('open'); }
   const panel = document.getElementById('settings-panel');
@@ -3541,8 +3717,6 @@ function toggleSettings() {
     panel.classList.add('open');
     btn?.classList.add('active');
     applySettingsToForm(window._appSettings || {});
-    refreshNetworkStatus();
-    startNetworkAutoRefresh();
     loadRnsInterfaces();
     Promise.all([
       fetch('/api/settings').then(r => r.json()),
@@ -3556,12 +3730,50 @@ function toggleSettings() {
   } else {
     panel.classList.remove('open');
     btn?.classList.remove('active');
-    stopNetworkAutoRefresh();
+    if (!networkShown) stopNetworkAutoRefresh();
   }
+}
+
+function maybeShowReleaseNotes(settings) {
+  if (!settings) return;
+  const version = settings.app_version || settings.version || '';
+  const seen = settings.last_release_notes_seen || '';
+  const notes = settings.notes || settings.release_notes || [];
+  if (!version || !notes.length) return;
+  if (seen === version) return;
+  showReleaseNotesModal(version, notes);
+}
+
+function showReleaseNotesModal(version, notes) {
+  const overlay = document.getElementById('release-notes-overlay');
+  const verEl = document.getElementById('release-notes-version');
+  const listEl = document.getElementById('release-notes-list');
+  if (!overlay || !verEl || !listEl) return;
+  verEl.textContent = 'v' + version;
+  listEl.innerHTML = (notes || []).map(n => `<li>${escapeHtml(n)}</li>`).join('');
+  overlay.style.display = 'flex';
+  window._pendingReleaseNotesVersion = version;
+}
+
+function dismissReleaseNotes() {
+  const overlay = document.getElementById('release-notes-overlay');
+  if (overlay) overlay.style.display = 'none';
+  const version = window._pendingReleaseNotesVersion || '';
+  if (version) {
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({last_release_notes_seen: version}),
+    }).then(r => r.json()).then(d => {
+      if (d.settings) window._appSettings = d.settings;
+    }).catch(() => {});
+  }
+  window._pendingReleaseNotesVersion = '';
 }
 
 function toggleConnectPanel() {
   connectShown = !connectShown;
+  if (networkShown) { networkShown = false; document.getElementById('network-panel')?.classList.remove('open'); }
   if (settingsShown) { settingsShown = false; document.getElementById('settings-panel').classList.remove('open'); document.getElementById('settings-btn')?.classList.remove('active'); }
   if (actionShown) { actionShown = false; document.getElementById('action-panel').classList.remove('open'); }
   const panel = document.getElementById('connect-panel');
@@ -3995,22 +4207,73 @@ function addMessage(data, opts) {
 }
 
 function toggleEmoji() {
-  document.getElementById('emoji-picker').classList.toggle('open');
+  const picker = document.getElementById('emoji-picker');
+  const open = picker.classList.toggle('open');
+  if (open) {
+    const search = document.getElementById('emoji-search');
+    if (search) {
+      search.value = '';
+      filterEmojiPicker('');
+      search.focus();
+    }
+  }
+}
+
+function emojiSearchTerms(index, emoji) {
+  const terms = [EMOJI_KEYWORD_MAP[emoji] || ''];
+  EMOJI_SEARCH_GROUPS.forEach(g => {
+    if (index >= g.from && index <= g.to) terms.push(g.terms);
+  });
+  return terms.join(' ').trim();
+}
+
+async function loadEmojiKeywords() {
+  try {
+    const r = await fetch('/static/emoji-keywords.json');
+    if (r.ok) EMOJI_KEYWORD_MAP = await r.json();
+  } catch (_) {}
+  buildEmojiPicker();
+}
+
+function filterEmojiPicker(query) {
+  const q = (query || '').trim().toLowerCase();
+  const words = q ? q.split(/\s+/).filter(Boolean) : [];
+  const items = document.querySelectorAll('#emoji-grid .emoji-item');
+  let visible = 0;
+  items.forEach(el => {
+    const hay = (el.dataset.search || '').toLowerCase();
+    const glyph = (el.textContent || '').trim();
+    const show = !words.length || words.every(w => hay.includes(w) || glyph.includes(w));
+    el.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  let empty = document.getElementById('emoji-empty');
+  if (!empty) {
+    empty = document.createElement('div');
+    empty.id = 'emoji-empty';
+    empty.className = 'emoji-empty';
+    document.getElementById('emoji-grid')?.appendChild(empty);
+  }
+  empty.style.display = visible ? 'none' : 'block';
+  empty.textContent = visible ? '' : 'No emoji match';
 }
 
 function buildEmojiPicker() {
-  const picker = document.getElementById('emoji-picker');
-  EMOJIS.forEach(e => {
+  const grid = document.getElementById('emoji-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  EMOJIS.forEach((e, idx) => {
     const span = document.createElement('span');
     span.className = 'emoji-item';
     span.textContent = e;
+    span.dataset.search = emojiSearchTerms(idx, e);
     span.onclick = () => {
       const input = document.getElementById('msg-input');
       input.value += e;
       input.focus();
       onComposerInput(input);
     };
-    picker.appendChild(span);
+    grid.appendChild(span);
   });
 }
 
@@ -4053,9 +4316,81 @@ window.onChatxzAudioPermissionGranted = function() {
   refreshNetworkStatus();
 };
 
-function startVoice(skipPermissionCheck) {
+function micBrowserLabel() {
+  const ua = navigator.userAgent || '';
+  if (/Firefox/i.test(ua)) return 'Firefox';
+  if (/Helium/i.test(ua)) return 'Helium';
+  if (/Edg\//i.test(ua)) return 'Edge';
+  if (/Chrome/i.test(ua)) return 'Chrome';
+  if (/Safari/i.test(ua) && !/Chrome/i.test(ua)) return 'Safari';
+  return 'your browser';
+}
+
+function firefoxMicHint() {
+  return 'Firefox → Settings → Privacy & Security → Permissions → Microphone → allow http://localhost:8742';
+}
+
+function micAccessHint(err) {
+  const os = detectClientPlatform();
+  const browser = micBrowserLabel();
+  const localUrl = os === 'darwin' ? 'http://localhost:8742' : 'http://127.0.0.1:8742';
+  if (!window.isSecureContext) {
+    return `Microphone needs a secure page — open ${localUrl} (not a raw LAN IP in ${browser})`;
+  }
+  const name = err?.name || '';
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+    if (os === 'darwin') {
+      if (browser === 'Firefox') {
+        return `No microphone — allow mic for localhost in Firefox (${firefoxMicHint()}) and enable Firefox under System Settings → Privacy & Security → Microphone`;
+      }
+      return 'No microphone found — check System Settings → Sound → Input, then Privacy & Security → Microphone for your browser';
+    }
+    if (os === 'windows') return 'No microphone found — plug one in or enable it in Windows Sound settings';
+    if (os === 'linux') return 'No microphone found — check your audio input in system sound settings';
+    return 'No microphone found on this device';
+  }
+  if (name === 'NotReadableError' || name === 'TrackStartError') {
+    return 'Microphone busy — close other apps using it, then try again';
+  }
+  if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || name === 'SecurityError') {
+    if (os === 'darwin') {
+      const ff = browser === 'Firefox' ? ` ${firefoxMicHint()}.` : '';
+      return `Microphone blocked — allow mic for this site in ${browser}${ff} Then System Settings → Privacy & Security → Microphone → enable ${browser}`;
+    }
+    if (os === 'windows') {
+      return `Microphone blocked — in ${browser} click the lock/site icon → Allow microphone. Also Windows Settings → Privacy & security → Microphone → allow desktop apps.`;
+    }
+    if (os === 'linux') {
+      return `Microphone blocked — allow mic for this site in ${browser} and check system audio/privacy settings`;
+    }
+    return `Microphone blocked — allow mic for this site in ${browser}`;
+  }
+  if (os === 'darwin') {
+    return `Microphone access denied — allow mic in ${browser} and macOS Privacy & Security → Microphone`;
+  }
+  if (os === 'windows') {
+    return `Microphone access denied — allow mic in ${browser} and Windows Privacy settings`;
+  }
+  return `Microphone access denied — allow mic for this site in ${browser}`;
+}
+
+async function queryMicPermissionState() {
+  if (!navigator.permissions?.query) return null;
+  try {
+    const status = await navigator.permissions.query({name: 'microphone'});
+    return status?.state || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function startVoice(skipPermissionCheck) {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    toast('Voice recording not supported');
+    toast('Voice recording not supported in this browser');
+    return;
+  }
+  if (!window.isSecureContext) {
+    toast(micAccessHint({name: 'SecurityError'}));
     return;
   }
   if (!skipPermissionCheck && window.chatxzAndroid && !window.chatxzAndroid.hasAudioPermission()) {
@@ -4064,9 +4399,30 @@ function startVoice(skipPermissionCheck) {
     toast('Allow microphone access to record');
     return;
   }
+  if (!skipPermissionCheck) {
+    const perm = await queryMicPermissionState();
+    if (perm === 'denied') {
+      toast(micAccessHint({name: 'NotAllowedError'}));
+      return;
+    }
+  }
   const mimeType = pickVoiceRecorderMime();
   const recorderOpts = mimeType ? {mimeType} : {};
-  navigator.mediaDevices.getUserMedia({audio: true})
+  const richAudio = {
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  };
+  const requestMic = () => navigator.mediaDevices.getUserMedia(richAudio)
+    .catch(err => {
+      if (err?.name === 'NotFoundError' || err?.name === 'OverconstrainedError') {
+        return navigator.mediaDevices.getUserMedia({audio: true});
+      }
+      throw err;
+    });
+  requestMic()
     .then(stream => {
       recording = true;
       voiceChunks = [];
@@ -4108,7 +4464,7 @@ function startVoice(skipPermissionCheck) {
         toast('Microphone blocked — open Settings to allow');
         window.chatxzAndroid.openAppSettings();
       } else {
-        toast('Microphone access denied');
+        toast(micAccessHint(err));
       }
     });
 }
@@ -4251,7 +4607,13 @@ async function pickReceivedDir() {
     return;
   }
 
-  toast('Opening folder picker… a Windows dialog should appear (check the taskbar).');
+  const os = detectClientPlatform();
+  const pickerMsg = os === 'windows'
+    ? 'Opening folder picker… a Windows dialog should appear (check the taskbar).'
+    : os === 'darwin'
+      ? 'Opening folder picker… a macOS dialog should appear.'
+      : 'Opening folder picker…';
+  toast(pickerMsg);
   try {
     const r = await fetch('/api/browse-dir');
     const d = await r.json();

@@ -430,6 +430,9 @@ class MessagingBackend:
         peer = self.dest_hash_for(peer_hash)
         if user_initiated and peer:
             self.mark_user_disconnected(peer)
+            self.clear_session_peer()
+            self._transport_reconnect_pending = False
+            self._last_link_lost_at = 0
         closed = 0
         for link in list(self.links.values()):
             resolved = self._peer_hash_from_link_identity(link)
@@ -452,10 +455,9 @@ class MessagingBackend:
                 self.active_link = None
                 self.active_peer_hash = None
                 self._send_link = None
-            if self._session_peer_hash and self.hashes_equivalent(
-                self._session_peer_hash, peer
-            ):
-                self.clear_session_peer()
+            self.clear_session_peer()
+            self._transport_reconnect_pending = False
+            self._last_link_lost_at = 0
         return closed > 0
 
     def mark_user_disconnected(self, peer_hash):
@@ -834,15 +836,15 @@ class MessagingBackend:
                 order = ("tcp", "serial")
         elif lan_up and serial_up:
             if self._serial_faster_than_lan(peer):
-                order = ("serial", "tcp", "udp", "lan") if tcp_lan else ("serial", "udp", "lan")
+                order = ("serial", "udp", "tcp", "lan") if tcp_lan else ("serial", "udp", "lan")
             else:
-                order = ("tcp", "udp", "lan", "serial") if tcp_lan else ("udp", "lan", "serial")
+                order = ("udp", "tcp", "lan", "serial") if tcp_lan else ("udp", "lan", "serial")
         elif lan_up:
-            order = ("tcp", "udp", "lan", "serial") if tcp_lan else ("udp", "lan", "serial")
+            order = ("udp", "tcp", "lan", "serial") if tcp_lan else ("udp", "lan", "serial")
         elif serial_up:
-            order = ("serial", "tcp", "udp", "lan") if tcp_lan else ("serial", "udp", "lan")
+            order = ("serial", "udp", "tcp", "lan") if tcp_lan else ("serial", "udp", "lan")
         else:
-            order = ("tcp", "udp", "serial", "lan") if tcp_lan else ("udp", "serial", "lan")
+            order = ("udp", "tcp", "serial", "lan") if tcp_lan else ("udp", "serial", "lan")
         seen = set()
         out = []
         for fam in order:
@@ -2341,8 +2343,18 @@ class MessagingBackend:
             prune_dead_serial_interfaces()
             self._silent_announce()
 
+    def cancel_all_transfers(self):
+        """Abort in-flight file sends/receives during shutdown."""
+        self.shutdown_requested = True
+        for tid in list(self._active_resources.keys()):
+            self.cancel_transfer(transfer_id=tid)
+        if self._current_transfer_id:
+            self.cancel_transfer(transfer_id=self._current_transfer_id)
+
     def stop(self):
         self.running = False
+        self.shutdown_requested = True
+        self.cancel_all_transfers()
         for link_id, link in self.links.items():
             try:
                 link.teardown()
@@ -2825,11 +2837,17 @@ class MessagingBackend:
                 self._flush_pending_files_failed(link.link_id)
             closing_active = self.active_link and self.active_link.link_id == link.link_id
             if closing_active and not self._link_handoff:
-                if self.active_peer_hash:
+                lost_peer = self.dest_hash_for(self.active_peer_hash)
+                if (
+                    self.active_peer_hash
+                    and lost_peer
+                    and not self.is_user_disconnected(lost_peer)
+                ):
                     self._session_peer_hash = self.active_peer_hash
                 self.active_link = None
                 self.active_peer_hash = None
-                self._last_link_lost_at = time.time()
+                if lost_peer and not self.is_user_disconnected(lost_peer):
+                    self._last_link_lost_at = time.time()
                 remaining = [
                     p for p in self.linked_peers()
                     if p and not is_hub_peer_hash(p)
@@ -3996,7 +4014,7 @@ class MessagingBackend:
     def _resource_send_callback(self, fname, transfer_id=None, fsize=0):
         def callback(resource):
             self._cleanup_transfer(transfer_id)
-            if transfer_id in self._cancelled_transfers:
+            if self.shutdown_requested or transfer_id in self._cancelled_transfers:
                 self._cancelled_transfers.discard(transfer_id)
                 print(f"[messaging] File transfer cancelled: {fname}")
                 self._emit_progress(fname, 0, fsize, status="cancelled", direction="send", transfer_id=transfer_id)

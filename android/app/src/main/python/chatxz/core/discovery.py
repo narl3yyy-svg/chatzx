@@ -4,6 +4,7 @@ import time
 import RNS
 
 from chatxz.core.lan_rns import register_udp_peer_ip
+from chatxz.utils.lan_scope import same_lan_scope
 
 def discovery_timeout_s():
     return 300
@@ -195,9 +196,17 @@ class PeerDiscovery:
             self._notify_peer_evicted(removed, peer)
         existing = self.peers.get(hash_hex)
         if existing:
-            if peer.get("ip") and not existing.get("ip"):
+            new_ip = (peer.get("ip") or "").strip()
+            if new_ip and new_ip != (existing.get("ip") or "").strip():
+                existing["ip"] = new_ip
+                existing["port"] = peer.get("port", existing.get("port", 8742))
+            elif peer.get("ip") and not existing.get("ip"):
                 existing["ip"] = peer["ip"]
                 existing["port"] = peer.get("port", 8742)
+            if peer.get("identity_hash") and not existing.get("identity_hash"):
+                existing["identity_hash"] = peer["identity_hash"]
+            if peer.get("pubkey") and not existing.get("pubkey"):
+                existing["pubkey"] = peer["pubkey"]
             if peer.get("name") and peer["name"] != hash_hex[:8]:
                 existing["name"] = peer["name"]
             if peer.get("via") != "beacon" or existing.get("via") == "beacon":
@@ -259,7 +268,7 @@ class PeerDiscovery:
             f"[discovery] RNS peer discovered ({via}): {name or hash_hex[:12]}...",
         )
 
-    def _on_beacon(self, data, my_dest_hash, my_identity_hash=None):
+    def _on_beacon(self, data, my_dest_hash, my_identity_hash=None, source_ip=None):
         if not self.running or not self.accept_peers:
             return False
         if data.get("app") != APP_NAME:
@@ -282,7 +291,22 @@ class PeerDiscovery:
         if identity_hex and identity_hex == my_ident:
             return False
         peer["last_seen"] = time.time()
-        peer["ip"] = data.get("ip") or peer.get("ip")
+        peer_ip = (data.get("ip") or peer.get("ip") or "").strip()
+        source = (source_ip or "").strip()
+        try:
+            from chatxz.utils.platform import lan_ip
+            local_ip = (lan_ip() or "").strip()
+        except Exception:
+            local_ip = ""
+        if local_ip:
+            if peer_ip and not same_lan_scope(peer_ip, local_ip):
+                if source and same_lan_scope(source, local_ip):
+                    peer_ip = source
+                else:
+                    return False
+            elif not peer_ip and source and not same_lan_scope(source, local_ip):
+                return False
+        peer["ip"] = peer_ip or source or peer.get("ip")
         peer["port"] = data.get("port", peer.get("port", 8742))
         name = peer.get("name") or hash_hex[:8]
         peer["name"] = name
@@ -337,11 +361,42 @@ class PeerDiscovery:
     def _same_subnet(ip_a, ip_b):
         if not ip_a or not ip_b:
             return True
-        parts_a = str(ip_a).split(".")
-        parts_b = str(ip_b).split(".")
-        if len(parts_a) != 4 or len(parts_b) != 4:
-            return True
-        return parts_a[:3] == parts_b[:3]
+        return same_lan_scope(ip_a, ip_b)
+
+    def _same_ip_preferred(self, a, b):
+        """Pick the better peer record when two entries share an IP."""
+        a_verified = bool(a.get("pubkey"))
+        b_verified = bool(b.get("pubkey"))
+        if a_verified != b_verified:
+            return a if a_verified else b
+        a_name = (a.get("name") or "").strip()
+        b_name = (b.get("name") or "").strip()
+        a_hash = normalize_hash(a.get("hash"))
+        b_hash = normalize_hash(b.get("hash"))
+        same_name = (
+            a_name
+            and b_name
+            and a_name == b_name
+            and a_name != a_hash[:8]
+            and b_name != b_hash[:8]
+        )
+        if same_name:
+            return a if a.get("last_seen", 0) >= b.get("last_seen", 0) else b
+        rank_a = self._peer_rank(a)
+        rank_b = self._peer_rank(b)
+        if rank_a != rank_b:
+            return a if rank_a > rank_b else b
+        return a if a.get("last_seen", 0) >= b.get("last_seen", 0) else b
+
+    @staticmethod
+    def _peer_dedup_key(peer):
+        ident = normalize_hash(peer.get("identity_hash"))
+        if ident:
+            return f"ident:{ident}"
+        pubkey = (peer.get("pubkey") or "").strip()
+        if pubkey:
+            return f"pk:{pubkey[:48]}"
+        return f"hash:{normalize_hash(peer.get('hash'))}"
 
     def get_peers(self, scope_ip=None):
         if not self.accept_peers:
@@ -356,8 +411,7 @@ class PeerDiscovery:
         for peer in self.peers.values():
             if scope_ip and peer.get("ip") and not self._same_subnet(peer["ip"], scope_ip):
                 continue
-            ip = peer.get("ip")
-            key = f"{ip}:{peer.get('port', 8742)}" if ip else peer["hash"]
+            key = self._peer_dedup_key(peer)
             existing = deduped.get(key)
             if not existing:
                 deduped[key] = peer
@@ -391,7 +445,19 @@ class PeerDiscovery:
                 deduped[key] = peer
             elif peer_score == existing_score and peer.get("last_seen", 0) >= existing.get("last_seen", 0):
                 deduped[key] = peer
-        return list(deduped.values())
+        collapsed = {}
+        no_ip_peers = []
+        for peer in deduped.values():
+            ip = (peer.get("ip") or "").strip()
+            if not ip:
+                no_ip_peers.append(peer)
+                continue
+            existing = collapsed.get(ip)
+            if not existing:
+                collapsed[ip] = peer
+                continue
+            collapsed[ip] = self._same_ip_preferred(peer, existing)
+        return no_ip_peers + list(collapsed.values())
 
     def current_hashes(self):
         hashes = set()

@@ -105,6 +105,82 @@ def migrate_contact_by_ip(config_dir, ip, new_hash, name=None, port=None, identi
     return removed
 
 
+def _same_subnet(ip_a, ip_b):
+    """True when two IPv4 addresses are on the same LAN scope for contact updates."""
+    from chatxz.utils.lan_scope import same_lan_scope
+    return same_lan_scope(ip_a, ip_b)
+
+
+def should_update_contact_ip(contact_ip, new_ip, local_scope_ip=None):
+    """Prefer pinned-LAN subnet IPs; ignore cross-subnet beacons when contact is local."""
+    new_ip = (new_ip or "").strip()
+    contact_ip = (contact_ip or "").strip()
+    if not new_ip:
+        return False
+    if not contact_ip:
+        return True
+    if contact_ip == new_ip:
+        return False
+    scope = (local_scope_ip or "").strip()
+    if not scope:
+        return True
+    new_local = _same_subnet(new_ip, scope)
+    contact_local = _same_subnet(contact_ip, scope)
+    if new_local and not contact_local:
+        return True
+    if new_local and contact_local:
+        return True
+    if not new_local and contact_local:
+        return False
+    return True
+
+
+def update_contact_endpoint(
+    config_dir,
+    peer_hash,
+    ip=None,
+    port=None,
+    identity_hash=None,
+    peers_equivalent=None,
+    name=None,
+    local_scope_ip=None,
+):
+    """Refresh saved contact LAN endpoint when the same peer moves to a new IP."""
+    clean = (peer_hash or "").strip().replace(":", "")
+    if not clean:
+        return None
+    target_ip = (ip or "").strip()
+    peer_name = (name or "").strip().lower()
+    updated = None
+    for contact in list_contacts(config_dir):
+        ch = (contact.get("hash") or "").replace(":", "")
+        ih = (contact.get("identity_hash") or "").replace(":", "")
+        same = ch == clean
+        if not same and peers_equivalent:
+            same = peers_equivalent(ch, clean) or (ih and peers_equivalent(ih, clean))
+        if not same and identity_hash:
+            ident = str(identity_hash).strip().replace(":", "")
+            same = ih == ident or ch == ident
+        if not same and peer_name:
+            cn = (contact.get("name") or "").strip().lower()
+            if cn and cn == peer_name:
+                same = True
+        if not same:
+            continue
+        contact_ip = (contact.get("ip") or "").strip()
+        if target_ip and should_update_contact_ip(contact_ip, target_ip, local_scope_ip):
+            updated = save_contact(
+                config_dir,
+                ch,
+                name=contact.get("name"),
+                ip=target_ip,
+                port=port if port is not None else contact.get("port"),
+                identity_hash=identity_hash or ih or None,
+            )
+        break
+    return updated
+
+
 def contact_connect_meta(config_dir, peer_hash, peers_equivalent):
     """Return (ip, port) stored on a saved contact, if any."""
     clean = (peer_hash or "").strip().replace(":", "")

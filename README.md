@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.136
+**Current version:** 0.3.137
 
 ## Download
 
@@ -68,7 +68,7 @@ uninstall.bat
 
 1. Download the **`.apk`** from [Releases](https://github.com/narl3yyy-svg/chatxz/releases).
 2. Install and open chatxz.
-3. Grant notification permission when asked. Microphone is requested when you tap 🎤 to record a voice note, or tap **Microphone** in Settings → Network.
+3. Grant notification permission when asked. Microphone is requested when you tap 🎤 to record a voice note, or tap **Microphone** in the sidebar **Network** panel.
 
 Reinstalling the app creates a **new identity** — update saved contacts after reinstall.
 
@@ -195,6 +195,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.137** — **Network** sidebar panel (live status, Announce, reset) separate from **Settings** (IPv4 pin, UDP/TCP LAN, hub, serial); discovery in Auto mode scopes to your primary LAN /24 (10.0.30.x no longer mixes with 10.10.100.x); cross-subnet beacon filter; release notes on first install and updates
 - **v0.3.136** — macOS/Firefox mic hints (no more Windows text on Mac); Firefox voice retry with simpler audio constraints; **Disconnect** no longer auto-reconnects after 5–10s; TCP LAN `ifac_netname` crash patch on incoming connections
 - **v0.3.135** — Emoji search uses per-emoji names/aliases (`zebra`, `pizza`, `heart`, etc.) via `emoji-keywords.json`
 - **v0.3.134** — LAN scope match fix: `172.17.13.x` peers visible when pinned to `172.17.121.x` (same `172.17/16`); contact IP no longer overwritten by `10.0.5.x` VPN beacons

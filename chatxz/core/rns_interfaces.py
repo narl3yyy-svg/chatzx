@@ -435,7 +435,17 @@ def set_primary_lan_transport(interfaces, preset_key):
         kept.append(iface)
     if any(i.get("preset") == preset_key for i in kept):
         return kept
-    return add_interface(kept, preset_key)
+    preset = INTERFACE_PRESETS.get(preset_key)
+    if not preset:
+        return kept
+    entry = {
+        "id": _new_id(),
+        "preset": preset_key,
+        "name": f"{preset['label']} {_new_id()}",
+        **copy.deepcopy(preset["defaults"]),
+    }
+    # Avoid add_interface([]) — normalize_interface_list([]) re-inserts UDP LAN.
+    return normalize_interface_list(kept + [entry] if kept else [entry])
 
 
 def delete_interface(items, iface_id):
@@ -1236,14 +1246,19 @@ def render_rns_config(
             if iface.get("ifac_size"):
                 lines.append(f"    ifac_size = {iface.get('ifac_size')}")
         lines.append("")
-    # AutoInterface also binds UDP 4242 — never combine with explicit UDP LAN preset.
+    # AutoInterface also binds UDP 4242 — never combine with explicit LAN presets.
     has_udp_lan = any(
         i.get("type") == "UDPInterface" and i.get("enabled", True)
         for i in normalized
     )
+    has_lan_preset = any(
+        i.get("preset") in ("udp_lan", "tcp_lan") for i in normalized
+    )
     if (
         auto_interface_enabled
         and not has_udp_lan
+        and not has_tcp_lan
+        and not has_lan_preset
         and not android
         and sys.platform != "win32"
     ):
