@@ -400,8 +400,9 @@ class MessagingBackend:
             if link and is_serial_interface(self._link_attached_interface(link)):
                 return True
             return not self.peer_scope_checker
-        if link and not self._link_acceptable_for_peer(link, peer_hash):
-            return False
+        if link and not is_serial_interface(self._link_attached_interface(link)):
+            if not self._link_acceptable_for_peer(link, peer_hash):
+                return False
         if not self.peer_scope_checker:
             return True
         if is_hub_peer_hash(peer_hash):
@@ -553,9 +554,10 @@ class MessagingBackend:
             use_link = self._adopt_healthy_peer_link(peer) or self._best_outgoing_link(peer)
         if use_link:
             self._consolidate_peer_links(peer, keep_link=use_link)
-        if initiated and not self.is_user_disconnected(peer):
+        if not self.is_user_disconnected(peer):
             self._schedule_queue_drain(peer, link=use_link, include_files=True)
-            self._schedule_hub_queue_drain()
+            if initiated:
+                self._schedule_hub_queue_drain()
         return True
 
     def _discovery_peer_meta(self, dest_hex, peer_ip=None, peer_lookup=None):
@@ -575,14 +577,14 @@ class MessagingBackend:
         """True when the peer is a direct USB neighbor (no usable in-scope LAN IP)."""
         if not self._serial_transport_ready():
             return False
-        if peer_ip and self._peer_lan_ip_usable(peer_ip):
-            return False
         meta = self._discovery_peer_meta(dest_hex, peer_ip=peer_ip, peer_lookup=peer_lookup)
         if meta:
             if (meta.get("via") or "").strip() == "serial":
                 return True
             if not (meta.get("ip") or "").strip():
                 return True
+        if peer_ip and self._peer_lan_ip_usable(peer_ip):
+            return False
         if not peer_ip:
             return True
         return False
@@ -1160,13 +1162,13 @@ class MessagingBackend:
             return
         if prefer_family == "serial":
             if self._serial_transport_ready():
-                self._burst_serial_announce(count=5, interval=0.25)
+                self._burst_serial_announce(count=5, interval=0.25, force=True)
             return
         if prefer_family in ("udp", "lan"):
             if physical_lan_reachable():
-                self._silent_announce(peer_ip=peer_ip)
+                self._silent_announce(peer_ip=peer_ip, also_serial=False)
             elif self._serial_transport_ready():
-                self._burst_serial_announce(count=3, interval=0.25)
+                self._burst_serial_announce(count=3, interval=0.25, force=True)
             return
         self._silent_announce(peer_ip=peer_ip if physical_lan_reachable() else None)
 
@@ -2205,7 +2207,7 @@ class MessagingBackend:
                 if not self.running:
                     return
                 time.sleep(1)
-            if self.message_queue and self.peer_links:
+            if self.message_queue:
                 try:
                     self.retry_queue()
                 except Exception as e:
@@ -2263,9 +2265,9 @@ class MessagingBackend:
             pass
         return True
 
-    def _burst_serial_announce(self, count=None, interval=None):
+    def _burst_serial_announce(self, count=None, interval=None, force=False):
         """Send several RNS announces on serial only — slow links need repeats."""
-        if self._connect_in_progress or self._failover_in_progress:
+        if not force and (self._connect_in_progress or self._failover_in_progress):
             return 0
         if not self.destination or not self._serial_transport_ready():
             return 0
@@ -2286,8 +2288,10 @@ class MessagingBackend:
         print(f"[serial] Burst {burst} RNS announce(s) on {port}")
         return burst
 
-    def _silent_announce(self, peer_ip=None):
+    def _silent_announce(self, peer_ip=None, also_serial=None):
         """RNS path refresh only — no subnet beacon probe."""
+        if also_serial is None:
+            also_serial = not self._failover_in_progress
         if not self.destination:
             return
         announce_data = self._announce_payload()
@@ -2341,7 +2345,8 @@ class MessagingBackend:
             except Exception:
                 pass
         if (
-            self._serial_transport_ready()
+            also_serial
+            and self._serial_transport_ready()
             and configured_serial_enabled(interfaces)
             and (udp_lan or use_tcp_lan)
         ):
@@ -2374,8 +2379,12 @@ class MessagingBackend:
             udp_iface = udp_interface_online()
             if udp_iface:
                 self._announce_on_interface(udp_iface, app_data=announce_data)
+            elif self._serial_transport_ready():
+                self._burst_serial_announce(count=3, interval=0.3)
             else:
                 self.destination.announce(app_data=announce_data)
+        elif self._serial_transport_ready():
+            self._burst_serial_announce(count=3, interval=0.3)
         else:
             self.destination.announce(app_data=announce_data)
         if unicast_subnet is None:
@@ -2580,7 +2589,7 @@ class MessagingBackend:
                 return False
             now = time.time()
             if now - last_burst >= 2.0:
-                self._burst_serial_announce(count=2, interval=0.3)
+                self._burst_serial_announce(count=2, interval=0.3, force=True)
                 request_paths_for_hash(dest_hex, family="serial")
                 last_burst = now
             path_iface = wait_for_peer_path_families(
@@ -2691,7 +2700,7 @@ class MessagingBackend:
             pass
         print("[connect] Link established")
         self._schedule_queue_drain(
-            dest_hex, link=link, include_files=not self._failover_in_progress,
+            dest_hex, link=link, include_files=not self._has_active_transfer(),
         )
         return True
 
@@ -3755,6 +3764,18 @@ class MessagingBackend:
             if handoff:
                 self._link_handoff = False
 
+    def _drain_queue_after_reconnect(self, peer_hash=None):
+        """Send queued messages once a reconnect path is live."""
+        peer = self.dest_hash_for(
+            peer_hash or self._session_peer_hash or self.active_peer_hash or ""
+        )
+        if not peer or peer == "unknown" or is_hub_peer_hash(peer):
+            return
+        if self.is_user_disconnected(peer) or not self._peer_link_active(peer):
+            return
+        link = self._link_for_peer(peer) or self.active_link
+        self._schedule_queue_drain(peer, link=link, include_files=True)
+
     def resume_session_peer(self, peer_ip=None, peer_port=None, peer_lookup=None,
                             caller_ip=None, caller_port=8742):
         """Reconnect to the saved session peer after link drop or UI resume."""
@@ -3841,6 +3862,8 @@ class MessagingBackend:
                     inbound_wait = SERIAL_INBOUND_FIRST_WAIT_S
                     print(f"[connect] Failover waiting for serial inbound ({inbound_wait}s)...")
                     if self._wait_for_peer_link(peer, timeout_s=inbound_wait):
+                        self._adopt_healthy_peer_link(peer)
+                        self._drain_queue_after_reconnect(peer)
                         print("[connect] Failover complete (serial inbound)")
                         return True
                 elif (
@@ -3852,6 +3875,8 @@ class MessagingBackend:
                     inbound_wait = INITIATOR_INBOUND_WAIT_S
                     print(f"[connect] Failover waiting for inbound link on {prefer} ({inbound_wait}s)...")
                     if self._wait_for_peer_link(peer, timeout_s=inbound_wait):
+                        self._adopt_healthy_peer_link(peer)
+                        self._drain_queue_after_reconnect(peer)
                         print(f"[connect] Failover complete (inbound via {prefer})")
                         return True
                 if self._interrupted():
@@ -3868,6 +3893,7 @@ class MessagingBackend:
                 )
                 if result:
                     self._adopt_healthy_peer_link(peer)
+                    self._drain_queue_after_reconnect(peer)
                     print(f"[connect] Failover complete via {prefer}")
                     return True
                 if prefer == families[-1]:

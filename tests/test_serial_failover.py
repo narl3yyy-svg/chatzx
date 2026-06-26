@@ -58,6 +58,38 @@ class SerialConnectPreferenceTests(unittest.TestCase):
                     )
                 )
 
+    def test_should_prefer_serial_when_meta_serial_despite_stale_contact_ip(self):
+        backend = self._backend()
+        peer_hash = "f1c2ac9061239f7c096701f02969729c"
+        lookup = lambda _ip, _h: {
+            "hash": peer_hash,
+            "name": "UBUNTU",
+            "via": "serial",
+        }
+        with patch.object(backend, "_serial_transport_ready", return_value=True):
+            with patch.object(backend, "_peer_lan_ip_usable", return_value=True):
+                self.assertTrue(
+                    backend._should_prefer_serial_connect(
+                        peer_hash,
+                        peer_ip="10.10.10.10",
+                        peer_lookup=lookup,
+                    )
+                )
+
+    def test_burst_serial_announce_force_ignores_connect_guard(self):
+        backend = self._backend()
+        backend._connect_in_progress = True
+        backend.destination = MagicMock()
+        with patch.object(backend, "_serial_transport_ready", return_value=True):
+            with patch.object(backend, "_announce_on_interface", return_value=True) as announce:
+                with patch("chatxz.core.messaging.serial_interface_online", return_value=MagicMock(port="/dev/ttyUSB0")):
+                    with patch("chatxz.core.messaging.suppress_offline_lan_transports"):
+                        with patch("chatxz.core.messaging.dedupe_serial_interfaces"):
+                            with patch("chatxz.core.messaging.prune_dead_serial_interfaces"):
+                                sent = backend._burst_serial_announce(count=1, force=True)
+        self.assertEqual(sent, 1)
+        announce.assert_called()
+
     def test_udp_connect_ready_false_for_stale_non_udp_path(self):
         backend = self._backend()
         peer_hash = "d" * 32

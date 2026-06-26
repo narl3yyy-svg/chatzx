@@ -297,6 +297,9 @@ def prune_cross_zone_paths(serial_peer_hashes=None):
                     if is_lan_transport_family(fam):
                         RNS.Transport.path_table.pop(dest_bytes, None)
                         removed += 1
+                elif fam == "serial" and serial_peers:
+                    RNS.Transport.path_table.pop(dest_bytes, None)
+                    removed += 1
     except Exception:
         pass
     return removed
@@ -553,6 +556,29 @@ def register_udp_peer_ip(ip):
     if not host or host.startswith("127.") or host.startswith("169.254."):
         return
     _known_peer_ips.add(host)
+
+
+def unregister_udp_peer_ip(ip):
+    host = (ip or "").strip()
+    if host:
+        _known_peer_ips.discard(host)
+
+
+def prune_known_udp_peer_ips(scope_ip=None):
+    """Drop cached UDP targets outside the active LAN scope."""
+    scope = (scope_ip or "").strip()
+    if not scope:
+        return 0
+    removed = 0
+    for host in list(_known_peer_ips):
+        try:
+            from chatxz.utils.lan_scope import peer_in_scope
+            if not peer_in_scope(host, scope):
+                _known_peer_ips.discard(host)
+                removed += 1
+        except Exception:
+            pass
+    return removed
 
 
 def known_udp_peer_ips():

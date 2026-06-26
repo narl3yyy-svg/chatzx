@@ -3,6 +3,13 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.3.160": [
+        "Serial connect priming works during connect/failover — announces are no longer suppressed mid-handshake.",
+        "Queued messages drain on all reconnect paths (failover, resume, inbound), not only manual Connect.",
+        "Discovery prefers in-scope LAN peers over serial when both transports are up; stale contact IPs no longer force LAN to USB peers.",
+        "Serial inbound links and IP-less peers pass scope checks while USB is configured (not only when already online).",
+        "Discovery classifies peers from the receiving RNS interface; stale UDP targets are pruned on scope change.",
+    ],
     "0.3.159": [
         "IP-less RNS announces are always treated as serial peers — fixes Ubuntu not discovering ARCH on USB even when Arch sees Ubuntu.",
         "Serial connect pins the path on SerialInterface so LAN UDP announces cannot steal the route mid-handshake.",

@@ -649,13 +649,24 @@ class ChatWebServer:
         # Auto mode: scope discovery to primary LAN /24 (not entire 10/8 or all NICs).
         return detect_lan_ip() or discovery_scope_ip()
 
+    def _sender_has_serial_path(self, sender_hash):
+        if not self.messaging or not sender_hash:
+            return False
+        from chatxz.core.lan_rns import peer_path_on_family
+        sender = self.messaging.dest_hash_for(sender_hash)
+        return bool(sender and peer_path_on_family(sender, "serial"))
+
     def _peer_in_discovery_scope(self, peer_hash, link=None):
         from chatxz.core.discovery import normalize_hash, serial_discovery_active
         from chatxz.core.lan_rns import interface_family, peer_path_on_family
         from chatxz.utils.lan_scope import peer_in_scope
 
-        if link and self.messaging and not self.messaging._link_acceptable_for_peer(link, peer_hash):
-            return False
+        if link and self.messaging:
+            iface = self.messaging._link_attached_interface(link)
+            if interface_family(iface) == "serial":
+                return True
+            if not self.messaging._link_acceptable_for_peer(link, peer_hash):
+                return False
         if is_hub_peer_hash(peer_hash):
             return True
         scope = self._discovery_scope_ip()
@@ -689,14 +700,18 @@ class ChatWebServer:
             ) == "serial":
                 return True
         if not peer_ip:
+            from chatxz.core.rns_interfaces import configured_serial_enabled, load_settings_interfaces
+            if configured_serial_enabled(load_settings_interfaces(self.config_dir)):
+                return True
             return serial_discovery_active()
         return peer_in_scope(peer_ip, scope)
 
     def _apply_lan_scope_change(self):
         """Drop links/paths/peers when the user changes LAN IPv4 scope."""
-        from chatxz.core.lan_rns import clear_all_lan_paths
+        from chatxz.core.lan_rns import clear_all_lan_paths, prune_known_udp_peer_ips
 
         scope = self._discovery_scope_ip()
+        prune_known_udp_peer_ips(scope)
         invalidate_desktop_interface_cache(use_powershell=sys.platform == "win32")
         apply_lan_interface_preference(self.config_dir)
         if self.messaging:
@@ -1569,6 +1584,7 @@ class ChatWebServer:
             and sender_hash != "system"
             and not is_hub_peer_hash(sender_hash)
             and not self._peer_in_discovery_scope(sender_hash)
+            and not self._sender_has_serial_path(sender_hash)
         ):
             if self.debug:
                 print(
@@ -2344,6 +2360,19 @@ class ChatWebServer:
                     by_hash = by_hash or p
                 if via == "rns":
                     by_rns = p
+        if by_serial and by_rns:
+            from chatxz.utils.platform import physical_lan_reachable
+            from chatxz.utils.lan_scope import peer_in_scope
+
+            rns_ip = (by_rns.get("ip") or "").strip()
+            scope = self._discovery_scope_ip()
+            if (
+                rns_ip
+                and physical_lan_reachable()
+                and (not scope or peer_in_scope(rns_ip, scope))
+            ):
+                return by_rns
+            return by_serial
         if by_serial:
             return by_serial
         if by_rns:
@@ -2849,14 +2878,26 @@ class ChatWebServer:
     def _peer_connect_meta(self, peer_hash):
         peer_ip = None
         peer_port = 8742
+        meta = self._discovery_peer_for_connect(None, peer_hash)
+        if meta:
+            via = (meta.get("via") or "").strip()
+            if via == "serial":
+                return None, meta.get("port") or peer_port
+            if meta.get("ip"):
+                return meta.get("ip"), meta.get("port") or peer_port
+            peer_port = meta.get("port") or peer_port
         stored_ip, stored_port = contact_connect_meta(
             self.config_dir, peer_hash, self._peers_equivalent
         )
-        if stored_ip:
+        if stored_ip and not (
+            meta and (meta.get("via") or "").strip() == "serial"
+        ):
             peer_ip = stored_ip
             peer_port = stored_port or peer_port
         peer = self._peer_in_discovery(peer_hash)
-        if peer:
+        if peer and not (
+            (peer.get("via") or "").strip() == "serial" or (meta and not meta.get("ip"))
+        ):
             if peer.get("ip"):
                 peer_ip = peer.get("ip")
             peer_port = peer.get("port") or peer_port
@@ -4742,7 +4783,7 @@ class ChatWebServer:
                 break
             if self._shutting_down or not self.messaging:
                 continue
-            if not self.messaging.message_queue or not self.messaging.peer_links:
+            if not self.messaging.message_queue:
                 continue
             try:
                 sent = await asyncio.to_thread(self.messaging.retry_queue)

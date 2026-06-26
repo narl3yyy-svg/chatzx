@@ -153,13 +153,13 @@ class InboundLinkTests(unittest.TestCase):
             "via": "rns",
             "ip": "10.10.10.10",
         }
-        with patch.object(backend, "_peer_allowed_by_scope", return_value=True):
-            with patch.object(
-                backend,
-                "_peer_expected_transport_families",
-                return_value={"udp", "lan", "tcp"},
-            ):
-                with patch("chatxz.core.messaging.interface_family", return_value="serial"):
+        with patch.object(
+            backend,
+            "_peer_expected_transport_families",
+            return_value={"udp", "lan", "tcp"},
+        ):
+            with patch("chatxz.core.messaging.interface_family", return_value="serial"):
+                with patch("chatxz.core.messaging.is_serial_interface", return_value=True):
                     with patch.object(backend, "_setup_link"):
                         with patch(
                             "chatxz.core.messaging.message_dest_hash_for_identity",
@@ -198,6 +198,40 @@ class InboundLinkTests(unittest.TestCase):
         self.assertEqual(len(notified), 1)
         self.assertTrue(notified[0].get("passive"))
         self.assertIsNone(backend.active_peer_hash)
+
+    def test_finish_connect_drains_queue_on_failover_reconnect(self):
+        backend = _make_backend()
+        peer = "4a2aa1dbbed382886b0333274e546ba8"
+        ident = "f687bbff423a220af49f04edb8381ab2"
+        link = _FakeLink("55" * 16, ident)
+        backend.links[link.link_id] = link
+        backend._link_peer_hashes[link.link_id] = peer
+        backend.peer_links[peer] = link
+        backend.register_peer_mapping(peer, ident)
+        backend.message_queue = [{
+            "type": "text",
+            "content": "queued after reconnect",
+            "target_hash": peer,
+            "msg_id": "feedface",
+        }]
+        backend._connect_user_initiated = False
+        sent = []
+
+        def fake_send(text, msg_id=None, target_peer=None, link=None, receipt_callback=None, **kwargs):
+            sent.append(text)
+            from chatxz.core.messaging import ChatMessage
+            msg = ChatMessage("text", text, msg_id=msg_id)
+            if receipt_callback:
+                receipt_callback("received", {"msg_id": msg_id})
+            return msg
+
+        def immediate_drain(peer_hash, link=None, include_files=True, delay=None):
+            backend._drain_queue_for_peer(peer_hash, link_hint=link, include_files=include_files)
+
+        with patch.object(backend, "_schedule_queue_drain", side_effect=immediate_drain):
+            with patch.object(backend, "send_message", side_effect=fake_send):
+                backend._finish_connect(peer, link=link, user_initiated=False)
+        self.assertEqual(sent, ["queued after reconnect"])
 
     def test_finish_connect_drains_queue_on_user_connect(self):
         backend = _make_backend()

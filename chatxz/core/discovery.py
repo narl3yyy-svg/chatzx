@@ -3,7 +3,13 @@ import json
 import time
 import RNS
 
-from chatxz.core.lan_rns import register_udp_peer_ip, serial_interface_online
+from chatxz.core.lan_rns import (
+    announce_receiving_interface,
+    interface_family,
+    register_udp_peer_ip,
+    serial_interface_online,
+    unregister_udp_peer_ip,
+)
 from chatxz.core.rns_interfaces import configured_serial_enabled, load_settings_interfaces
 from chatxz.utils.lan_scope import peer_in_scope, same_lan_scope
 
@@ -149,6 +155,7 @@ class PeerDiscovery:
             peer = self.peers.get(key) or {}
             ip = (peer.get("ip") or "").strip()
             if ip and not same_lan_scope(ip, scope):
+                unregister_udp_peer_ip(ip)
                 del self.peers[key]
                 removed += 1
         return removed
@@ -257,6 +264,9 @@ class PeerDiscovery:
         clean = normalize_hash(hash_hex)
         if not clean or clean not in self.peers:
             return
+        removed_ip = (self.peers.get(clean) or {}).get("ip")
+        if removed_ip:
+            unregister_udp_peer_ip(removed_ip)
         del self.peers[clean]
         self._last_log.pop(clean, None)
         self._last_log.pop(f"beacon:{clean}", None)
@@ -369,7 +379,11 @@ class PeerDiscovery:
             return
 
         via = "rns"
-        if not announce_ip and serial_discovery_active():
+        recv_iface = announce_receiving_interface(destination_hash)
+        if recv_iface and interface_family(recv_iface) == "serial":
+            via = "serial"
+            announce_ip = ""
+        elif not announce_ip and serial_discovery_active():
             # LAN announces always carry a scoped IPv4; IP-less means USB serial.
             via = "serial"
         if via == "serial":
@@ -484,7 +498,9 @@ class PeerDiscovery:
 
     def _peer_rank(self, peer):
         score = 0
-        if peer.get("via") == "rns":
+        if peer.get("via") == "serial":
+            score += 22
+        elif peer.get("via") == "rns":
             score += 20
         if peer.get("pubkey"):
             score += 8

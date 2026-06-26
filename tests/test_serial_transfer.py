@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from chatxz.core.serial_transfer import (
     SERIAL_RESOURCE_WINDOW,
+    SERIAL_TRAFFIC_TIMEOUT_FACTOR,
     serial_transfer_timeout_s,
     tune_incoming_resource,
     tune_outgoing_resource,
@@ -33,7 +34,7 @@ class SerialTransferTests(unittest.TestCase):
             return_value=True,
         ):
             tune_serial_link(link, iface)
-        self.assertEqual(link.traffic_timeout_factor, 24)
+        self.assertEqual(link.traffic_timeout_factor, SERIAL_TRAFFIC_TIMEOUT_FACTOR)
         self.assertEqual(link.last_resource_window, SERIAL_RESOURCE_WINDOW)
         self.assertLessEqual(link.mtu, 500)
 
