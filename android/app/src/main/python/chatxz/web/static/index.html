@@ -1747,6 +1747,7 @@ function applySettingsToForm(s, ifaces) {
   }
   window._hubRole = s.hub_role || 'off';
   window._lanTransportHubTcp = s.lan_transport_hub_tcp || {};
+  window._lastLanInterface = s.lan_interface || '';
   const hubRole = document.getElementById('settings-hub-role');
   if (hubRole) hubRole.value = window._hubRole;
   const hubHost = document.getElementById('settings-hub-host');
@@ -3571,23 +3572,34 @@ function populateSetupLanSelect(interfaces, selected) {
 }
 
 function saveLanInterface() {
-  const lan_interface = document.getElementById('settings-lan-interface')?.value || '';
+  const sel = document.getElementById('settings-lan-interface');
+  const lan_interface = sel?.value || '';
+  const prev = window._lastLanInterface || '';
   fetch('/api/settings', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({lan_interface})
   })
-    .then(r => r.json())
-    .then(d => {
-      if (d.status === 'ok') {
-        toast(lan_interface ? `LAN pinned — active links cleared` : 'LAN auto — active links cleared');
-        refreshNetworkStatus(true);
-        if (activePeer) { activePeer = null; updatePeerUI(); }
-      } else {
-        toast('Failed: ' + (d.error || 'unknown'));
+    .then(async r => {
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || d.status !== 'ok') {
+        if (sel && prev !== undefined) sel.value = prev;
+        throw new Error(d.error || `HTTP ${r.status}`);
       }
+      return d;
     })
-    .catch(() => toast('Failed to save LAN interface'));
+    .then(d => {
+      window._lastLanInterface = lan_interface;
+      if (d.settings?.lan_interface !== undefined) {
+        window._appSettings = { ...(window._appSettings || {}), ...d.settings };
+      }
+      const label = lan_interface ? formatLanInterfacePinned(lan_interface) : 'auto';
+      toast(lan_interface ? `LAN pinned to ${label} — links cleared` : 'LAN auto — active links cleared');
+      refreshLanInterfaces(true);
+      refreshNetworkStatus(true);
+      if (activePeer) { activePeer = null; updatePeerUI(); }
+    })
+    .catch(err => toast('Failed to save LAN interface: ' + (err.message || err)));
 }
 
 function startNetworkAutoRefresh() {

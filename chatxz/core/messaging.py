@@ -780,6 +780,21 @@ class MessagingBackend:
             return type(iface).__name__ == "TCPServerInterface"
         return False
 
+    def _peer_uses_hub_transport(self, peer_hash):
+        """Hub TCP is for group chat and the hub server — not local LAN P2P."""
+        if is_hub_peer_hash(peer_hash):
+            return True
+        role, hub_server_hash = self._load_hub_settings()
+        if role == "off":
+            return False
+        peer = normalize_hash(self.dest_hash_for(peer_hash) or peer_hash or "")
+        if len(peer) != 32:
+            return False
+        hub_hex = normalize_hash(hub_server_hash or "")
+        if hub_hex and self.hashes_equivalent(peer, hub_hex):
+            return True
+        return False
+
     def _hub_transport_active(self):
         role, _ = self._load_hub_settings()
         return role != "off"
@@ -882,7 +897,7 @@ class MessagingBackend:
 
     def _failover_families_to_try(self, peer, peer_ip=None):
         """Ordered transports to attempt when reconnecting (LAN preferred unless serial is faster)."""
-        if self._hub_transport_active():
+        if self._hub_transport_active() and self._peer_uses_hub_transport(peer):
             return ["tcp"]
         interfaces = load_settings_interfaces(self.config_dir)
         udp_lan = configured_udp_lan_enabled(interfaces)
@@ -943,7 +958,7 @@ class MessagingBackend:
         self._silent_announce(peer_ip=peer_ip if physical_lan_reachable() else None)
 
     def _preferred_failover_family(self, peer, attached=None, peer_ip=None):
-        if self._hub_transport_active():
+        if self._hub_transport_active() and self._peer_uses_hub_transport(peer):
             return "tcp"
         attached = attached or self._link_attached_interface(self.active_link)
         att_fam = interface_family(attached)
@@ -1124,7 +1139,7 @@ class MessagingBackend:
             return False, ""
 
         attached = self._link_attached_interface(self.active_link)
-        if self._hub_transport_active():
+        if self._hub_transport_active() and self._peer_uses_hub_transport(peer):
             att_fam = interface_family(attached)
             if att_fam == "tcp" and self._link_interface_healthy(self.active_link):
                 return False, ""
@@ -1475,8 +1490,12 @@ class MessagingBackend:
             return None
         best = None
         best_score = -1
+        hub_p2p = self._hub_transport_active() and not self._peer_uses_hub_transport(peer)
         for link in self._links_for_peer(peer):
             if not self._link_interface_healthy(link):
+                continue
+            iface = self._link_attached_interface(link)
+            if hub_p2p and self._link_is_hub_transport(iface):
                 continue
             score = self._link_path_score(link)
             if score > best_score:
@@ -1485,6 +1504,9 @@ class MessagingBackend:
         if best:
             return best
         for link in self._links_for_peer(peer):
+            iface = self._link_attached_interface(link)
+            if hub_p2p and self._link_is_hub_transport(iface):
+                continue
             try:
                 if link.status == RNS.Link.ACTIVE:
                     return link
@@ -3485,6 +3507,11 @@ class MessagingBackend:
 
             dest_hex = normalize_hash(RNS.hexrep(destination.hash))
             self.register_peer_mapping(dest_hex, ident_hex)
+
+            if self._hub_transport_active() and not self._peer_uses_hub_transport(dest_hex):
+                _, path_iface = peer_path_entry(dest_hex)
+                if path_iface and self._link_is_hub_transport(path_iface):
+                    clear_peer_path(dest_hex)
 
             my_hash = normalize_hash(self.my_dest_hash or dest_hex)
             inbound = self._find_active_link_for_peer(dest_hex, clean)

@@ -3,6 +3,11 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.3.143": [
+        "Hub client + pinned LAN: P2P on 10.0.5.x stays on direct UDP — no longer forced onto hub TCP (fixes Android seeing Ubuntu-bound messages).",
+        "Pinned IPv4 scopes discovery even while hub is on — Android/10.0.30.x peers hidden when you pin enp2s0|10.0.5.37.",
+        "LAN interface picker save is more reliable (survives scope-change reload; shows server error text).",
+    ],
     "0.3.142": [
         "Linux Settings → Network lists every IPv4 on a NIC — secondary addresses from ip addr add (e.g. 10.0.5.37 and 10.10.10.37 on enp2s0) now appear in the picker.",
         "Pin a specific address with NIC|IP (e.g. enp2s0|10.0.5.37) to scope discovery and beacons to that subnet.",

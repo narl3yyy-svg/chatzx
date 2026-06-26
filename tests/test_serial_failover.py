@@ -136,11 +136,25 @@ class FailoverPreferenceTests(unittest.TestCase):
                         )):
                             self.assertTrue(backend._serial_faster_than_lan(peer))
 
-    def test_failover_skips_lan_when_hub_mode(self):
+    def test_failover_skips_lan_for_hub_server_peer(self):
         backend = self._backend()
         with patch.object(backend, "_hub_transport_active", return_value=True):
-            families = backend._failover_families_to_try("4a2aa1dbbed382886b0333274e546ba8")
+            with patch.object(backend, "_peer_uses_hub_transport", return_value=True):
+                families = backend._failover_families_to_try("4a2aa1dbbed382886b0333274e546ba8")
         self.assertEqual(families, ["tcp"])
+
+    def test_failover_keeps_udp_for_local_p2p_while_hub_on(self):
+        backend = self._backend()
+        with patch.object(backend, "_hub_transport_active", return_value=True):
+            with patch.object(backend, "_peer_uses_hub_transport", return_value=False):
+                with patch.object(backend, "_has_online_family", return_value=True):
+                    with patch("chatxz.core.messaging.physical_lan_reachable", return_value=True):
+                        with patch("chatxz.core.messaging.configured_udp_lan_enabled", return_value=True):
+                            with patch("chatxz.core.messaging.configured_tcp_lan_enabled", return_value=False):
+                                families = backend._failover_families_to_try(
+                                    "f1c2ac9061239f7c096701f02969729c"
+                                )
+        self.assertIn("udp", families)
 
     def test_on_serial_transport_attached_announces(self):
         backend = self._backend()

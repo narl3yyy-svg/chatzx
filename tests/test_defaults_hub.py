@@ -64,6 +64,68 @@ class LanTransportHubPolicyTests(unittest.TestCase):
             self.assertTrue(policy["allowed"])
 
 
+class HubDiscoveryScopeTests(unittest.TestCase):
+    def test_pinned_lan_scope_applies_while_hub_client(self):
+        from unittest.mock import patch
+        from chatxz.web.server import ChatWebServer
+
+        server = ChatWebServer.__new__(ChatWebServer)
+        settings = {
+            "hub_role": "client",
+            "hub_host": "10.0.30.109",
+            "lan_interface": "enp2s0|10.0.5.37",
+            "rns_interfaces": ri.default_interface_list(),
+        }
+        with patch.object(server, "load_settings", return_value=settings):
+            with patch("chatxz.web.server.lan_discovery_configured", return_value=True):
+                self.assertEqual(server._discovery_scope_ip(), "10.0.5.37")
+
+    def test_hub_client_without_pin_has_no_scope(self):
+        from unittest.mock import patch
+        from chatxz.web.server import ChatWebServer
+
+        server = ChatWebServer.__new__(ChatWebServer)
+        settings = {
+            "hub_role": "client",
+            "hub_host": "10.0.30.109",
+            "lan_interface": "",
+            "rns_interfaces": ri.default_interface_list(),
+        }
+        with patch.object(server, "load_settings", return_value=settings):
+            with patch("chatxz.web.server.lan_discovery_configured", return_value=True):
+                self.assertIsNone(server._discovery_scope_ip())
+
+
+class HubP2pLinkTests(unittest.TestCase):
+    def test_link_needs_failover_keeps_udp_for_p2p_peer(self):
+        from unittest.mock import MagicMock, patch
+        import RNS
+
+        ident = MagicMock()
+        ident.hash = bytes.fromhex("a" * 32)
+        backend = MessagingBackend(identity=ident, config_dir="/tmp/chatxz-p2p-test")
+        backend.running = True
+        p2p = "f1c2ac9061239f7c096701f02969729c"
+        udp_iface = MagicMock()
+        udp_link = MagicMock()
+        udp_link.status = RNS.Link.ACTIVE
+        udp_link.link_id = "udp1"
+        backend.active_link = udp_link
+        backend.active_peer_hash = p2p
+        backend.links = {"udp1": udp_link}
+        with patch.object(backend, "dest_hash_for", return_value=p2p):
+            with patch.object(backend, "_hub_transport_active", return_value=True):
+                with patch.object(backend, "_peer_uses_hub_transport", return_value=False):
+                    with patch.object(backend, "_link_attached_interface", return_value=udp_iface):
+                        with patch.object(backend, "_link_interface_healthy", return_value=True):
+                            with patch("chatxz.core.messaging.interface_family", return_value="udp"):
+                                with patch.object(backend, "_peer_path_interface", return_value=udp_iface):
+                                    with patch.object(backend, "_interface_healthy", return_value=True):
+                                        with patch.object(backend, "_has_online_family", return_value=True):
+                                            needs, reason = backend.link_needs_failover()
+        self.assertFalse(needs, reason)
+
+
 class HubSettingsTests(unittest.TestCase):
     def test_apply_hub_server_enables_tcp_listener(self):
         from chatxz.web.server import ChatWebServer
@@ -245,17 +307,37 @@ class TcpFamilyTests(unittest.TestCase):
 
 
 class HubFailoverTests(unittest.TestCase):
-    def test_failover_uses_tcp_in_hub_mode(self):
+    def test_failover_uses_tcp_for_hub_server_peer(self):
         from unittest.mock import MagicMock, patch
 
         ident = MagicMock()
         ident.hash = bytes.fromhex("a" * 32)
         backend = MessagingBackend(identity=ident, config_dir="/tmp/chatxz-hub-test")
         backend.running = True
+        hub_server = "1865ec1f1d3d036f8b9c0a1b2c3d4e5f"
         with patch.object(backend, "_hub_transport_active", return_value=True):
-            with patch.object(backend, "_has_online_family", return_value=False):
-                families = backend._failover_families_to_try("b" * 32)
+            with patch.object(backend, "_peer_uses_hub_transport", return_value=True):
+                with patch.object(backend, "_has_online_family", return_value=False):
+                    families = backend._failover_families_to_try(hub_server)
         self.assertEqual(families, ["tcp"])
+
+    def test_failover_uses_lan_for_p2p_while_hub_client(self):
+        from unittest.mock import MagicMock, patch
+
+        ident = MagicMock()
+        ident.hash = bytes.fromhex("a" * 32)
+        backend = MessagingBackend(identity=ident, config_dir="/tmp/chatxz-hub-test")
+        backend.running = True
+        p2p_peer = "f1c2ac9061239f7c096701f02969729c"
+        with patch.object(backend, "_hub_transport_active", return_value=True):
+            with patch.object(backend, "_peer_uses_hub_transport", return_value=False):
+                with patch.object(backend, "_has_online_family", return_value=True):
+                    with patch("chatxz.core.messaging.physical_lan_reachable", return_value=True):
+                        with patch("chatxz.core.messaging.configured_udp_lan_enabled", return_value=True):
+                            with patch("chatxz.core.messaging.configured_tcp_lan_enabled", return_value=False):
+                                families = backend._failover_families_to_try(p2p_peer)
+        self.assertIn("udp", families)
+        self.assertNotEqual(families, ["tcp"])
 
 
 class HubGroupIsolationTests(unittest.TestCase):

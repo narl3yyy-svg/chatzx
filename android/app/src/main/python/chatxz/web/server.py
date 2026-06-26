@@ -631,8 +631,6 @@ class ChatWebServer:
 
     def _discovery_scope_ip(self):
         settings = self.load_settings()
-        if settings.get("hub_role", "off") != "off":
-            return None
         if not lan_discovery_configured(settings.get("rns_interfaces")):
             return None
         pinned = (settings.get("lan_interface") or "").strip()
@@ -645,6 +643,8 @@ class ChatWebServer:
                     entry_ip = entry.get("ip")
                     if entry_ip and entry_ip != "disconnected":
                         return entry_ip
+        if settings.get("hub_role", "off") != "off":
+            return None
         # Auto mode: scope discovery to primary LAN /24 (not entire 10/8 or all NICs).
         return detect_lan_ip() or discovery_scope_ip()
 
@@ -2203,6 +2203,14 @@ class ChatWebServer:
             resolved_hash = self._resolve_connect_target(peer_hash, peer_ip)
             resolved_hash = self._resolve_current_peer_hash(resolved_hash, peer_ip)
             hub_role = settings.get("hub_role", "off")
+            scope_ip = self._discovery_scope_ip()
+            if scope_ip and not self._peer_in_discovery_scope(resolved_hash):
+                return web.json_response({
+                    "error": (
+                        f"Peer is outside pinned LAN scope ({scope_ip}) — "
+                        "pick the matching IPv4 on both devices"
+                    ),
+                }, status=400)
             if (
                 self.discovery
                 and hub_role == "off"
@@ -3358,7 +3366,12 @@ class ChatWebServer:
                 if self.messaging:
                     self.messaging.display_name = settings.get("name", "")
                 if lan_scope_changed:
-                    asyncio.create_task(asyncio.to_thread(self._apply_lan_scope_change))
+                    async def _safe_lan_scope():
+                        try:
+                            await asyncio.to_thread(self._apply_lan_scope_change)
+                        except Exception as exc:
+                            print(f"[network] LAN scope apply warning: {exc}")
+                    asyncio.create_task(_safe_lan_scope())
                 if config_dirty or hub_changed:
                     asyncio.create_task(
                         asyncio.to_thread(self._write_rns_config, settings)
@@ -3372,7 +3385,10 @@ class ChatWebServer:
                     "settings": self._settings_api_payload(settings),
                 })
             if lan_scope_changed:
-                await asyncio.to_thread(self._apply_lan_scope_change)
+                try:
+                    await asyncio.to_thread(self._apply_lan_scope_change)
+                except Exception as exc:
+                    print(f"[network] LAN scope apply warning: {exc}")
             if config_dirty or hub_changed:
                 await asyncio.to_thread(self._write_rns_config, settings)
             if hub_changed:
