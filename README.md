@@ -119,11 +119,13 @@ Open **http://localhost:8742** (or `http://<your-lan-ip>:8742` with `--share`).
 
 **Firewall:** allow UDP **4242** (RNS) and **8743** (discovery beacon) on the LAN.
 
-**Before pushing changes**, run the pre-push check:
+**Before pushing changes**, run the pre-push check (101 unit tests + smoke checks):
 
 ```bash
 bash scripts/check.sh
 ```
+
+Hub relay behavior is covered in `tests/test_defaults_hub.py` and `tests/test_hub_tcp_relay.py`.
 
 ---
 
@@ -141,6 +143,47 @@ bash scripts/check.sh
 | Files | Any size via encrypted RNS resources; drag & drop; live speed in dock |
 | Network | LAN discovery (UDP LAN or **TCP LAN**), USB serial failover, pinned NIC/VPN, saved contacts |
 | Privacy | E2E encrypted links (AES-256-CBC); HTTP :8742 is local UI only |
+
+---
+
+## TCP hub (group chat over the internet)
+
+A **hub** turns one chatxz instance into a **TCP relay** for encrypted **group chat**. Remote friends connect to your hub over the internet on **TCP port 4242** (Reticulum `TCPServerInterface`). The hub **only relays group messages** between clients that are **explicitly connected via TCP** — not LAN/UDP discovery peers.
+
+| Role | What it does |
+|------|----------------|
+| **Hub server** | Listens on `0.0.0.0:4242`; relays group chat to all TCP-connected hub clients |
+| **Hub client** | Dials your hub host (public IP, DDNS, or VPN address) on port 4242 |
+| **Hub off** | Normal P2P only — no group chat, no hub relay |
+
+**Isolation by design:** peers using only LAN/UDP discovery will **not** see group messages from hub users (and hub users will not leak into local P2P threads). v0.3.139 enforces TCP-only relay paths.
+
+### Quick setup
+
+**On the machine that will host the hub** (home server, VPS, or Android with hub server):
+
+1. Settings → Network → **Hub role: Server**
+2. Note your public IP or hostname; forward **TCP 4242** on your router/firewall
+3. Open **Group Chat** in the sidebar
+
+**On each remote client** (Arch laptop, phone, friend's PC):
+
+1. Settings → Network → **Hub role: Client**
+2. **Hub host:** your public IP or DNS name (e.g. `203.0.113.50` or `hub.example.com`)
+3. **Hub port:** `4242` (default)
+4. Restart or Apply — client dials the hub over TCP
+5. Use **Group Chat** — messages are E2E encrypted over RNS links through the hub
+
+**P2P on the same machine still works:** hub clients can keep UDP LAN enabled for local 1:1 chat; group chat stays on the TCP hub path only.
+
+### Planned: dedicated headless hub
+
+The core relay already works (`hub_role=server` + TCP listener). Upcoming polish:
+
+- **Headless hub mode** — run as a systemd service with no browser UI
+- **Android background** — persistent notification while hub/client is active
+- **Modern web UI** — dark mode, better link/hub status, search
+- **System tray + auto-start** — desktop runs at login, tray icon for status
 
 ---
 
@@ -290,4 +333,4 @@ Full history: [Releases](https://github.com/narl3yyy-svg/chatxz/releases) and gi
 
 ## License
 
-MIT
+[GNU General Public License v3.0](LICENSE) (GPLv3). You may use, modify, and redistribute chatxz under the terms of GPLv3.

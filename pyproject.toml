@@ -7,7 +7,7 @@ name = "chatxz"
 version = "0.3.139"
 description = "Decentralized chat over Reticulum Network Stack"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "GPL-3.0-only"}
 requires-python = ">=3.10"
 dependencies = [
     "rns>=0.8.0",
