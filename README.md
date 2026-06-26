@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.140
+**Current version:** 0.3.141
 
 ## Download
 
@@ -238,6 +238,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.141** — **Hub + TCP LAN warnings:** Settings shows why TCP LAN is blocked (hub server — port 4242 reserved) or limited (hub client — local P2P only); API rejects invalid switches with the same message
 - **v0.3.140** — **Hub client + TCP LAN:** Primary LAN transport can be **TCP LAN** while hub role is **client** — local P2P uses direct TCP; group chat still uses the hub TCP link only
 - **v0.3.139** — Hub group chat isolated to TCP hub transport: hub server relays only to TCP-connected clients; peers with hub **off** ignore group messages (no more P2P leak to Ubuntu); removed unused `config/config.ini` and empty `chatxz/ui` package
 - **v0.3.138** — Changing **Settings → Network** IPv4 drops active links and clears RNS paths (no cross-subnet chat after NIC change); strict beacon /24 filter; pinned IPv4 fixes broadcast `255.255.255.255` fallback; **Ctrl+C** clean exit on Linux, **Ctrl+Z** disabled in `run.sh`

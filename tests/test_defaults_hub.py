@@ -42,6 +42,28 @@ class DefaultInterfaceTests(unittest.TestCase):
         self.assertTrue(any(i.get("preset") == "tcp_lan" for i in tcp))
 
 
+class LanTransportHubPolicyTests(unittest.TestCase):
+    def test_tcp_lan_blocked_for_hub_server(self):
+        policy = ri.lan_transport_hub_policy("server", "tcp_lan")
+        self.assertFalse(policy["allowed"])
+        self.assertIn("4242", policy["warning"])
+
+    def test_tcp_lan_allowed_with_warning_for_hub_client(self):
+        policy = ri.lan_transport_hub_policy("client", "tcp_lan")
+        self.assertTrue(policy["allowed"])
+        self.assertIn("local", policy["warning"].lower())
+
+    def test_tcp_lan_allowed_when_hub_off(self):
+        policy = ri.lan_transport_hub_policy("off", "tcp_lan")
+        self.assertTrue(policy["allowed"])
+        self.assertEqual(policy["warning"], "")
+
+    def test_udp_lan_always_allowed(self):
+        for role in ("off", "server", "client"):
+            policy = ri.lan_transport_hub_policy(role, "udp_lan")
+            self.assertTrue(policy["allowed"])
+
+
 class HubSettingsTests(unittest.TestCase):
     def test_apply_hub_server_enables_tcp_listener(self):
         from chatxz.web.server import ChatWebServer

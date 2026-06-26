@@ -36,6 +36,7 @@ from chatxz.core.rns_interfaces import (
     SERIAL_PERMISSION_HINT,
     serial_permission_hint_for_process,
     add_interface,
+    lan_transport_hub_policy,
     set_primary_lan_transport,
     configured_serial_port,
     delete_interface,
@@ -2358,6 +2359,12 @@ class ChatWebServer:
             data = await request.json()
             preset = (data.get("preset") or "udp_lan").strip()
             settings = self.load_settings()
+            policy = lan_transport_hub_policy(settings.get("hub_role", "off"), preset)
+            if not policy.get("allowed", True):
+                return web.json_response(
+                    {"error": policy.get("warning") or "TCP LAN unavailable"},
+                    status=400,
+                )
             settings["rns_interfaces"] = add_interface(settings.get("rns_interfaces"), preset)
             self.save_settings(settings)
             self._write_rns_config(settings)
@@ -3096,6 +3103,8 @@ class ChatWebServer:
         payload = dict(settings)
         payload["app_version"] = APP_VERSION
         payload.update(release_notes_payload())
+        hub_role = settings.get("hub_role", "off")
+        payload["lan_transport_hub_tcp"] = lan_transport_hub_policy(hub_role, "tcp_lan")
         return payload
 
     async def handle_settings_get(self, request):
@@ -3305,6 +3314,14 @@ class ChatWebServer:
             if "lan_transport" in data:
                 preset = (data.get("lan_transport") or "").strip()
                 if preset in ("udp_lan", "tcp_lan"):
+                    policy = lan_transport_hub_policy(
+                        settings.get("hub_role", "off"), preset
+                    )
+                    if not policy.get("allowed", True):
+                        return web.json_response(
+                            {"error": policy.get("warning") or "TCP LAN unavailable"},
+                            status=400,
+                        )
                     settings["rns_interfaces"] = set_primary_lan_transport(
                         settings.get("rns_interfaces"), preset
                     )

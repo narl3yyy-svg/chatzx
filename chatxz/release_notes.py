@@ -3,6 +3,10 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.3.141": [
+        "Settings → Network shows a clear warning when TCP LAN is unavailable or limited because hub mode is on.",
+        "Hub server blocks switching to TCP LAN (port 4242 is reserved for group relay); hub client explains TCP LAN is for local P2P only.",
+    ],
     "0.3.140": [
         "Hub client + TCP LAN: switching Primary LAN transport to TCP LAN now works while staying a hub client — P2P peers connect over TCP, group chat stays on the hub link.",
         "Hub relay no longer treats TCP LAN peer links as hub clients (fixes accidental group-chat leak over LAN TCP).",

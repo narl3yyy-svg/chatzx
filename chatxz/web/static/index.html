@@ -1244,7 +1244,7 @@ body.sidebar-open #sidebar-backdrop { display: block; }
               <option value="udp_lan">UDP LAN — default for Wi-Fi / Ethernet</option>
               <option value="tcp_lan">TCP LAN — direct TCP links</option>
             </select>
-            <p class="field-hint">Restart chatxz after changing transport.</p>
+            <p id="settings-lan-transport-hint" class="field-hint">Restart chatxz after changing transport.</p>
           </div>
           <label class="setup-toggle" style="margin-bottom:10px">
             <input type="checkbox" id="settings-auto-announce" onchange="saveAutoAnnounce()">
@@ -1746,6 +1746,7 @@ function applySettingsToForm(s, ifaces) {
     renderLanInterfaceSummary(ifaces);
   }
   window._hubRole = s.hub_role || 'off';
+  window._lanTransportHubTcp = s.lan_transport_hub_tcp || {};
   const hubRole = document.getElementById('settings-hub-role');
   if (hubRole) hubRole.value = window._hubRole;
   const hubHost = document.getElementById('settings-hub-host');
@@ -2073,6 +2074,10 @@ function contactNameFor(hash) {
   return d?.name || '';
 }
 
+function currentHubRole() {
+  return document.getElementById('settings-hub-role')?.value || window._hubRole || 'off';
+}
+
 function updateHubUi() {
   const role = window._hubRole || 'off';
   const section = document.getElementById('hub-group-section');
@@ -2082,12 +2087,38 @@ function updateHubUi() {
   else if (hubEntry) hubEntry.classList.remove('active');
   const clientFields = document.getElementById('hub-client-fields');
   if (clientFields) clientFields.style.display = role === 'client' ? 'block' : 'none';
+  updateLanTransportHubHint();
 }
 
 function onHubRoleChange() {
   const role = document.getElementById('settings-hub-role')?.value || 'off';
   const clientFields = document.getElementById('hub-client-fields');
   if (clientFields) clientFields.style.display = role === 'client' ? 'block' : 'none';
+  updateLanTransportHubHint();
+}
+
+function updateLanTransportHubHint(policy) {
+  const sel = document.getElementById('settings-lan-transport');
+  const hint = document.getElementById('settings-lan-transport-hint');
+  const tcpOpt = sel?.querySelector('option[value="tcp_lan"]');
+  const p = policy || window._lanTransportHubTcp || {};
+  const role = currentHubRole();
+  const blocked = role === 'server' || p.allowed === false;
+  const msg = p.warning || (
+    role === 'server'
+      ? 'TCP LAN is unavailable while hub server is on — port 4242 is reserved for group relay. LAN peers use UDP. Set hub to Off to switch.'
+      : role === 'client'
+        ? 'Hub client: TCP LAN is for local 1:1 peers; group chat stays on the hub TCP link. Restart after changing.'
+        : 'Restart chatxz after changing transport.'
+  );
+  if (hint) {
+    hint.textContent = msg;
+    hint.style.color = blocked ? 'var(--warn,#e8a838)' : '';
+  }
+  if (tcpOpt) tcpOpt.disabled = blocked;
+  if (blocked && sel?.value === 'tcp_lan') {
+    sel.value = 'udp_lan';
+  }
 }
 
 function saveHubSettings() {
@@ -2101,6 +2132,7 @@ function saveHubSettings() {
   }).then(r => r.json()).then(d => {
     if (d.status === 'ok') {
       window._hubRole = d.settings?.hub_role || hub_role;
+      if (d.settings?.lan_transport_hub_tcp) window._lanTransportHubTcp = d.settings.lan_transport_hub_tcp;
       updateHubUi();
       toast(appPlatform === 'android'
         ? 'Hub settings saved — RNS config updated'
@@ -3222,21 +3254,42 @@ function updateLanTransportSelect(interfaces) {
   const sel = document.getElementById('settings-lan-transport');
   if (!sel) return;
   sel.value = currentLanTransportPreset(interfaces);
+  updateLanTransportHubHint();
 }
 
 function applyLanTransport() {
-  const lan_transport = document.getElementById('settings-lan-transport')?.value || 'udp_lan';
+  const sel = document.getElementById('settings-lan-transport');
+  const lan_transport = sel?.value || 'udp_lan';
+  const prev = window._lastLanTransport || currentLanTransportPreset(window._rnsInterfaces || []);
+  const hubRole = currentHubRole();
+  if (lan_transport === 'tcp_lan' && (hubRole === 'server' || window._lanTransportHubTcp?.allowed === false)) {
+    if (sel) sel.value = prev;
+    const msg = (hubRole === 'server'
+      ? 'Hub server already uses TCP port 4242 for group-chat relay. LAN peers still connect via UDP discovery and links. Set hub mode to Off to use TCP LAN for peer traffic.'
+      : window._lanTransportHubTcp?.warning)
+      || 'TCP LAN is unavailable while hub server is on — port 4242 is reserved for group relay.';
+    toast(msg);
+    updateLanTransportHubHint();
+    return;
+  }
   fetch('/api/settings', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({lan_transport}),
   }).then(r => r.json()).then(d => {
     if (d.status === 'ok') {
-      toast('LAN transport set to ' + (lan_transport === 'tcp_lan' ? 'TCP LAN' : 'UDP LAN') + ' — restart chatxz to apply');
+      window._lastLanTransport = lan_transport;
+      if (d.settings?.lan_transport_hub_tcp) window._lanTransportHubTcp = d.settings.lan_transport_hub_tcp;
+      const extra = (lan_transport === 'tcp_lan' && currentHubRole() === 'client')
+        ? ' Group chat still uses the hub link.'
+        : '';
+      toast('LAN transport set to ' + (lan_transport === 'tcp_lan' ? 'TCP LAN' : 'UDP LAN') + ' — restart chatxz to apply.' + extra);
       loadRnsInterfaces();
       refreshNetworkStatus();
     } else {
-      toast('Failed: ' + (d.error || 'unknown'));
+      if (sel) sel.value = prev;
+      toast(d.error || 'Failed to save LAN transport');
+      updateLanTransportHubHint();
     }
   }).catch(() => toast('Failed to save LAN transport'));
 }

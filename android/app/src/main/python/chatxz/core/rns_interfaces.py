@@ -448,6 +448,33 @@ def set_primary_lan_transport(interfaces, preset_key):
     return normalize_interface_list(kept + [entry] if kept else [entry])
 
 
+def lan_transport_hub_policy(hub_role, preset_key):
+    """Whether Primary LAN transport can switch to TCP LAN while hub mode is on."""
+    hub_role = (hub_role or "off").strip().lower()
+    preset_key = (preset_key or "").strip()
+    if preset_key != "tcp_lan":
+        return {"allowed": True, "warning": ""}
+    if hub_role == "server":
+        return {
+            "allowed": False,
+            "warning": (
+                "Hub server already uses TCP port 4242 for group-chat relay. "
+                "LAN peers still connect via UDP discovery and links. "
+                "Set hub mode to Off to use TCP LAN for peer traffic."
+            ),
+        }
+    if hub_role == "client":
+        return {
+            "allowed": True,
+            "warning": (
+                "Hub client: TCP LAN applies to local 1:1 peers only. "
+                "Group chat still uses the TCP link to your hub host. "
+                "Restart chatxz after changing."
+            ),
+        }
+    return {"allowed": True, "warning": ""}
+
+
 def delete_interface(items, iface_id):
     items = normalize_interface_list(items)
     return [i for i in items if i.get("id") != iface_id]
