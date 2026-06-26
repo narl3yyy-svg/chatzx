@@ -1,5 +1,7 @@
 """Serial link tuning for reliable RNS file transfers at low baud rates."""
 
+from contextlib import contextmanager
+
 import RNS
 
 from chatxz.core.lan_rns import interface_family
@@ -36,6 +38,24 @@ def serial_transfer_timeout_s(file_size, baud):
     baud = max(int(baud or 57600), 1200)
     est = size * SERIAL_TIMEOUT_PER_BYTE_S * (57600 / baud)
     return max(SERIAL_MIN_TRANSFER_TIMEOUT_S, est * 2.5)
+
+
+SERIAL_LINK_ESTABLISH_TIMEOUT_S = 22
+
+
+@contextmanager
+def boost_serial_establishment_timeout(timeout_s=None):
+    """Raise RNS link-establishment timeouts for slow serial handshakes."""
+    limit = timeout_s or SERIAL_LINK_ESTABLISH_TIMEOUT_S
+    old_default = RNS.Reticulum.DEFAULT_PER_HOP_TIMEOUT
+    old_per_hop = RNS.Link.ESTABLISHMENT_TIMEOUT_PER_HOP
+    try:
+        RNS.Reticulum.DEFAULT_PER_HOP_TIMEOUT = limit
+        RNS.Link.ESTABLISHMENT_TIMEOUT_PER_HOP = limit
+        yield
+    finally:
+        RNS.Reticulum.DEFAULT_PER_HOP_TIMEOUT = old_default
+        RNS.Link.ESTABLISHMENT_TIMEOUT_PER_HOP = old_per_hop
 
 
 def tune_serial_link(link, iface=None):

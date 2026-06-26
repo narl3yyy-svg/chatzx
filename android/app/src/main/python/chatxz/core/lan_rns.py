@@ -302,6 +302,42 @@ def prune_cross_zone_paths(serial_peer_hashes=None):
     return removed
 
 
+_serial_path_pins = set()
+
+
+def _normalize_dest_hex(hash_hex):
+    return (hash_hex or "").replace(":", "").strip().lower()
+
+
+def pin_serial_path(hash_hex):
+    clean = _normalize_dest_hex(hash_hex)
+    if len(clean) == 32:
+        _serial_path_pins.add(clean)
+
+
+def unpin_serial_path(hash_hex):
+    _serial_path_pins.discard(_normalize_dest_hex(hash_hex))
+
+
+def serial_path_is_pinned(hash_hex):
+    return _normalize_dest_hex(hash_hex) in _serial_path_pins
+
+
+def ensure_serial_path_pinned(hash_hex, request=True):
+    """Drop competing LAN paths and keep the peer routed over SerialInterface."""
+    clean = _normalize_dest_hex(hash_hex)
+    if len(clean) != 32:
+        return False
+    pin_serial_path(clean)
+    prune_lan_path_for_peer(clean)
+    _, path_iface = peer_path_entry(clean)
+    if path_iface and interface_family(path_iface) != "serial":
+        clear_peer_path(clean)
+    if request and peer_path_on_family(clean, "serial") is None:
+        request_paths_for_hash(clean, family="serial")
+    return peer_path_on_family(clean, "serial") is not None
+
+
 def prune_lan_path_for_peer(hash_hex):
     """Remove a cached LAN path for one peer when serial is the active transport."""
     dest_bytes = _dest_bytes_for_hash(hash_hex)

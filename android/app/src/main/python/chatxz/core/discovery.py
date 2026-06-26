@@ -370,26 +370,8 @@ class PeerDiscovery:
 
         via = "rns"
         if not announce_ip and serial_discovery_active():
-            from chatxz.core.lan_rns import (
-                announce_receiving_interface,
-                interface_family,
-                peer_path_hops,
-                peer_path_on_family,
-            )
-
-            recv_iface = announce_receiving_interface(destination_hash)
-            if recv_iface and interface_family(recv_iface) == "serial":
-                via = "serial"
-            else:
-                path_iface = peer_path_on_family(hash_hex, "serial")
-                if path_iface:
-                    hops = peer_path_hops(hash_hex)
-                    if hops is not None and hops <= 1:
-                        via = "serial"
-                    else:
-                        return
-                else:
-                    return
+            # LAN announces always carry a scoped IPv4; IP-less means USB serial.
+            via = "serial"
         if via == "serial":
             announce_ip = ""
         peer = {

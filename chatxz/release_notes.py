@@ -3,6 +3,11 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.3.159": [
+        "IP-less RNS announces are always treated as serial peers — fixes Ubuntu not discovering ARCH on USB even when Arch sees Ubuntu.",
+        "Serial connect pins the path on SerialInterface so LAN UDP announces cannot steal the route mid-handshake.",
+        "RNS link-establishment timeout raised to 22s+ on serial outbound (was 12s internal timeout).",
+    ],
     "0.3.158": [
         "Serial inbound links are always accepted on SerialInterface — Arch no longer rejects Ubuntu when a stale UDP path exists on the shared 10.10.10.x LAN.",
         "IP-less serial RNS announces are discovered using the receiving interface, so Arch sees Ubuntu (serial) even when a LAN path is cached.",

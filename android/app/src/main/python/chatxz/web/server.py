@@ -1881,11 +1881,28 @@ class ChatWebServer:
                     identity_hash=new_peer.get("identity_hash"),
                 )
 
-        try:
-            from chatxz.core.peer_identity import purge_rns_paths_for_hashes
-            purge_rns_paths_for_hashes(removed_clean)
-        except Exception:
-            pass
+        skip_path_purge = False
+        if self.messaging and getattr(self.messaging, "_connect_in_progress", False):
+            session = self.messaging.dest_hash_for(
+                self.messaging._session_peer_hash
+                or self.messaging.active_peer_hash
+                or ""
+            )
+            if session:
+                for old_hash in removed_clean:
+                    if self._peers_equivalent(old_hash, session):
+                        skip_path_purge = True
+                        break
+                    if new_peer and new_peer.get("identity_hash"):
+                        if self._peers_equivalent(old_hash, new_peer.get("identity_hash")):
+                            skip_path_purge = True
+                            break
+        if not skip_path_purge:
+            try:
+                from chatxz.core.peer_identity import purge_rns_paths_for_hashes
+                purge_rns_paths_for_hashes(removed_clean)
+            except Exception:
+                pass
 
         for old in removed_clean:
             same_peer = bool(

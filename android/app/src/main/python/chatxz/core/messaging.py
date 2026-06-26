@@ -1,4 +1,10 @@
 import threading, RNS, json, time, os, tempfile, uuid
+from contextlib import contextmanager
+
+
+@contextmanager
+def _null_context():
+    yield
 from urllib import request as urlrequest
 
 from chatxz.utils.helpers import format_speed
@@ -14,6 +20,10 @@ from chatxz.core.lan_rns import (
     clear_peer_path,
     clear_peer_path_unless_family,
     detach_unhealthy_interfaces,
+    ensure_serial_path_pinned,
+    pin_serial_path,
+    serial_path_is_pinned,
+    unpin_serial_path,
     interface_family,
     interface_is_healthy,
     lan_ip_reachable,
@@ -38,6 +48,7 @@ from chatxz.core.lan_rns import (
 from chatxz.utils.platform import is_android, lan_ip, physical_lan_reachable
 from chatxz.core.lan_transfer import register_offer, remove_offer
 from chatxz.core.serial_transfer import (
+    boost_serial_establishment_timeout,
     is_serial_interface,
     tune_incoming_resource,
     tune_outgoing_resource,
@@ -2591,37 +2602,43 @@ class MessagingBackend:
         if not self._serial_transport_ready():
             print("[connect] Serial path blocked — Serial in RNS: no")
             return False
-        clear_peer_path_unless_family(dest_hex, "serial")
-        prune_lan_path_for_peer(dest_hex)
-        suppress_offline_lan_transports()
-        dedupe_serial_interfaces()
-        if not self._peer_has_path_on_family(dest_hex, "serial"):
-            if not self._prime_serial_path(dest_hex, timeout_s=prime_timeout):
-                return False
-        else:
-            print("[connect] Serial path ready via SerialInterface")
-        print(
-            f"[connect] Serial peer — listening for inbound "
-            f"({SERIAL_INBOUND_FIRST_WAIT_S}s)..."
-        )
-        if self._wait_for_peer_link(
-            dest_hex, alt_hex=clean, timeout_s=SERIAL_INBOUND_FIRST_WAIT_S,
-        ):
-            return True
-        print(f"[connect] Serial outbound ({SERIAL_LINK_CONNECT_TIMEOUT_S}s)...")
-        if self._establish_outbound_link(
-            destination, dest_hex, clean, old_link=old_link,
-            timeout_s=SERIAL_LINK_CONNECT_TIMEOUT_S,
-        ):
-            return True
-        if self._peer_link_active(dest_hex, clean):
-            return True
-        print(f"[connect] Waiting for serial inbound ({SERIAL_INBOUND_WAIT_S}s)...")
-        if self._wait_for_peer_link(
-            dest_hex, alt_hex=clean, timeout_s=SERIAL_INBOUND_WAIT_S,
-        ):
-            return True
-        return False
+        pin_serial_path(dest_hex)
+        try:
+            clear_peer_path_unless_family(dest_hex, "serial")
+            prune_lan_path_for_peer(dest_hex)
+            suppress_offline_lan_transports()
+            dedupe_serial_interfaces()
+            if not self._peer_has_path_on_family(dest_hex, "serial"):
+                if not self._prime_serial_path(dest_hex, timeout_s=prime_timeout):
+                    return False
+            else:
+                print("[connect] Serial path ready via SerialInterface")
+            ensure_serial_path_pinned(dest_hex)
+            print(
+                f"[connect] Serial peer — listening for inbound "
+                f"({SERIAL_INBOUND_FIRST_WAIT_S}s)..."
+            )
+            if self._wait_for_peer_link(
+                dest_hex, alt_hex=clean, timeout_s=SERIAL_INBOUND_FIRST_WAIT_S,
+            ):
+                return True
+            ensure_serial_path_pinned(dest_hex)
+            print(f"[connect] Serial outbound ({SERIAL_LINK_CONNECT_TIMEOUT_S}s)...")
+            if self._establish_outbound_link(
+                destination, dest_hex, clean, old_link=old_link,
+                timeout_s=SERIAL_LINK_CONNECT_TIMEOUT_S, serial=True,
+            ):
+                return True
+            if self._peer_link_active(dest_hex, clean):
+                return True
+            print(f"[connect] Waiting for serial inbound ({SERIAL_INBOUND_WAIT_S}s)...")
+            if self._wait_for_peer_link(
+                dest_hex, alt_hex=clean, timeout_s=SERIAL_INBOUND_WAIT_S,
+            ):
+                return True
+            return False
+        finally:
+            unpin_serial_path(dest_hex)
 
     def _promote_outbound_link(self, link, dest_hex, old_link=None, promote_active=None):
         if not link:
@@ -2679,16 +2696,26 @@ class MessagingBackend:
         return True
 
     def _establish_outbound_link(self, destination, dest_hex, clean, old_link=None,
-                                 timeout_s=LINK_CONNECT_TIMEOUT_S, promote_active=None):
+                                 timeout_s=LINK_CONNECT_TIMEOUT_S, promote_active=None,
+                                 serial=False):
         """Try to open an outbound RNS link within timeout_s."""
         link = None
         try:
-            link = RNS.Link(destination)
+            if serial:
+                ensure_serial_path_pinned(dest_hex)
+            link_ctx = (
+                boost_serial_establishment_timeout(timeout_s)
+                if serial else _null_context()
+            )
+            with link_ctx:
+                link = RNS.Link(destination)
             deadline = time.time() + timeout_s
             while time.time() < deadline:
                 if self._interrupted():
                     self._teardown_outbound_attempt(link)
                     return False
+                if serial:
+                    ensure_serial_path_pinned(dest_hex, request=False)
                 time.sleep(LINK_CONNECT_POLL_S)
                 if self._peer_link_active(dest_hex, clean):
                     existing = self._link_for_peer(dest_hex) or self._link_for_peer(clean)
@@ -2745,6 +2772,8 @@ class MessagingBackend:
         while time.time() < deadline:
             if self._interrupted():
                 return False
+            if serial_path_is_pinned(dest_hex) or serial_path_is_pinned(alt_hex or ""):
+                ensure_serial_path_pinned(dest_hex, request=False)
             if self._peer_link_active(dest_hex, alt_hex):
                 found = self._find_active_link_for_peer(dest_hex, alt_hex)
                 if found and not self._link_for_peer(dest_hex):
