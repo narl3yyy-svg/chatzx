@@ -3,6 +3,11 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.3.163": [
+        "Serial discovery uses the path table (not stale LAN rebroadcasts) to classify incoming RNS announces.",
+        "Out-of-scope LAN IPs on USB are reclassified as serial peers — Arch and Ubuntu discover each other across different subnets.",
+        "Discovery stays enabled when USB serial hot-attaches; scope purge no longer removes serial-only peers.",
+    ],
     "0.3.162": [
         "Sends are blocked unless the link's remote RNS identity matches the target peer — fixes messages to Ubuntu arriving at Windows.",
         "Beacon discovery no longer overwrites serial-only peers with LAN IPs or via=rns.",

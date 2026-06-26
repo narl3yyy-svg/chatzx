@@ -70,17 +70,17 @@ def _pin_announce_interface(packet):
         src_iface = getattr(packet, "receiving_interface", None)
         if src_iface is None:
             import RNS.Transport as Transport
+            with Transport.path_table_lock:
+                entry = Transport.path_table.get(packet.destination_hash)
+            if entry and len(entry) > 5:
+                src_iface = entry[5]
+        if src_iface is None:
+            import RNS.Transport as Transport
             with Transport.announce_table_lock:
                 entry = Transport.announce_table.get(packet.destination_hash)
             if entry and len(entry) > 5:
                 orig = entry[5]
                 src_iface = getattr(orig, "receiving_interface", None)
-        if src_iface is None:
-            import RNS.Transport as Transport
-            with Transport.path_table_lock:
-                entry = Transport.path_table.get(packet.destination_hash)
-            if entry and len(entry) > 5:
-                src_iface = entry[5]
         if src_iface is not None:
             packet.attached_interface = src_iface
     except Exception:

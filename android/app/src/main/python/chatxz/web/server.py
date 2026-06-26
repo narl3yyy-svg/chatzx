@@ -1471,8 +1471,10 @@ class ChatWebServer:
             on_peer_evicted=self._on_peer_evicted,
         )
         self.discovery.start()
-        if lan_discovery_configured(interfaces):
+        if lan_discovery_configured(interfaces) or configured_serial_enabled(interfaces):
             self.discovery.enable_discovery(clear=False)
+            if configured_serial_enabled(interfaces) and not lan_discovery_configured(interfaces):
+                print("[discovery] Serial discovery active — listening for USB peers")
         identity_pubkey = None
         if self.identity:
             try:
@@ -2852,8 +2854,12 @@ class ChatWebServer:
                 was_online = serial_was_online
                 iface = await self._run_blocking(ensure_runtime_serial, interfaces)
                 serial_was_online = iface is not None
-                if serial_was_online and not was_online and self.messaging:
-                    await self._run_blocking(self.messaging.on_serial_transport_attached, iface)
+                if serial_was_online and not was_online:
+                    self._enable_discovery(clear=False)
+                    if self.messaging:
+                        await self._run_blocking(
+                            self.messaging.on_serial_transport_attached, iface,
+                        )
 
     def _peer_in_discovery(self, peer_hash, peer_ip=None):
         from chatxz.core.discovery import normalize_hash

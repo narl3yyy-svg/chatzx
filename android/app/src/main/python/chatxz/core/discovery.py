@@ -138,7 +138,9 @@ class PeerDiscovery:
         if peer_in_scope(ip, scope):
             return candidate
         if serial_discovery_active():
-            return None
+            candidate["via"] = "serial"
+            candidate.pop("ip", None)
+            return candidate
         return None
 
     def _peer_allowed(self, peer):
@@ -153,6 +155,8 @@ class PeerDiscovery:
         removed = 0
         for key in list(self.peers.keys()):
             peer = self.peers.get(key) or {}
+            if (peer.get("via") or "").strip() == "serial":
+                continue
             ip = (peer.get("ip") or "").strip()
             if ip and not same_lan_scope(ip, scope):
                 unregister_udp_peer_ip(ip)
@@ -403,12 +407,28 @@ class PeerDiscovery:
 
         via = "rns"
         recv_iface = announce_receiving_interface(destination_hash)
-        if recv_iface and interface_family(recv_iface) == "serial":
+        recv_fam = interface_family(recv_iface) if recv_iface else ""
+        if recv_fam == "serial":
             via = "serial"
             announce_ip = ""
         elif not announce_ip and serial_discovery_active():
             # LAN announces always carry a scoped IPv4; IP-less means USB serial.
             via = "serial"
+        elif (
+            recv_fam in ("udp", "lan", "tcp")
+            and announce_ip
+            and serial_discovery_active()
+        ):
+            try:
+                from chatxz.utils.platform import discovery_scope_ip
+                from chatxz.utils.lan_scope import peer_in_scope
+
+                scope = (discovery_scope_ip() or "").strip()
+                if scope and not peer_in_scope(announce_ip, scope):
+                    via = "serial"
+                    announce_ip = ""
+            except Exception:
+                pass
         if via == "serial":
             announce_ip = ""
         peer = {

@@ -4,11 +4,14 @@ import os
 import sys
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+import RNS
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from chatxz.core.discovery import PeerDiscovery, discovery_timeout_s
+from chatxz.core.lan_rns import announce_receiving_interface
 
 
 class DiscoveryIdentityTests(unittest.TestCase):
@@ -118,6 +121,72 @@ class DiscoveryIdentityTests(unittest.TestCase):
         }
         peers = disc.get_peers()
         self.assertEqual(peers, [])
+
+    def test_out_of_scope_lan_ip_reclassified_as_serial(self):
+        disc = PeerDiscovery()
+        disc.running = True
+        disc.accept_peers = True
+        peer_hash = bytes.fromhex("f1c2ac9061239f7c096701f02969729c")
+        app_data = b'{"app":"chatxz","name":"ubuntu","ip":"10.0.5.10"}'
+        lan_iface = MagicMock()
+        with patch("chatxz.core.discovery.announce_receiving_interface", return_value=lan_iface):
+            with patch("chatxz.core.discovery.interface_family", return_value="udp"):
+                with patch("chatxz.core.discovery.serial_discovery_active", return_value=True):
+                    with patch("chatxz.utils.platform.discovery_scope_ip", return_value="10.10.10.37"):
+                        disc._on_announce(peer_hash, app_data)
+        peer = disc.peers.get("f1c2ac9061239f7c096701f02969729c")
+        self.assertIsNotNone(peer)
+        self.assertEqual(peer["via"], "serial")
+        self.assertNotIn("ip", peer)
+
+    def test_sanitize_reclassifies_out_of_scope_as_serial(self):
+        disc = PeerDiscovery()
+        with patch.object(disc, "_scope_ip", return_value="10.10.10.37"):
+            with patch("chatxz.core.discovery.serial_discovery_active", return_value=True):
+                result = disc._sanitize_peer_scope({
+                    "via": "rns",
+                    "ip": "10.0.5.10",
+                    "hash": "aa" * 16,
+                })
+        self.assertEqual(result["via"], "serial")
+        self.assertNotIn("ip", result)
+
+    def test_purge_out_of_scope_keeps_serial_peers(self):
+        disc = PeerDiscovery()
+        serial_hash = "abc" * 8
+        lan_hash = "def" * 8
+        disc.peers[serial_hash] = {
+            "hash": serial_hash,
+            "via": "serial",
+            "last_seen": time.time(),
+        }
+        disc.peers[lan_hash] = {
+            "hash": lan_hash,
+            "via": "rns",
+            "ip": "10.0.5.10",
+            "last_seen": time.time(),
+        }
+        removed = disc.purge_out_of_scope("10.10.10.37")
+        self.assertEqual(removed, 1)
+        self.assertIn(serial_hash, disc.peers)
+        self.assertNotIn(lan_hash, disc.peers)
+
+
+class AnnounceReceivingInterfaceTests(unittest.TestCase):
+    def test_prefers_path_table_over_announce_table(self):
+        dest = bytes.fromhex("aa" * 16)
+        serial_iface = MagicMock()
+        lan_iface = MagicMock()
+        path_table = {dest: [0, 0, 1, 0, 0, serial_iface]}
+        announce_packet = MagicMock(receiving_interface=lan_iface)
+        announce_table = {dest: [0, 0, 0, 0, 0, announce_packet]}
+
+        with patch.object(RNS.Transport, "path_table", path_table):
+            with patch.object(RNS.Transport, "path_table_lock", MagicMock()):
+                with patch.object(RNS.Transport, "announce_table", announce_table):
+                    with patch.object(RNS.Transport, "announce_table_lock", MagicMock()):
+                        iface = announce_receiving_interface(dest)
+        self.assertIs(iface, serial_iface)
 
 
 if __name__ == "__main__":

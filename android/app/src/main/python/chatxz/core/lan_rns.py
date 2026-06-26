@@ -233,6 +233,13 @@ def announce_receiving_interface(destination_hash):
     if dest_bytes is None:
         return None
     try:
+        with RNS.Transport.path_table_lock:
+            entry = RNS.Transport.path_table.get(dest_bytes)
+        if entry and len(entry) > 5 and entry[5] is not None:
+            return entry[5]
+    except Exception:
+        pass
+    try:
         with RNS.Transport.announce_table_lock:
             entry = RNS.Transport.announce_table.get(dest_bytes)
         if not entry or len(entry) <= 5:
