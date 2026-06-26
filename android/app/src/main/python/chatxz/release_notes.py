@@ -3,6 +3,12 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.3.161": [
+        "Parallel LAN + serial sessions: connect to Windows over LAN and Ubuntu over USB at the same time — links no longer tear each other down.",
+        "Send routing is transport-locked: messages to a serial peer cannot leak out over an active LAN link (and vice versa).",
+        "Failover stays on the peer's transport zone in dual-transport mode — no more LAN↔serial switching mid-session.",
+        "Discovery prefers serial entries when both serial and LAN records exist; stale LAN duplicates for the same name are evicted.",
+    ],
     "0.3.160": [
         "Serial connect priming works during connect/failover — announces are no longer suppressed mid-handshake.",
         "Queued messages drain on all reconnect paths (failover, resume, inbound), not only manual Connect.",
