@@ -2906,6 +2906,9 @@ class ChatWebServer:
 
     def _resolve_peer_connect_ip(self, peer_hash, peer_ip=None, peer_port=8742):
         """Fill peer IP/port from discovery when the UI did not pass them (common on Android)."""
+        meta = self._discovery_peer_for_connect(peer_ip, peer_hash)
+        if meta and (meta.get("via") or "").strip() == "serial":
+            return None, meta.get("port") or peer_port
         if peer_ip:
             return peer_ip, peer_port
         resolved_ip, resolved_port = self._peer_connect_meta(peer_hash)

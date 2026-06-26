@@ -185,6 +185,10 @@ class PeerDiscovery:
         return removed
 
     def _attach_peer_ip(self, peer, scope_only=False):
+        if (peer.get("via") or "").strip() == "serial":
+            peer = dict(peer)
+            peer.pop("ip", None)
+            return peer
         if (peer.get("ip") or "").strip():
             return peer
         scope = self._scope_ip() if scope_only else None
@@ -197,10 +201,14 @@ class PeerDiscovery:
             if scope and not peer_in_scope(existing_ip, scope):
                 continue
             if name and existing.get("name") == name:
+                if (existing.get("via") or "").strip() == "serial":
+                    return peer
                 peer["ip"] = existing_ip
                 peer["port"] = existing.get("port", 8742)
                 return peer
             if ident and normalize_hash(existing.get("identity_hash")) == ident:
+                if (existing.get("via") or "").strip() == "serial":
+                    return peer
                 peer["ip"] = existing_ip
                 peer["port"] = existing.get("port", 8742)
                 return peer
@@ -347,8 +355,15 @@ class PeerDiscovery:
                 existing["pubkey"] = peer["pubkey"]
             if peer.get("name") and peer["name"] != hash_hex[:8]:
                 existing["name"] = peer["name"]
-            if peer.get("via") != "beacon" or existing.get("via") == "beacon":
-                existing["via"] = peer.get("via", existing.get("via"))
+            existing_via = (existing.get("via") or "").strip()
+            new_via = (peer.get("via") or "").strip()
+            if new_via == "serial":
+                existing["via"] = "serial"
+                existing.pop("ip", None)
+            elif existing_via == "serial" and new_via in ("rns", "beacon"):
+                pass
+            elif peer.get("via") != "beacon" or existing.get("via") == "beacon":
+                existing["via"] = new_via or existing_via
             existing["last_seen"] = peer.get("last_seen", time.time())
             peer = existing
         else:
@@ -473,6 +488,17 @@ class PeerDiscovery:
         peer["port"] = data.get("port", peer.get("port", 8742))
         name = peer.get("name") or hash_hex[:8]
         peer["name"] = name
+        existing = self.peers.get(hash_hex) or {}
+        existing_via = (existing.get("via") or "").strip()
+        if existing_via == "serial" and serial_discovery_active():
+            existing["last_seen"] = time.time()
+            if register_identity_from_beacon(data):
+                self._log_once(
+                    f"beacon-id:{hash_hex}",
+                    f"[discovery] Beacon identity refreshed: {name} (serial-only)",
+                )
+            self.peers[hash_hex] = existing
+            return True
         if register_identity_from_beacon(data):
             peer["via"] = "rns"
             self._log_once(
@@ -614,9 +640,14 @@ class PeerDiscovery:
         no_ip_peers = []
         serial_peers = serial_discovery_active()
         for peer in deduped.values():
+            if (peer.get("via") or "").strip() == "serial":
+                serial_peer = dict(peer)
+                serial_peer.pop("ip", None)
+                no_ip_peers.append(serial_peer)
+                continue
             ip = (peer.get("ip") or "").strip()
             if not ip:
-                if not scope_ip or serial_peers or peer.get("via") == "serial":
+                if not scope_ip or serial_peers:
                     no_ip_peers.append(peer)
                 continue
             existing = collapsed.get(ip)

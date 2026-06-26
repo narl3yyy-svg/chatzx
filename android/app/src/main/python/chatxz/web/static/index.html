@@ -2938,13 +2938,20 @@ function renderDiscovered(peers) {
     const name = p.name || truncateHash(p.hash);
     const unread = unreadForPeer(p.hash);
     const linked = isPeerLinked(p.hash);
+    const isSerial = (p.via || '') === 'serial';
+    const transportLabel = isSerial ? 'USB' : 'LAN';
+    const transportHint = isSerial ? 'serial' : (p.ip ? escapeHtml(p.ip) : 'LAN');
     div.innerHTML = `<div class="contact-avatar contact-avatar-lan">${escapeHtml(name).charAt(0).toUpperCase()}</div>
       <div class="contact-info">
         <div class="contact-name">${escapeHtml(name)}${linked ? ' <span style="color:var(--success);font-size:10px">●</span>' : ''}</div>
-        <div class="contact-hash">${truncateHash(p.hash)}${p.ip ? ' · ' + escapeHtml(p.ip) : ''}</div>
+        <div class="contact-hash">${truncateHash(p.hash)}${transportHint ? ' · ' + transportHint : ''}</div>
       </div>
-      ${unread > 0 ? `<span class="contact-badge unread">${unread > 99 ? '99+' : unread}</span>` : '<span class="contact-badge lan">LAN</span>'}`;
-    div.onclick = () => openChat(p.hash, true, {ip: p.ip, port: p.port});
+      ${unread > 0 ? `<span class="contact-badge unread">${unread > 99 ? '99+' : unread}</span>` : `<span class="contact-badge lan">${transportLabel}</span>`}`;
+    div.onclick = () => openChat(p.hash, true, {
+      ip: isSerial ? undefined : p.ip,
+      port: p.port,
+      via: p.via,
+    });
     div.oncontextmenu = (e) => {
       e.preventDefault();
       showActionPanel(e, p.hash);
@@ -2989,7 +2996,7 @@ function peerMetaForHash(hash) {
 function actionConnect() {
   if (ctxHash) {
     const p = peerMetaForHash(ctxHash);
-    connectTo(ctxHash, p?.ip, p?.port);
+    connectTo(ctxHash, p?.ip, p?.port, p?.via);
   }
   toggleActionPanel();
 }
@@ -3077,7 +3084,7 @@ function clearPeerHistory(peerHash) {
   }).catch(() => toast('Failed to clear history'));
 }
 
-function connectTo(hash, ip, port) {
+function connectTo(hash, ip, port, via) {
   if (connectInFlight) {
     toast('Connection already in progress...');
     return;
@@ -3087,9 +3094,17 @@ function connectTo(hash, ip, port) {
     toast('Already connected');
     return;
   }
-  if (!ip) {
+  if (!via) {
     const meta = peerMetaForHash(hash);
-    if (meta?.ip) {
+    via = meta?.via;
+  }
+  if (via === 'serial') {
+    ip = undefined;
+  } else if (!ip) {
+    const meta = peerMetaForHash(hash);
+    if (meta?.via === 'serial') {
+      ip = undefined;
+    } else if (meta?.ip) {
       ip = meta.ip;
       port = meta.port || port;
     }
@@ -4258,7 +4273,7 @@ function openChat(hash, tryConnect, meta) {
   renderDiscovered(window._discoveredPeers || []);
   if (tryConnect && !isPeerLinked(viewingPeer)) {
     const m = meta || peerMetaForHash(hash);
-    connectTo(hash, m?.ip, m?.port);
+    connectTo(hash, m?.ip, m?.port, m?.via);
   } else if (!document.body.classList.contains('modal-open') && isPeerLinked(viewingPeer)) {
     document.getElementById('msg-input').focus();
   }

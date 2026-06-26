@@ -325,20 +325,32 @@ class MessagingBackend:
             return {"udp", "lan", "tcp"}
         return set()
 
+    def _link_remote_peer_hash(self, link):
+        """Resolved destination hash for a link's remote party (authoritative when known)."""
+        if not link:
+            return ""
+        identity_peer = self._peer_hash_from_link_identity(link)
+        if identity_peer and identity_peer != "unknown" and not self._is_self_hash(identity_peer):
+            return self.dest_hash_for(identity_peer)
+        cached = self._link_peer_hashes.get(getattr(link, "link_id", None))
+        if cached and cached != "unknown" and not self._is_self_hash(cached):
+            return self.dest_hash_for(cached)
+        return ""
+
     def _link_matches_peer(self, link, peer_hash):
         if not link:
             return False
         peer = self.dest_hash_for(peer_hash)
         if not peer or peer == "unknown":
             return False
+        remote = self._link_remote_peer_hash(link)
+        if remote:
+            return self.hashes_equivalent(remote, peer)
         if self.peer_links.get(peer) is link:
             return True
         for cached_peer, cached_link in self.peer_links.items():
             if cached_link is link and self.hashes_equivalent(cached_peer, peer):
                 return True
-        cached = self._peer_for_link(link)
-        if cached and cached != "unknown":
-            return self.hashes_equivalent(cached, peer)
         return False
 
     def _link_acceptable_for_peer(self, link, peer_hash):
@@ -455,6 +467,13 @@ class MessagingBackend:
     def _register_peer_link(self, link, peer_hash):
         peer = self.dest_hash_for(peer_hash)
         if not peer or peer == "unknown" or not link:
+            return
+        remote = self._link_remote_peer_hash(link)
+        if remote and not self.hashes_equivalent(remote, peer):
+            print(
+                f"[messaging] Rejected link map {peer[:16]}... "
+                f"(remote identity {remote[:16]}...)"
+            )
             return
         self.peer_links[peer] = link
         self._cache_link_peer(link, peer)
@@ -4403,6 +4422,13 @@ class MessagingBackend:
         link = self._queue_send_link(peer, link_hint=link)
         if not link or not self._link_matches_peer(link, peer):
             print(f"[messaging] send_message: no transport-safe link to {peer[:16]}")
+            return False
+        remote = self._link_remote_peer_hash(link)
+        if remote and not self.hashes_equivalent(remote, peer):
+            print(
+                f"[messaging] send_message: link remote {remote[:16]} "
+                f"≠ target {peer[:16]} — blocked"
+            )
             return False
         if not self._link_interface_healthy(link):
             alt = self._queue_send_link(peer)

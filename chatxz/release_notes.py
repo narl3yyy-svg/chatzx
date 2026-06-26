@@ -3,6 +3,12 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.3.162": [
+        "Sends are blocked unless the link's remote RNS identity matches the target peer — fixes messages to Ubuntu arriving at Windows.",
+        "Beacon discovery no longer overwrites serial-only peers with LAN IPs or via=rns.",
+        "Clicking a discovered USB peer connects over serial only (UI no longer passes a stale LAN IP).",
+        "Discovered list shows USB vs LAN badge; serial peers never display a cross-attached IP.",
+    ],
     "0.3.161": [
         "Parallel LAN + serial sessions: connect to Windows over LAN and Ubuntu over USB at the same time — links no longer tear each other down.",
         "Send routing is transport-locked: messages to a serial peer cannot leak out over an active LAN link (and vice versa).",

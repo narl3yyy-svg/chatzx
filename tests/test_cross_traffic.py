@@ -211,6 +211,74 @@ class CrossTrafficRoutingTests(unittest.TestCase):
                     self.assertTrue(backend.peer_send_ready(UBUNTU))
                     self.assertTrue(backend.peer_send_ready(WINDOWS))
 
+    def test_send_blocked_when_link_remote_identity_differs(self):
+        resolver = lambda h: {"hash": h, "via": "serial" if h == UBUNTU else "rns", "ip": ""}
+        backend = self._backend(resolver)
+        ubuntu_serial, windows_udp = self._wire_dual_links(backend)
+        backend.peer_links[UBUNTU] = windows_udp
+
+        with patch("chatxz.core.messaging.interface_family", side_effect=lambda i: (
+            "serial" if i is ubuntu_serial.attached_interface else "udp"
+        )):
+            with patch.object(backend, "_link_interface_healthy", return_value=True):
+                with patch.object(
+                    backend,
+                    "_dest_hash_from_identity",
+                    side_effect=lambda ident: UBUNTU if ident.hash.hex().startswith("f1c2") else WINDOWS,
+                ):
+                    result = backend.send_message("hello", target_peer=UBUNTU)
+        self.assertFalse(result)
+
+    def test_register_peer_link_rejects_wrong_remote(self):
+        backend = self._backend()
+        udp_iface = _iface("udp")
+        windows_udp = _FakeLink("22" * 16, udp_iface, WINDOWS)
+        backend.links[windows_udp.link_id] = windows_udp
+        with patch.object(
+            backend,
+            "_dest_hash_from_identity",
+            side_effect=lambda ident: WINDOWS,
+        ):
+            backend._register_peer_link(windows_udp, UBUNTU)
+        self.assertNotIn(UBUNTU, backend.peer_links)
+
+    def test_beacon_does_not_pollute_serial_peer_with_lan_ip(self):
+        from chatxz.core.discovery import PeerDiscovery
+
+        disc = PeerDiscovery()
+        disc.peers[UBUNTU] = {
+            "hash": UBUNTU,
+            "name": "UBUNTU",
+            "via": "serial",
+            "last_seen": 1,
+        }
+        with patch.object(disc, "_peer_allowed", return_value=True):
+            with patch.object(disc, "_sanitize_peer_scope", side_effect=lambda p: p):
+                with patch(
+                    "chatxz.core.discovery.serial_discovery_active",
+                    return_value=True,
+                ):
+                    with patch(
+                        "chatxz.core.discovery.register_identity_from_beacon",
+                        return_value=True,
+                    ):
+                        disc._on_beacon(
+                            {
+                                "app": "chatxz",
+                                "hash": UBUNTU,
+                                "name": "UBUNTU",
+                                "ip": "10.10.10.10",
+                                "port": 8742,
+                                "identity_hash": UBUNTU,
+                            },
+                            "b" * 32,
+                            my_identity_hash="a" * 32,
+                            source_ip="10.10.10.10",
+                        )
+        peer = disc.peers.get(UBUNTU) or {}
+        self.assertEqual(peer.get("via"), "serial")
+        self.assertNotIn("ip", peer)
+
     def test_best_outgoing_prefers_serial_for_serial_zone_peer(self):
         resolver = lambda h: {"hash": h, "via": "serial"}
         backend = self._backend(resolver)
