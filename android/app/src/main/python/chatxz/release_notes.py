@@ -3,6 +3,10 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.3.144": [
+        "Hub TCP no longer dials when hub host is on a different subnet than your pinned LAN (e.g. hub 10.0.30.109 while pinned to 10.0.5.37) — stops Connection refused spam in logs.",
+        "Setting hub mode to Off now disables and removes the saved hub TCP client (was left enabled in RNS config).",
+    ],
     "0.3.143": [
         "Hub client + pinned LAN: P2P on 10.0.5.x stays on direct UDP — no longer forced onto hub TCP (fixes Android seeing Ubuntu-bound messages).",
         "Pinned IPv4 scopes discovery even while hub is on — Android/10.0.30.x peers hidden when you pin enp2s0|10.0.5.37.",

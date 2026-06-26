@@ -475,6 +475,57 @@ def lan_transport_hub_policy(hub_role, preset_key):
     return {"allowed": True, "warning": ""}
 
 
+def hub_tcp_client_active(settings):
+    """Whether the hub-client TCP dial should be enabled in config/runtime."""
+    settings = settings or {}
+    if (settings.get("hub_role") or "off") != "client":
+        return False
+    host = (settings.get("hub_host") or "").strip()
+    if not host:
+        return False
+    from chatxz.utils.lan_scope import same_lan_scope
+    from chatxz.utils.platform import parse_lan_interface_value
+
+    pinned = (settings.get("lan_interface") or "").strip()
+    if pinned:
+        _, ip = parse_lan_interface_value(pinned)
+        scope = (ip or "").strip()
+        if scope and not same_lan_scope(host, scope):
+            return False
+    return True
+
+
+def remove_tcp_client_to_host(target_host, target_port=4242):
+    """Remove hub (or other) TCP client dials matching host:port; keep TCP LAN peer dials."""
+    target_host = (target_host or "").strip()
+    target_port = int(target_port or 4242)
+    if not target_host:
+        return 0
+    try:
+        import RNS
+    except Exception:
+        return 0
+    removed = 0
+    for iface in list(getattr(RNS.Transport, "interfaces", []) or []):
+        if type(iface).__name__ != "TCPClientInterface":
+            continue
+        host = (getattr(iface, "target_host", None) or "").strip()
+        port = int(
+            getattr(iface, "target_port", None)
+            or getattr(iface, "port", None)
+            or 4242
+        )
+        if host != target_host or port != target_port:
+            continue
+        try:
+            RNS.Transport.remove_interface(iface)
+            removed += 1
+            print(f"[hub] Removed RNS TCP client to {host}:{port}")
+        except Exception as exc:
+            print(f"[hub] Could not remove TCP client to {host}:{port}: {exc}")
+    return removed
+
+
 def delete_interface(items, iface_id):
     items = normalize_interface_list(items)
     return [i for i in items if i.get("id") != iface_id]
@@ -993,7 +1044,7 @@ def ensure_runtime_tcp_client(settings=None, config_dir=None):
                 settings = json.load(fh)
         except Exception:
             return None
-    if (settings.get("hub_role") or "off") != "client":
+    if not hub_tcp_client_active(settings):
         return None
     host = (settings.get("hub_host") or "").strip()
     if not host:

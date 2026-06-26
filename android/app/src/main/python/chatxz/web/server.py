@@ -1014,17 +1014,20 @@ class ChatWebServer:
             for iface in interfaces:
                 if iface.get("preset") == "tcp_server":
                     iface["enabled"] = False
+            from chatxz.core.rns_interfaces import hub_tcp_client_active
+
+            hub_tcp_on = hub_tcp_client_active(settings)
             updated = False
             for iface in interfaces:
                 if iface.get("preset") != "tcp_client":
                     continue
                 iface["target_host"] = hub_host
                 iface["target_port"] = hub_port
-                iface["enabled"] = True
                 iface["type"] = "TCPClientInterface"
+                iface["enabled"] = hub_tcp_on
                 updated = True
                 break
-            if not updated:
+            if hub_tcp_on and not updated:
                 interfaces = add_interface(interfaces, "tcp_client")
                 interfaces = normalize_interface_list(interfaces)
                 client = next(
@@ -1033,6 +1036,10 @@ class ChatWebServer:
                 client["target_host"] = hub_host
                 client["target_port"] = hub_port
                 client["enabled"] = True
+        else:
+            for iface in interfaces:
+                if iface.get("preset") in ("tcp_client", "tcp_server"):
+                    iface["enabled"] = False
         settings["rns_interfaces"] = normalize_interface_list(interfaces)
         return settings
 
@@ -1072,7 +1079,9 @@ class ChatWebServer:
             from chatxz.core.rns_interfaces import (
                 ensure_runtime_tcp_client,
                 ensure_runtime_tcp_hub,
+                hub_tcp_client_active,
                 remove_tcp_client_interfaces,
+                remove_tcp_client_to_host,
                 tcp_client_interface_online,
                 tcp_server_interface_online,
             )
@@ -1091,18 +1100,43 @@ class ChatWebServer:
                         f"{settings.get('hub_port', 4242)} — check hub role and restart"
                     )
             elif hub_role == "client":
-                host = settings.get("hub_host") or ""
+                host = (settings.get("hub_host") or "").strip()
                 port = int(settings.get("hub_port") or 4242)
-                iface = ensure_runtime_tcp_client(settings, self.config_dir)
-                if iface and self.messaging:
-                    self.messaging._silent_announce()
-                online = tcp_client_interface_online()
-                if online:
-                    print(f"[hub] TCP hub client connected to {host}:{port}")
-                    if self.messaging:
-                        self.messaging._schedule_hub_queue_drain()
+                if hub_tcp_client_active(settings):
+                    iface = ensure_runtime_tcp_client(settings, self.config_dir)
+                    if iface and self.messaging:
+                        self.messaging._silent_announce()
+                    online = tcp_client_interface_online()
+                    if online:
+                        print(f"[hub] TCP hub client connected to {host}:{port}")
+                        if self.messaging:
+                            self.messaging._schedule_hub_queue_drain()
+                    elif host:
+                        print(f"[hub] TCP hub client connecting to {host}:{port}...")
                 elif host:
-                    print(f"[hub] TCP hub client connecting to {host}:{port}...")
+                    remove_tcp_client_to_host(host, port)
+                    pinned = (settings.get("lan_interface") or "").strip()
+                    if pinned:
+                        print(
+                            f"[hub] Hub TCP client paused — {host} is not on your "
+                            f"pinned LAN ({pinned}); P2P on this subnet continues"
+                        )
+                    else:
+                        print(f"[hub] Hub TCP client disabled for {host}:{port}")
+            else:
+                remove_targets = set()
+                host = (settings.get("hub_host") or "").strip()
+                if host:
+                    remove_targets.add((host, int(settings.get("hub_port") or 4242)))
+                for iface in normalize_interface_list(settings.get("rns_interfaces")):
+                    if iface.get("preset") != "tcp_client":
+                        continue
+                    th = (iface.get("target_host") or "").strip()
+                    tp = int(iface.get("target_port") or 4242)
+                    if th:
+                        remove_targets.add((th, tp))
+                for th, tp in remove_targets:
+                    remove_tcp_client_to_host(th, tp)
         except Exception as exc:
             print(f"[hub] Runtime hub apply failed: {exc}")
 

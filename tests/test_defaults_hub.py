@@ -64,6 +64,55 @@ class LanTransportHubPolicyTests(unittest.TestCase):
             self.assertTrue(policy["allowed"])
 
 
+class HubTcpClientActiveTests(unittest.TestCase):
+    def test_hub_tcp_active_on_same_subnet(self):
+        settings = {
+            "hub_role": "client",
+            "hub_host": "10.0.30.109",
+            "lan_interface": "enp2s0|10.0.30.112",
+        }
+        self.assertTrue(ri.hub_tcp_client_active(settings))
+
+    def test_hub_tcp_inactive_when_hub_on_different_pinned_subnet(self):
+        settings = {
+            "hub_role": "client",
+            "hub_host": "10.0.30.109",
+            "lan_interface": "enp2s0|10.0.5.37",
+        }
+        self.assertFalse(ri.hub_tcp_client_active(settings))
+
+    def test_hub_tcp_inactive_when_hub_off(self):
+        settings = {
+            "hub_role": "off",
+            "hub_host": "10.0.30.109",
+            "lan_interface": "enp2s0|10.0.30.112",
+        }
+        self.assertFalse(ri.hub_tcp_client_active(settings))
+
+    def test_apply_hub_off_disables_tcp_client(self):
+        from chatxz.web.server import ChatWebServer
+
+        server = ChatWebServer.__new__(ChatWebServer)
+        settings = {
+            "hub_role": "off",
+            "hub_host": "10.0.30.109",
+            "rns_interfaces": ri.normalize_interface_list([
+                {
+                    "id": "c1",
+                    "preset": "tcp_client",
+                    "type": "TCPClientInterface",
+                    "enabled": True,
+                    "target_host": "10.0.30.109",
+                    "target_port": 4242,
+                },
+                ri.default_interface_list()[0],
+            ]),
+        }
+        out = server._apply_hub_settings(settings)
+        client = next(i for i in out["rns_interfaces"] if i.get("preset") == "tcp_client")
+        self.assertFalse(client.get("enabled"))
+
+
 class HubDiscoveryScopeTests(unittest.TestCase):
     def test_pinned_lan_scope_applies_while_hub_client(self):
         from unittest.mock import patch
