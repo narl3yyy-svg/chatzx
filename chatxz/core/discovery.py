@@ -456,6 +456,8 @@ class PeerDiscovery:
             if scope and not peer_in_scope(announce_ip, scope):
                 return
             via = "rns"
+        elif serial_discovery_active():
+            via = "serial"
         else:
             return
         if via == "serial":

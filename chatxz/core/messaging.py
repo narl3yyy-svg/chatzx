@@ -2367,12 +2367,30 @@ class MessagingBackend:
         if not self.destination or not iface:
             return False
         data = app_data if app_data is not None else self._announce_payload()
+        if is_serial_interface(iface):
+            try:
+                payload = json.loads(data.decode("utf-8"))
+                payload.pop("ip", None)
+                data = json.dumps(payload).encode("utf-8")
+            except Exception:
+                pass
         self.destination.announce(app_data=data, attached_interface=iface)
         try:
             RNS.Transport.identity.announce(attached_interface=iface)
         except Exception:
             pass
         return True
+
+    def _fallback_announce(self, announce_data):
+        """Last-resort announce — never fan out LAN IP on USB when serial is up."""
+        if self._serial_transport_ready():
+            self._burst_serial_announce(count=3, interval=0.3)
+            return
+        self.destination.announce(app_data=announce_data)
+        try:
+            RNS.Transport.identity.announce()
+        except Exception:
+            pass
 
     def _burst_serial_announce(self, count=None, interval=None, force=False):
         """Send several RNS announces on serial only — slow links need repeats."""
@@ -2426,11 +2444,7 @@ class MessagingBackend:
                 self._burst_serial_announce(count=3, interval=0.3)
                 return
             else:
-                self.destination.announce(app_data=announce_data)
-                try:
-                    RNS.Transport.identity.announce()
-                except Exception:
-                    pass
+                self._fallback_announce(announce_data)
         elif udp_lan:
             udp_iface = udp_interface_online()
             if udp_iface:
@@ -2439,20 +2453,12 @@ class MessagingBackend:
                 self._burst_serial_announce(count=3, interval=0.3)
                 return
             else:
-                self.destination.announce(app_data=announce_data)
-                try:
-                    RNS.Transport.identity.announce()
-                except Exception:
-                    pass
+                self._fallback_announce(announce_data)
         elif self._serial_transport_ready():
             self._burst_serial_announce(count=3, interval=0.3)
             return
         else:
-            self.destination.announce(app_data=announce_data)
-            try:
-                RNS.Transport.identity.announce()
-            except Exception:
-                pass
+            self._fallback_announce(announce_data)
         if (
             also_serial
             and self._serial_transport_ready()
@@ -2483,19 +2489,17 @@ class MessagingBackend:
             if tcp_iface:
                 self._announce_on_interface(tcp_iface, app_data=announce_data)
             else:
-                self.destination.announce(app_data=announce_data)
+                self._fallback_announce(announce_data)
         elif udp_lan:
             udp_iface = udp_interface_online()
             if udp_iface:
                 self._announce_on_interface(udp_iface, app_data=announce_data)
-            elif self._serial_transport_ready():
-                self._burst_serial_announce(count=3, interval=0.3)
             else:
-                self.destination.announce(app_data=announce_data)
+                self._fallback_announce(announce_data)
         elif self._serial_transport_ready():
             self._burst_serial_announce(count=3, interval=0.3)
         else:
-            self.destination.announce(app_data=announce_data)
+            self._fallback_announce(announce_data)
         if unicast_subnet is None:
             unicast_subnet = True
         lan_ok = (

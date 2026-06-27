@@ -114,6 +114,19 @@ class DiscoveryIdentityTests(unittest.TestCase):
         self.assertIn("436ce5fd79d0932d436ce5fd79d0932d", disc.peers)
         self.assertEqual(disc.peers["436ce5fd79d0932d436ce5fd79d0932d"]["via"], "serial")
 
+    def test_ipless_announce_without_packet_iface_accepted_as_serial(self):
+        disc = PeerDiscovery()
+        disc.running = True
+        disc.accept_peers = True
+        peer_hash = bytes.fromhex("986da79e42cd8b10dc6ccb069d978420")
+        app_data = b'{"app":"chatxz","name":"ubuntu"}'
+        with patch("chatxz.core.discovery.announce_packet_receiving_interface", return_value=None):
+            with patch("chatxz.core.discovery.interface_family", return_value=""):
+                with patch("chatxz.core.discovery.serial_discovery_active", return_value=True):
+                    disc._on_announce(peer_hash, app_data, announced_identity=None)
+        self.assertIn("986da79e42cd8b10dc6ccb069d978420", disc.peers)
+        self.assertEqual(disc.peers["986da79e42cd8b10dc6ccb069d978420"]["via"], "serial")
+
     def test_stale_peer_pruned_after_ttl(self):
         disc = PeerDiscovery()
         disc.accept_peers = True

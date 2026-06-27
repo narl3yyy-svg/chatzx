@@ -3787,6 +3787,24 @@ class ChatWebServer:
         if self.lan_beacon:
             self.lan_beacon.display_name = settings.get("name", "")
 
+    def _spawn_unix_server_restart(self):
+        """Re-exec via launch-server.sh so dialout/uucp (sg) is preserved on Linux."""
+        sys.stdout.flush()
+        stop_stale_chatxz_servers(exclude_pid=os.getpid())
+        root = os.environ.get("CHATXZ_ROOT") or os.getcwd()
+        extra = list(sys.argv[1:]) or ["--share"]
+        env = os.environ.copy()
+        env["CHATXZ_ROOT"] = root
+        env["PYTHONPATH"] = root
+        env["PYTHON"] = sys.executable
+        launch = os.path.join(root, "scripts", "launch-server.sh")
+        if os.path.isfile(launch):
+            cmd = ["bash", launch, *extra]
+        else:
+            cmd = ["bash", os.path.join(root, "run.sh"), "web", *extra]
+        subprocess.Popen(cmd, cwd=root, env=env, start_new_session=True)
+        os._exit(0)
+
     async def handle_restart(self, request):
         if is_android():
             settings = self.load_settings()
@@ -3798,6 +3816,10 @@ class ChatWebServer:
                 "rns_reloaded": True,
             })
         if not getattr(sys, "frozen", False):
+            if sys.platform != "win32":
+                print("[restart] Spawning new server process (launch-server.sh)")
+                asyncio.get_event_loop().call_later(0.8, self._spawn_unix_server_restart)
+                return web.json_response({"status": "restarting"})
             try:
                 await self._reload_server_runtime()
                 print("[restart] Reloaded network stack in-process (run.bat stays open)")

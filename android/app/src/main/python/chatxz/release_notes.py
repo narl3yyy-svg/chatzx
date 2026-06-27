@@ -3,6 +3,11 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.3.167": [
+        "Linux Restart server re-execs via launch-server.sh (preserves dialout/uucp serial groups on Ubuntu).",
+        "IP-less USB announces are accepted when the packet interface is not cached yet — fixes Ubuntu not appearing on Arch.",
+        "Serial announces never include a LAN IP (send-side strip + no fan-out fallback on USB).",
+    ],
     "0.3.166": [
         "Cross-subnet LAN peers are fully rejected — bridged announces on USB (with an IP) are dropped.",
         "IP-less LAN ghost peers no longer appear when serial is up; beacons must arrive from your subnet.",
