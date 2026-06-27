@@ -9,10 +9,10 @@ import uuid
 from chatxz.core.lan_beacon import BEACON_PORT, MAGIC
 from chatxz.core.lan_rns import peer_path_on_family, request_paths_for_hash
 
-PROBE_INTERVAL_S = 15
+PROBE_INTERVAL_S = 30
 PROBE_TIMEOUT_S = 3.0
 PROBE_MAX_RTT_MS = 10000
-PROBE_STALE_S = 10
+PROBE_STALE_S = 30
 PROBE_AVG_WINDOW = 6
 
 _pending_probes = {}

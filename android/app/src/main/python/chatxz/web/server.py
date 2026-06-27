@@ -723,15 +723,9 @@ class ChatWebServer:
             self.messaging.disconnect_all_peers(clear_session=False)
         clear_all_lan_paths()
         if self.discovery:
-            if scope:
-                removed = self.discovery.purge_out_of_scope(scope)
-                if removed:
-                    print(f"[network] Purged {removed} out-of-scope peer(s)")
-            misclassified = self.discovery.purge_misclassified_serial()
-            if misclassified:
-                print(f"[network] Purged {misclassified} misclassified USB peer(s)")
-            else:
-                self.discovery.clear_peers()
+            removed = self.discovery.refresh_paths_for_scope(scope)
+            if removed:
+                print(f"[network] Refreshed discovery — removed {removed} stale path(s)")
         if self.lan_beacon:
             self.lan_beacon.ip = detect_lan_ip()
         if self.messaging:
@@ -1486,10 +1480,7 @@ class ChatWebServer:
         elif configured_serial_enabled(interfaces) and not lan_discovery_configured(interfaces):
             print("[network] Serial-only transport — LAN IP detection skipped")
         received_dir = settings.get("received_dir", os.path.join(self.config_dir, "received"))
-        auto_announce = bool(settings.get("auto_announce", False)) or (
-            configured_serial_enabled(interfaces)
-            and not lan_discovery_configured(interfaces)
-        )
+        auto_announce = bool(settings.get("auto_announce", False))
         self.messaging = MessagingBackend(
             self.identity, self.config_dir,
             on_message=self._on_message,
@@ -1575,10 +1566,9 @@ class ChatWebServer:
             from chatxz.core.lan_rns import prune_stale_lan_paths
             prune_stale_lan_paths()
             if configured_serial_enabled(interfaces) and not lan_discovery_configured(interfaces):
-                self.messaging._burst_serial_announce()
-                print("[network] Startup RNS announce burst on serial")
+                print("[network] Serial-only — tap Announce to broadcast on USB")
             else:
-                self.messaging._silent_announce()
+                self.messaging._silent_announce(also_serial=False)
             if not auto_announce:
                 print("[network] Startup announce queued (tap Announce for more)")
 
@@ -1736,7 +1726,7 @@ class ChatWebServer:
     def _on_beacon_periodic(self):
         if self.messaging and not self.messaging.shutdown_requested:
             try:
-                self.messaging._silent_announce()
+                self.messaging._silent_announce(also_serial=False)
             except Exception:
                 pass
 
@@ -2426,6 +2416,7 @@ class ChatWebServer:
                 if via == "rns":
                     by_rns = p
         if by_serial and by_rns:
+            from chatxz.core.discovery import serial_discovery_active
             from chatxz.utils.lan_scope import peer_in_scope
             from chatxz.core.transport_isolation import dual_transport_isolation_enabled
 
@@ -2436,7 +2427,17 @@ class ChatWebServer:
                 return by_rns
             if peer_ip and rns_ip and peer_ip != rns_ip:
                 return by_serial
-            if dual_transport_isolation_enabled() or not in_scope:
+            if not in_scope or not serial_discovery_active():
+                return by_serial
+            s_rtt = by_serial.get("rtt_avg_ms")
+            r_rtt = by_rns.get("rtt_avg_ms")
+            if s_rtt is not None and r_rtt is not None:
+                return by_serial if s_rtt <= r_rtt else by_rns
+            if s_rtt is not None:
+                return by_serial
+            if r_rtt is not None:
+                return by_rns
+            if dual_transport_isolation_enabled():
                 return by_serial
             return by_rns
         if by_serial:

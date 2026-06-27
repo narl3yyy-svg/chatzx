@@ -3,6 +3,11 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.3.171": [
+        "Discovered list shows one path per peer — fastest RTT wins when LAN and serial are both up.",
+        "Saving a new LAN scope refreshes discovery (drops stale subnet entries, keeps USB serial).",
+        "LAN auto-announce and peer ping run every 30s; serial has no periodic auto-announce (tap Announce).",
+    ],
     "0.3.170": [
         "Serial badge/link hidden when USB is unplugged — peers upgrade to LAN via beacon instead of showing stale USB.",
         "Inbound scope accepts LAN links for serial-tagged peers with an in-scope IP when local USB is down.",

@@ -162,6 +162,75 @@ class PeerDiscovery:
                 removed += 1
         return removed
 
+    def _peer_viable(self, peer, scope_ip=None):
+        """True when a peer record can reach the local host on its transport."""
+        via = (peer.get("via") or "").strip()
+        if via == "serial":
+            return serial_discovery_active()
+        ip = (peer.get("ip") or "").strip()
+        if not ip:
+            return False
+        if scope_ip is not None:
+            scope = (scope_ip or "").strip() or None
+            if scope and not peer_in_scope(ip, scope):
+                return False
+        return True
+
+    def _prefer_peer(self, a, b, scope_ip=None):
+        """Pick the better peer when two records share identity — fastest viable path wins."""
+        a_ok = self._peer_viable(a, scope_ip)
+        b_ok = self._peer_viable(b, scope_ip)
+        if a_ok != b_ok:
+            return a if a_ok else b
+        a_rtt = a.get("rtt_avg_ms")
+        b_rtt = b.get("rtt_avg_ms")
+        if a_rtt is not None and b_rtt is not None and a_rtt != b_rtt:
+            return a if a_rtt < b_rtt else b
+        if a_rtt is not None and b_rtt is None:
+            return a
+        if b_rtt is not None and a_rtt is None:
+            return b
+        rank_a = self._peer_rank(a)
+        rank_b = self._peer_rank(b)
+        if rank_a != rank_b:
+            return a if rank_a > rank_b else b
+        return a if a.get("last_seen", 0) >= b.get("last_seen", 0) else b
+
+    def dedupe_identities(self, scope_ip=None):
+        """Collapse duplicate rows per identity, keeping the fastest viable transport."""
+        scope = (scope_ip or self._scope_ip() or "").strip() or None
+        grouped = {}
+        for key, peer in list(self.peers.items()):
+            grouped.setdefault(self._peer_dedup_key(peer), []).append((key, peer))
+        removed = 0
+        for entries in grouped.values():
+            if len(entries) < 2:
+                continue
+            winner_key, winner = entries[0]
+            for key, peer in entries[1:]:
+                preferred = self._prefer_peer(winner, peer, scope)
+                if preferred is peer:
+                    self._remove_peer_entry(winner_key)
+                    winner_key, winner = key, peer
+                    removed += 1
+                else:
+                    self._remove_peer_entry(key)
+                    removed += 1
+            if not self._peer_viable(winner, scope):
+                self._remove_peer_entry(winner_key)
+                removed += 1
+        return removed
+
+    def refresh_paths_for_scope(self, scope_ip=None):
+        """After LAN scope changes, drop stale LAN dupes and keep fastest viable path."""
+        scope = (scope_ip or self._scope_ip() or "").strip() or None
+        removed = 0
+        if scope:
+            removed += self.purge_out_of_scope(scope)
+        removed += self.purge_misclassified_serial()
+        removed += self.dedupe_identities(scope)
+        return removed
+
     def reset_peer_probe_state(self, hash_hex):
         """Announce/beacon refresh — peer is alive; do not probe-evict."""
         clean = normalize_hash(hash_hex)
@@ -691,7 +760,7 @@ class PeerDiscovery:
         score = 0
         if peer.get("via") == "serial":
             score += 22
-        elif peer.get("via") == "rns":
+        elif peer.get("via") in ("rns", "beacon"):
             score += 20
         if peer.get("pubkey"):
             score += 8
@@ -711,30 +780,21 @@ class PeerDiscovery:
             return True
         return same_lan_scope(ip_a, ip_b)
 
-    def _same_ip_preferred(self, a, b):
+    def _same_ip_preferred(self, a, b, scope_ip=None):
         """Pick the better peer record when two entries share an IP."""
         a_verified = bool(a.get("pubkey"))
         b_verified = bool(b.get("pubkey"))
         if a_verified != b_verified:
             return a if a_verified else b
-        a_name = (a.get("name") or "").strip()
-        b_name = (b.get("name") or "").strip()
-        a_hash = normalize_hash(a.get("hash"))
-        b_hash = normalize_hash(b.get("hash"))
-        same_name = (
-            a_name
-            and b_name
-            and a_name == b_name
-            and a_name != a_hash[:8]
-            and b_name != b_hash[:8]
-        )
-        if same_name:
+        if a.get("last_seen", 0) != b.get("last_seen", 0):
             return a if a.get("last_seen", 0) >= b.get("last_seen", 0) else b
-        rank_a = self._peer_rank(a)
-        rank_b = self._peer_rank(b)
-        if rank_a != rank_b:
-            return a if rank_a > rank_b else b
-        return a if a.get("last_seen", 0) >= b.get("last_seen", 0) else b
+        a_via = (a.get("via") or "").strip()
+        b_via = (b.get("via") or "").strip()
+        if a_via == "rns" and b_via == "beacon":
+            return a
+        if b_via == "rns" and a_via == "beacon":
+            return b
+        return self._prefer_peer(a, b, scope_ip)
 
     @staticmethod
     def _peer_dedup_key(peer):
@@ -768,15 +828,7 @@ class PeerDiscovery:
             peer_hash = normalize_hash(peer.get("hash"))
             if existing_hash != peer_hash:
                 if self._same_peer_identity(existing, peer):
-                    peer_score = self._peer_rank(peer)
-                    existing_score = self._peer_rank(existing)
-                    if peer_score > existing_score:
-                        deduped[key] = peer
-                    elif (
-                        peer_score == existing_score
-                        and peer.get("last_seen", 0) >= existing.get("last_seen", 0)
-                    ):
-                        deduped[key] = peer
+                    deduped[key] = self._prefer_peer(existing, peer, scope_ip)
                     continue
                 existing_verified = bool(existing.get("pubkey"))
                 peer_verified = bool(peer.get("pubkey"))
@@ -787,12 +839,7 @@ class PeerDiscovery:
                 elif peer.get("last_seen", 0) >= existing.get("last_seen", 0):
                     deduped[key] = peer
                 continue
-            peer_score = self._peer_rank(peer)
-            existing_score = self._peer_rank(existing)
-            if peer_score > existing_score:
-                deduped[key] = peer
-            elif peer_score == existing_score and peer.get("last_seen", 0) >= existing.get("last_seen", 0):
-                deduped[key] = peer
+            deduped[key] = self._prefer_peer(existing, peer, scope_ip)
         collapsed = {}
         no_ip_peers = []
         usb_up = serial_discovery_active()
@@ -813,8 +860,9 @@ class PeerDiscovery:
             if not existing:
                 collapsed[ip] = peer
                 continue
-            collapsed[ip] = self._same_ip_preferred(peer, existing)
-        return no_ip_peers + list(collapsed.values())
+            collapsed[ip] = self._same_ip_preferred(peer, existing, scope_ip)
+        merged = no_ip_peers + list(collapsed.values())
+        return [p for p in merged if self._peer_viable(p, scope_ip)]
 
     def current_hashes(self):
         hashes = set()

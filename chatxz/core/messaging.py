@@ -202,7 +202,7 @@ class MessagingBackend:
         self.on_transfer_revoked = on_transfer_revoked
         self.display_name = display_name
         self.auto_announce = auto_announce
-        self.announce_interval = 45 if is_android() else 30
+        self.announce_interval = 30
         self.destination = None
         self.links = {}
         self.active_link = None
@@ -2288,11 +2288,8 @@ class MessagingBackend:
         self.destination.accepts_links(True)
         self.destination.set_link_established_callback(self._link_callback)
 
-        serial_auto = configured_serial_enabled(load_settings_interfaces(self.config_dir))
-        if self.auto_announce or serial_auto:
-            if serial_auto and not self.auto_announce:
-                print("[messaging] Serial RNS auto-announce enabled (no LAN beacon)")
-            self._announce()
+        if self.auto_announce:
+            self._announce(also_serial=False)
             self._announce_thread = threading.Thread(target=self._announce_loop, daemon=True)
             self._announce_thread.start()
 
@@ -2348,8 +2345,8 @@ class MessagingBackend:
                 except Exception as e:
                     print(f"[queue] Retry loop error: {e}")
 
-    def announce(self):
-        self._announce()
+    def announce(self, also_serial=True):
+        self._announce(also_serial=also_serial)
 
     def _serial_mode_active(self):
         return (
@@ -2500,12 +2497,13 @@ class MessagingBackend:
             packet = build_announce_packet(self.destination, announce_data)
             unicast_announce_packet(packet, peer_ip=peer_ip, subnet_probe=False)
 
-    def _announce(self, peer_ip=None, unicast_subnet=None):
+    def _announce(self, peer_ip=None, unicast_subnet=None, also_serial=True):
         if not self.destination:
             return
         announce_data = self._announce_payload()
         if not physical_lan_reachable() and self._serial_transport_ready():
-            self._burst_serial_announce()
+            if also_serial:
+                self._burst_serial_announce()
             return
         prune_dead_serial_interfaces()
         interfaces = load_settings_interfaces(self.config_dir)
@@ -2546,11 +2544,12 @@ class MessagingBackend:
             if sent:
                 hint = f" + {sent} unicast" if sent else ""
                 print(f"[messaging] Announced on LAN (name={self.display_name or 'none'}{hint})")
-                if self._serial_transport_ready() and configured_serial_enabled(interfaces):
+                if also_serial and self._serial_transport_ready() and configured_serial_enabled(interfaces):
                     self._burst_serial_announce(count=3, interval=0.25)
                 return
         if (
-            self._serial_transport_ready()
+            also_serial
+            and self._serial_transport_ready()
             and configured_serial_enabled(interfaces)
             and lan_ok
         ):
@@ -2976,18 +2975,16 @@ class MessagingBackend:
             pass
 
     def _should_rns_auto_announce(self):
-        """Periodic RNS-only announces on serial (no LAN beacon/unicast)."""
+        """Periodic LAN-only RNS refresh (serial uses manual Announce / USB attach)."""
+        if not self.auto_announce:
+            return False
         if (
             self._connect_in_progress
             or self._failover_in_progress
             or self._has_active_transfer()
         ):
             return False
-        if not self._serial_transport_ready():
-            return False
-        if self._serial_mode_active():
-            return True
-        return not physical_lan_reachable()
+        return lan_discovery_configured(load_settings_interfaces(self.config_dir))
 
     def _announce_loop(self):
         while self.running:
@@ -2998,7 +2995,7 @@ class MessagingBackend:
             if self._has_active_transfer() or not self._should_rns_auto_announce():
                 continue
             prune_dead_serial_interfaces()
-            self._silent_announce()
+            self._silent_announce(also_serial=False)
 
     def cancel_all_transfers(self):
         """Abort in-flight file sends/receives during shutdown."""
