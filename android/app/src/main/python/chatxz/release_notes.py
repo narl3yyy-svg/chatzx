@@ -3,6 +3,11 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.3.168": [
+        "Peer probe: UDP/serial liveness checks with avg RTT in sidebar; peers drop after 10s without reply.",
+        "Custom sidebar logo (click cx), identity modal (click your hash), canceled file transfers removed from chat.",
+        "Ubuntu restart uses restart-server.sh; serial transfers faster (window=3) and skip announces during uploads.",
+    ],
     "0.3.167": [
         "Linux Restart server re-execs via launch-server.sh (preserves dialout/uucp serial groups on Ubuntu).",
         "IP-less USB announces are accepted when the packet interface is not cached yet — fixes Ubuntu not appearing on Arch.",

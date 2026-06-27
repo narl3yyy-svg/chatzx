@@ -106,8 +106,36 @@ body::before {
   display: flex; align-items: center; justify-content: center;
   font-weight: 700; font-size: 15px; color: #fff;
   box-shadow: 0 8px 24px rgba(124,106,239,0.35);
-  flex-shrink: 0;
+  flex-shrink: 0; cursor: pointer; overflow: hidden;
+  position: relative; transition: transform var(--transition), box-shadow var(--transition);
 }
+.brand-mark:hover { transform: scale(1.04); box-shadow: 0 10px 28px rgba(124,106,239,0.45); }
+.brand-mark img { width: 100%; height: 100%; object-fit: cover; display: none; }
+.brand-mark.has-logo { background: var(--surface); }
+.brand-mark.has-logo img { display: block; }
+.brand-mark.has-logo .brand-fallback { display: none; }
+.peer-rtt {
+  font-size: 10px; color: var(--success); font-variant-numeric: tabular-nums;
+  margin-left: 4px; opacity: 0.9;
+}
+.identity-modal-overlay {
+  position: fixed; inset: 0; z-index: 12000;
+  background: rgba(0,0,0,0.55); display: none;
+  align-items: center; justify-content: center; padding: 20px;
+}
+.identity-modal-overlay.open { display: flex; }
+.identity-modal {
+  width: min(420px, 100%); background: var(--surface);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-lg);
+  padding: 20px; box-shadow: var(--shadow-lg);
+}
+.identity-modal h3 { margin: 0 0 8px; font-size: 18px; }
+.identity-modal .id-value {
+  font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all;
+  background: rgba(0,0,0,0.25); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 10px; margin: 12px 0;
+}
+.identity-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .brand-text { flex: 1; min-width: 0; }
 #sidebar-header h1 {
   font-size: 20px; font-weight: 700; letter-spacing: -0.03em; margin: 0;
@@ -1302,11 +1330,15 @@ body.sidebar-open #sidebar-backdrop { display: block; }
   <div id="sidebar-backdrop" onclick="closeSidebarOnBackdrop(event)"></div>
   <aside id="sidebar" onclick="event.stopPropagation()">
     <div id="sidebar-header">
-      <div class="brand-mark">cx</div>
+      <div class="brand-mark" id="brand-mark" onclick="pickBrandLogo()" title="Click to set sidebar logo">
+        <img id="brand-logo-img" alt="">
+        <span class="brand-fallback">cx</span>
+      </div>
+      <input type="file" id="brand-logo-input" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
       <div class="brand-text">
         <h1>chatxz <span id="header-version" style="font-size:12px;color:var(--text3);font-weight:500"></span></h1>
         <div class="brand-sub">Encrypted mesh messaging</div>
-        <div id="identity-box" onclick="copyIdentity()" title="Click to copy identity">Loading...</div>
+        <div id="identity-box" onclick="openIdentityModal()" title="Your identity — click to manage">Loading...</div>
       </div>
       <button id="settings-btn" onclick="toggleSettings()" title="Settings">⚙</button>
     </div>
@@ -1363,6 +1395,19 @@ body.sidebar-open #sidebar-backdrop { display: block; }
         <button class="action-btn" onclick="actionSaveContact()">💾 Save as contact</button>
         <button class="action-btn danger" onclick="actionClearPeerHistory()">🧹 Clear chat history</button>
         <button class="action-btn danger" onclick="actionDelete()">🗑 Delete contact</button>
+      </div>
+    </div>
+
+    <div id="identity-modal-overlay" class="identity-modal-overlay" onclick="closeIdentityModal(event)">
+      <div class="identity-modal" onclick="event.stopPropagation()">
+        <h3>Your identity</h3>
+        <p class="field-hint" style="margin:0">Share this connect hash so peers can reach you.</p>
+        <div class="id-value" id="identity-modal-hash">—</div>
+        <div class="identity-modal-actions">
+          <button type="button" class="sidebar-btn primary" onclick="copyIdentityFromModal()">Copy hash</button>
+          <button type="button" class="sidebar-btn danger" onclick="regenerateIdentityFromModal()">Regenerate</button>
+          <button type="button" class="sidebar-btn" onclick="closeIdentityModal()">Close</button>
+        </div>
       </div>
     </div>
 
@@ -2414,6 +2459,7 @@ function loadHistoryForPeer(peerHash) {
 }
 
 function fetchIdentity() {
+  loadBrandLogo();
   fetch('/api/identity')
     .then(r => r.json())
     .then(d => {
@@ -2425,7 +2471,7 @@ function fetchIdentity() {
       myHash = d.connect_hash || d.hash;
       const label = formatHashDisplay(myHash);
       document.getElementById('identity-box').textContent = label;
-      document.getElementById('identity-box').title = stripHashColons(myHash) + ' — connect hash (click to copy)';
+      document.getElementById('identity-box').title = stripHashColons(myHash) + ' — click to manage identity';
       updateAndroidDebugLogHint(d.debug_log_path);
       const sh = document.getElementById('settings-hash');
       if (sh) sh.value = myHash;
@@ -2546,6 +2592,11 @@ function handleWSMessage(msg) {
     if (Array.isArray(msg.data)) {
       renderContacts(msg.data);
       syncContactIpsFromDiscovered(window._discoveredPeers || []);
+    }
+  } else if (msg.type === 'message_removed') {
+    const mid = msg.data && msg.data.msg_id;
+    if (mid) {
+      document.querySelectorAll(`.msg[data-msgid="${mid}"]`).forEach(el => el.remove());
     }
   } else if (msg.type === 'identity_changed') {
     const data = msg.data || {};
@@ -2692,10 +2743,24 @@ function updateIncomingTransfers(data) {
   if (!data || data.direction !== 'receive') return;
   const key = data.transfer_id || data.file_name || ('recv-' + Date.now());
   if (data.status === 'complete' || data.status === 'failed' || data.status === 'cancelled') {
+    Object.keys(incomingTransfers).forEach(k => {
+      const t = incomingTransfers[k];
+      if (
+        (data.transfer_id && t.transfer_id === data.transfer_id) ||
+        (data.file_name && t.file_name === data.file_name)
+      ) {
+        delete incomingTransfers[k];
+      }
+    });
     delete incomingTransfers[key];
   } else {
-    incomingTransfers[key] = {...incomingTransfers[key], ...data, _key: key};
+    incomingTransfers[key] = {...incomingTransfers[key], ...data, _key: key, _updated: Date.now()};
   }
+  const now = Date.now();
+  Object.keys(incomingTransfers).forEach(k => {
+    const t = incomingTransfers[k];
+    if (t._updated && now - t._updated > 120000) delete incomingTransfers[k];
+  });
   renderIncomingTransfers();
 }
 
@@ -2887,10 +2952,12 @@ function renderContacts(contacts) {
     const linked = isPeerLinked(c.hash);
     const unread = unreadForPeer(c.hash);
     const ipHint = c.ip ? ` · ${escapeHtml(c.ip)}` : '';
+    const rttHint = formatRtt(c.rtt_avg_ms || c.rtt_ms);
+    const rttBadge = rttHint ? `<span class="peer-rtt">${escapeHtml(rttHint)}</span>` : '';
     div.className = 'contact-item' + (active ? ' active' : '');
     div.innerHTML = `<div class="contact-avatar contact-avatar-saved">${escapeHtml(name).charAt(0).toUpperCase()}</div>
       <div class="contact-info">
-        <div class="contact-name">${escapeHtml(name)}${linked ? ' <span style="color:var(--success);font-size:10px">●</span>' : ''}</div>
+        <div class="contact-name">${escapeHtml(name)}${linked ? ' <span style="color:var(--success);font-size:10px">●</span>' : ''}${rttBadge}</div>
         <div class="contact-hash">${truncateHash(c.hash)}${ipHint}</div>
       </div>
       ${unread > 0 ? `<span class="contact-badge unread">${unread > 99 ? '99+' : unread}</span>` : ''}`;
@@ -2941,9 +3008,11 @@ function renderDiscovered(peers) {
     const isSerial = (p.via || '') === 'serial';
     const transportLabel = isSerial ? 'USB' : 'LAN';
     const transportHint = isSerial ? 'serial' : (p.ip ? escapeHtml(p.ip) : 'LAN');
+    const rttHint = formatRtt(p.rtt_avg_ms || p.rtt_ms);
+    const rttBadge = rttHint ? `<span class="peer-rtt">${escapeHtml(rttHint)}</span>` : '';
     div.innerHTML = `<div class="contact-avatar contact-avatar-lan">${escapeHtml(name).charAt(0).toUpperCase()}</div>
       <div class="contact-info">
-        <div class="contact-name">${escapeHtml(name)}${linked ? ' <span style="color:var(--success);font-size:10px">●</span>' : ''}</div>
+        <div class="contact-name">${escapeHtml(name)}${linked ? ' <span style="color:var(--success);font-size:10px">●</span>' : ''}${rttBadge}</div>
         <div class="contact-hash">${truncateHash(p.hash)}${transportHint ? ' · ' + transportHint : ''}</div>
       </div>
       ${unread > 0 ? `<span class="contact-badge unread">${unread > 99 ? '99+' : unread}</span>` : `<span class="contact-badge lan">${transportLabel}</span>`}`;
@@ -3850,7 +3919,11 @@ function syncContactIpsFromDiscovered(peers) {
     const scope = window._localLanIp;
     if (scope && c.ip && sameSubnet(c.ip, scope) && !sameSubnet(p.ip, scope)) return c;
     changed = true;
-    return {...c, ip: p.ip, port, identity_hash: p.identity_hash || c.identity_hash};
+    return {
+      ...c, ip: p.ip, port,
+      identity_hash: p.identity_hash || c.identity_hash,
+      rtt_ms: p.rtt_ms, rtt_avg_ms: p.rtt_avg_ms,
+    };
   });
   if (changed) renderContacts(allContacts);
 }
@@ -4001,6 +4074,18 @@ function refreshNetworkStatus(silent) {
         html += row('Session peer', truncateHash(d.session_peer) + ' (reconnecting)', false);
       }
       html += row('Discovered peers', d.discovered_count ?? 0, (d.discovered_count || 0) > 0);
+      if (Array.isArray(d.discovered_peers) && d.discovered_peers.length) {
+        d.discovered_peers.forEach(p => {
+          const name = p.name || truncateHash(p.hash);
+          const rtt = formatRtt(p.rtt_avg_ms || p.rtt_ms);
+          const via = (p.via || '') === 'serial' ? 'USB' : 'LAN';
+          html += row(
+            'Probe · ' + name,
+            rtt ? (rtt + ' avg · ' + via) : ('no reply · ' + via),
+            !!rtt && rtt !== '>10s',
+          );
+        });
+      }
       html += row('WS clients', (d.ws_clients ?? 0) + ' (browser tabs on this device)', true);
       if (platform === 'android' && window.chatxzAndroid) {
         const micOk = window.chatxzAndroid.hasAudioPermission();
@@ -5049,7 +5134,9 @@ function applyIdentityChange(newHash, identityHash, oldHash) {
 function restartServer() {
   const msg = appPlatform === 'android'
     ? 'Restart the app to apply network/serial settings?'
-    : 'Reload network stack? The cmd window stays open.';
+    : (appPlatform === 'linux' || appPlatform === 'darwin')
+      ? 'Restart the server? A new process will start in the background (terminal may return to prompt).'
+      : 'Reload network stack? The cmd window stays open.';
   if (!confirm(msg)) return;
   fetch('/api/restart', {method: 'POST'})
     .then(async r => {
@@ -5230,9 +5317,77 @@ function deleteMessage(msgId) {
     .catch(() => toast('Delete failed'));
 }
 
-function copyIdentity() {
+function formatRtt(ms) {
+  if (ms == null || ms === undefined) return '';
+  const n = parseInt(ms, 10);
+  if (!Number.isFinite(n) || n < 0) return '';
+  if (n >= 10000) return '>10s';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 's';
+  return n + 'ms';
+}
+
+function loadBrandLogo() {
+  const img = document.getElementById('brand-logo-img');
+  const mark = document.getElementById('brand-mark');
+  if (!img || !mark) return;
+  const probe = new Image();
+  probe.onload = () => {
+    img.src = '/api/brand-logo?t=' + Date.now();
+    mark.classList.add('has-logo');
+  };
+  probe.onerror = () => {
+    img.removeAttribute('src');
+    mark.classList.remove('has-logo');
+  };
+  probe.src = '/api/brand-logo?t=' + Date.now();
+}
+
+function pickBrandLogo() {
+  const input = document.getElementById('brand-logo-input');
+  if (!input) return;
+  input.onchange = () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('logo', file);
+    fetch('/api/brand-logo', {method: 'POST', body: fd})
+      .then(r => r.json())
+      .then(d => {
+        if (d.status === 'ok') {
+          loadBrandLogo();
+          toast('Sidebar logo updated');
+        } else toast('Logo upload failed');
+      })
+      .catch(() => toast('Logo upload failed'));
+    input.value = '';
+  };
+  input.click();
+}
+
+function openIdentityModal() {
+  const overlay = document.getElementById('identity-modal-overlay');
+  const hashEl = document.getElementById('identity-modal-hash');
+  if (hashEl) hashEl.textContent = stripHashColons(myHash) || '—';
+  overlay?.classList.add('open');
+}
+
+function closeIdentityModal(event) {
+  if (event && event.target && event.target.id !== 'identity-modal-overlay') return;
+  document.getElementById('identity-modal-overlay')?.classList.remove('open');
+}
+
+function copyIdentityFromModal() {
   const text = stripHashColons(myHash);
   navigator.clipboard.writeText(text).then(() => toast('Identity copied!'));
+}
+
+function regenerateIdentityFromModal() {
+  closeIdentityModal();
+  regenerateIdentity();
+}
+
+function copyIdentity() {
+  openIdentityModal();
 }
 
 function stripHashColons(h) {

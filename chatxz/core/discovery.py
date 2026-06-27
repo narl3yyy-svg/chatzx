@@ -160,6 +160,53 @@ class PeerDiscovery:
                 removed += 1
         return removed
 
+    def update_peer_probe(self, hash_hex, rtt_ms=None, ok=True):
+        """Record probe RTT and liveness for a discovery entry."""
+        clean = normalize_hash(hash_hex)
+        if not clean or clean not in self.peers:
+            return
+        peer = self.peers[clean]
+        now = time.time()
+        if ok and rtt_ms is not None:
+            from chatxz.core.peer_probe import rolling_avg_ms, avg_ms
+            samples = rolling_avg_ms(peer.get("rtt_samples"), rtt_ms)
+            peer["rtt_samples"] = samples
+            peer["rtt_ms"] = int(rtt_ms)
+            peer["rtt_avg_ms"] = avg_ms(samples)
+            peer["last_probe_ok"] = now
+            peer["probe_failures"] = 0
+        elif not ok:
+            peer["probe_failures"] = int(peer.get("probe_failures") or 0) + 1
+            peer["last_probe_at"] = now
+
+    def purge_stale_probes(self, max_rtt_ms=10000, stale_s=10, max_failures=2):
+        """Drop peers that stopped responding or exceed RTT threshold."""
+        now = time.time()
+        removed = []
+        for key in list(self.peers.keys()):
+            peer = self.peers.get(key) or {}
+            via = (peer.get("via") or "").strip()
+            last_ok = float(
+                peer.get("last_probe_ok")
+                or peer.get("last_seen")
+                or 0
+            )
+            age = now - last_ok
+            rtt_avg = peer.get("rtt_avg_ms")
+            failures = int(peer.get("probe_failures") or 0)
+            if rtt_avg is not None and int(rtt_avg) > max_rtt_ms:
+                removed.append(key)
+                continue
+            if age > stale_s and failures >= max_failures:
+                removed.append(key)
+                continue
+            if via != "serial" and age > stale_s and peer.get("ip") and failures >= 1:
+                removed.append(key)
+                continue
+        for key in removed:
+            self._remove_peer_entry(key)
+        return len(removed)
+
     def purge_ipless_non_serial(self):
         """Drop LAN/beacon peers with no in-scope IP (ghost entries when USB is up)."""
         removed = 0

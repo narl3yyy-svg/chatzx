@@ -780,7 +780,45 @@ class ChatWebServer:
             return []
         self.discovery.purge_misclassified_serial()
         self.discovery.purge_ipless_non_serial()
+        self.discovery.purge_stale_probes()
         return self.discovery.get_peers(scope_ip=self._discovery_scope_ip())
+
+    def _brand_logo_path(self):
+        return os.path.join(self.config_dir, "brand_logo.png")
+
+    def _probe_discovered_peers(self):
+        if not self.discovery or not self.discovery.accept_peers:
+            return 0
+        from chatxz.core.peer_probe import probe_serial_path, probe_udp_peer
+
+        for peer in list(self.discovery.peers.values()):
+            hash_hex = peer.get("hash") or ""
+            via = (peer.get("via") or "").strip()
+            ip = (peer.get("ip") or "").strip()
+            if via == "serial" or not ip:
+                rtt = probe_serial_path(hash_hex)
+            else:
+                rtt = probe_udp_peer(ip)
+            if rtt is not None:
+                self.discovery.update_peer_probe(hash_hex, rtt_ms=rtt, ok=True)
+            else:
+                self.discovery.update_peer_probe(hash_hex, ok=False)
+        return self.discovery.purge_stale_probes()
+
+    async def _remove_history_message(self, msg_id):
+        clean = (msg_id or "").strip()
+        if not clean:
+            return False
+        before = len(self.message_history)
+        self.message_history = [
+            m for m in self.message_history
+            if (m.get("msg_id") or "") != clean
+        ]
+        if len(self.message_history) == before:
+            return False
+        self._save_history()
+        await self._broadcast({"type": "message_removed", "data": {"msg_id": clean}})
+        return True
 
     def _peer_endpoint_for_transfer(self, peer_hash):
         from chatxz.core.discovery import normalize_hash
@@ -1447,6 +1485,7 @@ class ChatWebServer:
             on_link_established=self._on_link_established,
             on_link_closed=self._on_link_closed,
             on_queue_sent=self._on_queue_sent,
+            on_transfer_revoked=self._on_transfer_revoked,
             display_name=settings.get("name", ""),
             auto_announce=auto_announce,
             receive_dir=received_dir,
@@ -2019,6 +2058,13 @@ class ChatWebServer:
             f"[discovery] Superseded {len(removed_clean)} stale peer hash(es)"
             + (f" -> {replacement[:16]}..." if replacement else "")
         )
+
+    def _on_transfer_revoked(self, transfer_id, file_name=None):
+        if self._loop:
+            asyncio.run_coroutine_threadsafe(
+                self._remove_history_message(transfer_id),
+                self._loop,
+            )
 
     def _on_peer_discovered(self, peer):
         if not self.messaging:
@@ -3788,21 +3834,28 @@ class ChatWebServer:
             self.lan_beacon.display_name = settings.get("name", "")
 
     def _spawn_unix_server_restart(self):
-        """Re-exec via launch-server.sh so dialout/uucp (sg) is preserved on Linux."""
+        """Re-exec via restart-server.sh so dialout/uucp (sg) is preserved on Linux."""
         sys.stdout.flush()
-        stop_stale_chatxz_servers(exclude_pid=os.getpid())
         root = os.environ.get("CHATXZ_ROOT") or os.getcwd()
         extra = list(sys.argv[1:]) or ["--share"]
         env = os.environ.copy()
         env["CHATXZ_ROOT"] = root
         env["PYTHONPATH"] = root
         env["PYTHON"] = sys.executable
-        launch = os.path.join(root, "scripts", "launch-server.sh")
-        if os.path.isfile(launch):
-            cmd = ["bash", launch, *extra]
+        wrapper = os.path.join(root, "scripts", "restart-server.sh")
+        if os.path.isfile(wrapper):
+            cmd = ["bash", wrapper, str(os.getpid()), root, *extra]
         else:
             cmd = ["bash", os.path.join(root, "run.sh"), "web", *extra]
-        subprocess.Popen(cmd, cwd=root, env=env, start_new_session=True)
+        subprocess.Popen(
+            cmd,
+            cwd=root,
+            env=env,
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         os._exit(0)
 
     async def handle_restart(self, request):
@@ -4229,6 +4282,8 @@ class ChatWebServer:
                 "file_name": file_name,
                 "transfer_id": transfer_id,
             }})
+            if transfer_id:
+                await self._remove_history_message(transfer_id)
         return web.json_response({"status": "ok" if cancelled else "noop"})
 
     async def handle_voice_upload(self, request):
@@ -4540,6 +4595,51 @@ class ChatWebServer:
                 return
             self._prune_stale_session_system_messages()
 
+    async def _peer_probe_loop(self):
+        from chatxz.core.peer_probe import PROBE_INTERVAL_S
+        await asyncio.sleep(6)
+        while not self._shutting_down:
+            try:
+                if self.discovery and self.discovery.accept_peers:
+                    await asyncio.to_thread(self._probe_discovered_peers)
+            except Exception as exc:
+                print(f"[probe] Peer probe failed: {exc}")
+            try:
+                await asyncio.sleep(PROBE_INTERVAL_S)
+            except asyncio.CancelledError:
+                return
+
+    async def handle_brand_logo_get(self, request):
+        path = self._brand_logo_path()
+        if not os.path.isfile(path):
+            raise web.HTTPNotFound()
+        return web.FileResponse(path)
+
+    async def handle_brand_logo_upload(self, request):
+        try:
+            reader = await request.multipart()
+            field = await reader.next()
+            if not field or field.name != "logo":
+                return web.json_response({"error": "missing logo field"}, status=400)
+            data = await field.read()
+            if not data or len(data) > 2 * 1024 * 1024:
+                return web.json_response({"error": "invalid image"}, status=400)
+            os.makedirs(self.config_dir, exist_ok=True)
+            with open(self._brand_logo_path(), "wb") as f:
+                f.write(data)
+            return web.json_response({"status": "ok"})
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
+    async def handle_brand_logo_delete(self, request):
+        try:
+            os.remove(self._brand_logo_path())
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        return web.json_response({"status": "ok"})
+
     async def _discovery_broadcaster(self):
         print("[broadcaster] Started")
         last_snapshot = None
@@ -4554,6 +4654,8 @@ class ChatWebServer:
                         (p.get("hash") or ""),
                         (p.get("identity_hash") or ""),
                         int(p.get("last_seen", 0)),
+                        p.get("rtt_ms"),
+                        p.get("rtt_avg_ms"),
                     )
                     for p in peers
                 )
@@ -4803,6 +4905,7 @@ class ChatWebServer:
         print(f"[startup] Event loop captured: {self._loop}")
         for coro in (
             self._discovery_broadcaster(),
+            self._peer_probe_loop(),
             self._history_maintenance_loop(),
             self._link_failover_loop(),
             self._serial_watchdog_loop(),
@@ -4882,6 +4985,9 @@ class ChatWebServer:
         app.router.add_get("/api/queue", self.handle_queue)
         app.router.add_delete("/api/queue", self.handle_queue_clear)
         app.router.add_post("/api/identity/regenerate", self.handle_regenerate_identity)
+        app.router.add_get("/api/brand-logo", self.handle_brand_logo_get)
+        app.router.add_post("/api/brand-logo", self.handle_brand_logo_upload)
+        app.router.add_delete("/api/brand-logo", self.handle_brand_logo_delete)
         app.router.add_post("/api/restart", self.handle_restart)
         app.router.add_get("/api/temperature", self.handle_temperature)
         app.router.add_get("/api/cpu", self.handle_cpu)

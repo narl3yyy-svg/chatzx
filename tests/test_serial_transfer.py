@@ -49,8 +49,8 @@ class SerialTransferTests(unittest.TestCase):
             return_value=True,
         ):
             tune_outgoing_resource(resource, link.attached_interface)
-        self.assertEqual(resource.window, 2)
-        self.assertEqual(resource.window_max, 3)
+        self.assertEqual(resource.window, 3)
+        self.assertEqual(resource.window_max, 4)
 
     def test_tune_incoming_resource_window(self):
         link = MagicMock()
@@ -63,8 +63,8 @@ class SerialTransferTests(unittest.TestCase):
             return_value=True,
         ):
             tune_incoming_resource(resource, link.attached_interface)
-        self.assertEqual(resource.window, 2)
-        self.assertEqual(link.last_resource_window, 2)
+        self.assertEqual(resource.window, 3)
+        self.assertEqual(link.last_resource_window, 3)
 
 
 class TransferCancelTests(unittest.TestCase):

@@ -194,6 +194,31 @@ class LanBeacon:
                 payload = json.loads(data[len(MAGIC):].decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
                 continue
+            msg_type = payload.get("type") or ""
+            if msg_type == "probe":
+                ack = {
+                    "app": APP_NAME,
+                    "type": "probe_ack",
+                    "id": payload.get("id"),
+                    "ts": payload.get("ts"),
+                }
+                try:
+                    if self._tx_sock:
+                        self._tx_sock.sendto(
+                            MAGIC + json.dumps(ack).encode("utf-8"),
+                            (addr[0], BEACON_PORT),
+                        )
+                except OSError:
+                    pass
+                continue
+            if msg_type == "probe_ack":
+                from chatxz.core.peer_probe import register_probe_ack
+                probe_id = payload.get("id")
+                sent_ts = float(payload.get("ts") or 0)
+                if probe_id and sent_ts:
+                    rtt_ms = max(0, int((time.time() - sent_ts) * 1000))
+                    register_probe_ack(probe_id, rtt_ms, source_ip=addr[0])
+                continue
             if not payload.get("ip"):
                 payload["ip"] = addr[0]
             if self.discovery._on_beacon(

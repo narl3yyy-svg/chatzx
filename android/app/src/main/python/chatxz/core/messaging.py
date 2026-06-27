@@ -186,6 +186,7 @@ class MessagingBackend:
                  on_progress=None, on_link_established=None, on_link_closed=None,
                  display_name="", auto_announce=False,
                  receive_dir=None, peer_resolver=None, on_queue_sent=None,
+                 on_transfer_revoked=None,
                  http_port=8742, lan_transfer_enabled=False,
                  peer_endpoint_resolver=None, peer_scope_checker=None,
                  peer_transport_resolver=None):
@@ -198,6 +199,7 @@ class MessagingBackend:
         self.on_link_established = on_link_established
         self.on_link_closed = on_link_closed
         self.on_queue_sent = on_queue_sent
+        self.on_transfer_revoked = on_transfer_revoked
         self.display_name = display_name
         self.auto_announce = auto_announce
         self.announce_interval = 45 if is_android() else 30
@@ -2299,6 +2301,8 @@ class MessagingBackend:
         """USB serial became available — announce on serial and nudge reconnect."""
         if not self.running or not self.destination:
             return
+        if self._has_active_transfer():
+            return
         burst = self._burst_serial_announce()
         if burst:
             port = getattr(iface, "port", "?") if iface else "?"
@@ -2394,7 +2398,11 @@ class MessagingBackend:
 
     def _burst_serial_announce(self, count=None, interval=None, force=False):
         """Send several RNS announces on serial only — slow links need repeats."""
-        if not force and (self._connect_in_progress or self._failover_in_progress):
+        if not force and (
+            self._connect_in_progress
+            or self._failover_in_progress
+            or self._has_active_transfer()
+        ):
             return 0
         if not self.destination or not self._serial_transport_ready():
             return 0
@@ -2947,7 +2955,11 @@ class MessagingBackend:
 
     def _should_rns_auto_announce(self):
         """Periodic RNS-only announces on serial (no LAN beacon/unicast)."""
-        if self._connect_in_progress or self._failover_in_progress:
+        if (
+            self._connect_in_progress
+            or self._failover_in_progress
+            or self._has_active_transfer()
+        ):
             return False
         if not self._serial_transport_ready():
             return False
@@ -3617,7 +3629,13 @@ class MessagingBackend:
                     fname = payload.get("file_name") or ""
                     if tid:
                         self._cancelled_transfers.add(tid)
+                    self.cancel_transfer(transfer_id=tid, file_name=fname, notify_peer=False)
                     self._cancel_incoming_resources(link, transfer_id=tid, file_name=fname)
+                    if self.on_transfer_revoked and tid:
+                        try:
+                            self.on_transfer_revoked(tid, fname)
+                        except Exception:
+                            pass
                     return
 
                 if not self._hub_message_acceptable(chat_msg, link):
@@ -4937,6 +4955,11 @@ class MessagingBackend:
                     fname, 0, fsize, status="cancelled", direction="send",
                     transfer_id=transfer_id,
                 )
+                if self.on_transfer_revoked and transfer_id:
+                    try:
+                        self.on_transfer_revoked(transfer_id, fname)
+                    except Exception:
+                        pass
                 if self._current_transfer_id == transfer_id:
                     self._current_transfer_id = None
                 return
