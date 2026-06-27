@@ -18,7 +18,7 @@ if [ -f /etc/debian_version ]; then
     if grep -qi ubuntu /etc/os-release 2>/dev/null; then
         exec bash "$DIR/scripts/install-ubuntu.sh"
     fi
-    exec bash "$DIR/scripts/install-debian.sh"
+    exec bash "$DIR/scripts/install-ubuntu.sh"
 fi
 
 if [ "$(uname -s)" = "Darwin" ]; then

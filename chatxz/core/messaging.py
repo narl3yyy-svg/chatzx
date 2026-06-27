@@ -80,8 +80,9 @@ IDENTITY_WAIT_TIMEOUT_S = 12
 ANDROID_IDENTITY_WAIT_TIMEOUT_S = 16
 SERIAL_IDENTITY_WAIT_TIMEOUT_S = 35
 SERIAL_PATH_PRIME_TIMEOUT_S = 28
-SERIAL_ANNOUNCE_BURST_COUNT = 5
-SERIAL_ANNOUNCE_BURST_INTERVAL_S = 0.4
+SERIAL_ANNOUNCE_BURST_COUNT = 1
+SERIAL_ANNOUNCE_BURST_INTERVAL_S = 0
+SERIAL_CONNECT_PRIME_INTERVAL_S = 3.0
 SERIAL_LINK_CONNECT_TIMEOUT_S = 22
 SERIAL_INBOUND_FIRST_WAIT_S = 4
 SERIAL_INBOUND_WAIT_S = 12
@@ -1227,13 +1228,13 @@ class MessagingBackend:
             return
         if prefer_family == "serial":
             if self._serial_transport_ready():
-                self._burst_serial_announce(count=5, interval=0.25, force=True)
+                self._burst_serial_announce(count=1, force=True)
             return
         if prefer_family in ("udp", "lan"):
             if physical_lan_reachable():
                 self._silent_announce(peer_ip=peer_ip, also_serial=False)
             elif self._serial_transport_ready():
-                self._burst_serial_announce(count=3, interval=0.25, force=True)
+                self._burst_serial_announce(count=1, force=True)
             return
         self._silent_announce(peer_ip=peer_ip if physical_lan_reachable() else None)
 
@@ -2310,10 +2311,10 @@ class MessagingBackend:
             return
         if self._has_active_transfer():
             return
-        burst = self._burst_serial_announce()
-        if burst:
+        sent = self._burst_serial_announce(count=1)
+        if sent:
             port = getattr(iface, "port", "?") if iface else "?"
-            print(f"[serial] Auto-announced on serial attach ({burst} burst on {port})")
+            print(f"[serial] Auto-announced on serial attach ({port})")
         peer = self.dest_hash_for(self.active_peer_hash or self._session_peer_hash or "")
         if peer and not is_hub_peer_hash(peer) and not self.is_user_disconnected(peer):
             request_paths_for_hash(peer, family="serial")
@@ -2407,7 +2408,7 @@ class MessagingBackend:
     def _fallback_announce(self, announce_data):
         """Last-resort announce — never fan out LAN IP on USB when serial is up."""
         if self._serial_transport_ready():
-            self._burst_serial_announce(count=3, interval=0.3)
+            self._burst_serial_announce(count=1)
             return
         self.destination.announce(app_data=announce_data)
         try:
@@ -2416,7 +2417,7 @@ class MessagingBackend:
             pass
 
     def _burst_serial_announce(self, count=None, interval=None, force=False):
-        """Send several RNS announces on serial only — slow links need repeats."""
+        """Send RNS announces on serial only (default: one packet)."""
         if not force and (
             self._connect_in_progress
             or self._failover_in_progress
@@ -2439,7 +2440,10 @@ class MessagingBackend:
             if attempt < burst - 1 and gap > 0:
                 time.sleep(gap)
         port = getattr(iface, "port", "?")
-        print(f"[serial] Burst {burst} RNS announce(s) on {port}")
+        if burst <= 1:
+            print(f"[serial] RNS announce on {port}")
+        else:
+            print(f"[serial] Burst {burst} RNS announce(s) on {port}")
         return burst
 
     def _silent_announce(self, peer_ip=None, also_serial=None):
@@ -2455,7 +2459,7 @@ class MessagingBackend:
         if not physical_lan_reachable():
             suppress_offline_lan_transports()
             if self._serial_transport_ready():
-                self._burst_serial_announce(count=3, interval=0.3)
+                self._burst_serial_announce(count=1)
             return
         prune_dead_serial_interfaces()
         hub_role, _ = self._load_hub_settings()
@@ -2468,7 +2472,7 @@ class MessagingBackend:
             if tcp_iface:
                 self._announce_on_interface(tcp_iface, app_data=announce_data)
             elif self._serial_transport_ready():
-                self._burst_serial_announce(count=3, interval=0.3)
+                self._burst_serial_announce(count=1)
                 return
             else:
                 self._fallback_announce(announce_data)
@@ -2477,22 +2481,15 @@ class MessagingBackend:
             if udp_iface:
                 self._announce_on_interface(udp_iface, app_data=announce_data)
             elif self._serial_transport_ready():
-                self._burst_serial_announce(count=3, interval=0.3)
+                self._burst_serial_announce(count=1)
                 return
             else:
                 self._fallback_announce(announce_data)
         elif self._serial_transport_ready():
-            self._burst_serial_announce(count=3, interval=0.3)
+            self._burst_serial_announce(count=1)
             return
         else:
             self._fallback_announce(announce_data)
-        if (
-            also_serial
-            and self._serial_transport_ready()
-            and configured_serial_enabled(interfaces)
-            and (udp_lan or use_tcp_lan)
-        ):
-            self._burst_serial_announce(count=3, interval=0.25)
         if peer_ip and udp_lan:
             packet = build_announce_packet(self.destination, announce_data)
             unicast_announce_packet(packet, peer_ip=peer_ip, subnet_probe=False)
@@ -2503,7 +2500,7 @@ class MessagingBackend:
         announce_data = self._announce_payload()
         if not physical_lan_reachable() and self._serial_transport_ready():
             if also_serial:
-                self._burst_serial_announce()
+                self._burst_serial_announce(count=1)
             return
         prune_dead_serial_interfaces()
         interfaces = load_settings_interfaces(self.config_dir)
@@ -2525,7 +2522,7 @@ class MessagingBackend:
             else:
                 self._fallback_announce(announce_data)
         elif self._serial_transport_ready():
-            self._burst_serial_announce(count=3, interval=0.3)
+            self._burst_serial_announce(count=1)
         else:
             self._fallback_announce(announce_data)
         if unicast_subnet is None:
@@ -2545,7 +2542,7 @@ class MessagingBackend:
                 hint = f" + {sent} unicast" if sent else ""
                 print(f"[messaging] Announced on LAN (name={self.display_name or 'none'}{hint})")
                 if also_serial and self._serial_transport_ready() and configured_serial_enabled(interfaces):
-                    self._burst_serial_announce(count=3, interval=0.25)
+                    self._burst_serial_announce(count=1)
                 return
         if (
             also_serial
@@ -2553,7 +2550,7 @@ class MessagingBackend:
             and configured_serial_enabled(interfaces)
             and lan_ok
         ):
-            self._burst_serial_announce(count=3, interval=0.25)
+            self._burst_serial_announce(count=1)
         if lan_ok:
             print(f"[messaging] Announced on LAN (name={self.display_name or 'none'})")
         else:
@@ -2734,8 +2731,8 @@ class MessagingBackend:
             if self._interrupted():
                 return False
             now = time.time()
-            if now - last_burst >= 2.0:
-                self._burst_serial_announce(count=2, interval=0.3, force=True)
+            if now - last_burst >= SERIAL_CONNECT_PRIME_INTERVAL_S:
+                self._burst_serial_announce(count=1, force=True)
                 reinforce_serial_peer_path(dest_hex)
                 last_burst = now
             restored = restore_serial_path_from_announce(dest_hex)
@@ -2974,8 +2971,8 @@ class MessagingBackend:
         except Exception:
             pass
 
-    def _should_rns_auto_announce(self):
-        """Periodic LAN-only RNS refresh (serial uses manual Announce / USB attach)."""
+    def _should_periodic_announce(self):
+        """True when periodic LAN/serial RNS refresh may run."""
         if not self.auto_announce:
             return False
         if (
@@ -2984,7 +2981,14 @@ class MessagingBackend:
             or self._has_active_transfer()
         ):
             return False
-        return lan_discovery_configured(load_settings_interfaces(self.config_dir))
+        interfaces = load_settings_interfaces(self.config_dir)
+        return (
+            lan_discovery_configured(interfaces)
+            or (
+                configured_serial_enabled(interfaces)
+                and self._serial_transport_ready()
+            )
+        )
 
     def _announce_loop(self):
         while self.running:
@@ -2992,10 +2996,17 @@ class MessagingBackend:
                 if not self.running:
                     return
                 time.sleep(1)
-            if self._has_active_transfer() or not self._should_rns_auto_announce():
+            if self._has_active_transfer() or not self._should_periodic_announce():
                 continue
+            interfaces = load_settings_interfaces(self.config_dir)
             prune_dead_serial_interfaces()
-            self._silent_announce(also_serial=False)
+            if lan_discovery_configured(interfaces):
+                self._silent_announce(also_serial=False)
+            if (
+                configured_serial_enabled(interfaces)
+                and self._serial_transport_ready()
+            ):
+                self._burst_serial_announce(count=1)
 
     def cancel_all_transfers(self):
         """Abort in-flight file sends/receives during shutdown."""
@@ -3172,8 +3183,8 @@ class MessagingBackend:
                 print(f"[connect] Waiting for peer identity ({remaining}s left){hint}...")
                 last_log = now
             if serial_wait:
-                if now - last_burst >= 1.5:
-                    self._burst_serial_announce(count=2, interval=0.25)
+                if now - last_burst >= 2.0:
+                    self._burst_serial_announce(count=1)
                     request_paths_for_hash(clean, family="serial")
                     last_burst = now
             elif not lan_discovery_configured(load_settings_interfaces(self.config_dir)):

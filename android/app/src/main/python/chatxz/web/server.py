@@ -487,6 +487,7 @@ class ChatWebServer:
         self._progress_last = {}
         self._progress_throttle_ms = 250
         self._ui_state = {"viewing_peer": None, "hidden": False}
+        self._live_scope_ip = None
 
     @staticmethod
     def _clean_hash(h):
@@ -711,11 +712,26 @@ class ChatWebServer:
             return serial_discovery_active()
         return peer_in_scope(peer_ip, scope)
 
+    def _maybe_apply_live_scope_change(self):
+        """Detect OS/pinned LAN scope drift while the server stays up."""
+        scope = self._discovery_scope_ip()
+        prev = self._live_scope_ip
+        self._live_scope_ip = scope
+        if prev is None or scope == prev:
+            return False
+        print(
+            f"[network] Live LAN scope drift {prev or '?'} -> {scope or '?'}"
+            " — refreshing discovery and paths"
+        )
+        self._apply_lan_scope_change()
+        return True
+
     def _apply_lan_scope_change(self):
         """Drop links/paths/peers when the user changes LAN IPv4 scope."""
         from chatxz.core.lan_rns import clear_all_lan_paths, prune_known_udp_peer_ips
 
         scope = self._discovery_scope_ip()
+        self._live_scope_ip = scope
         prune_known_udp_peer_ips(scope)
         invalidate_desktop_interface_cache(use_powershell=sys.platform == "win32")
         apply_lan_interface_preference(self.config_dir)
@@ -1545,7 +1561,7 @@ class ChatWebServer:
             self.lan_beacon = None
             print("[network] Serial/other-only mode — LAN beacon disabled")
         if auto_announce:
-            print("[network] Auto-announce on — periodic LAN discovery active")
+            print("[network] Auto-announce on — periodic LAN + serial discovery every 30s")
         else:
             print("[network] Auto-announce off — tap Announce to discover peers")
 
@@ -1606,6 +1622,7 @@ class ChatWebServer:
                 settings["hub_server_hash"] = hub_hash
                 self.save_settings(settings)
 
+        self._live_scope_ip = self._discovery_scope_ip()
         return my_hash
 
     def _on_message(self, chat_msg, sender_hash):
@@ -1840,6 +1857,22 @@ class ChatWebServer:
 
     def _ws_client_count(self):
         return self._prune_websockets()
+
+    async def _broadcast_peers(self, authoritative=False):
+        peers = self._scoped_peers()
+        payload = {"type": "peers", "data": peers}
+        if authoritative:
+            payload["authoritative"] = True
+        await self._broadcast(payload)
+        return peers
+
+    def _schedule_peers_broadcast(self, authoritative=False):
+        if not (self.websockets and self._loop):
+            return
+        asyncio.run_coroutine_threadsafe(
+            self._broadcast_peers(authoritative=authoritative),
+            self._loop,
+        )
 
     async def _broadcast(self, data):
         msg = json.dumps(data)
@@ -2108,10 +2141,9 @@ class ChatWebServer:
         if contacts_dirty:
             self._schedule_contacts_broadcast()
         if self.discovery and self.websockets and self._loop:
-            peers = self._scoped_peers()
             asyncio.run_coroutine_threadsafe(
-                self._broadcast({"type": "peers", "data": peers}),
-                self._loop
+                self._broadcast_peers(authoritative=True),
+                self._loop,
             )
 
     def _on_link_closed(self, peer_hash, handoff=False):
@@ -2485,7 +2517,7 @@ class ChatWebServer:
                 and configured_serial_enabled(configured)
                 and not lan_discovery_configured(configured)
             ):
-                await self._run_blocking(self.messaging._burst_serial_announce, 4, 0.3)
+                await self._run_blocking(self.messaging._burst_serial_announce, 1)
             resolved_hash = self._resolve_connect_target(peer_hash, peer_ip)
             resolved_hash = self._resolve_current_peer_hash(resolved_hash, peer_ip)
             hub_role = settings.get("hub_role", "off")
@@ -3356,22 +3388,19 @@ class ChatWebServer:
                     settings = self.load_settings()
                     configured = settings.get("rns_interfaces")
                     if configured_serial_enabled(configured) and not lan_discovery_configured(configured):
-                        await asyncio.to_thread(self.messaging._burst_serial_announce)
-                        print("[network] RNS announce burst on serial (no LAN beacon)")
+                        await asyncio.to_thread(self.messaging._burst_serial_announce, 1)
+                        print("[network] RNS announce on serial (no LAN beacon)")
                     else:
                         await asyncio.to_thread(self.messaging._silent_announce)
                         if (
                             configured_serial_enabled(configured)
                             and lan_discovery_configured(configured)
                         ):
-                            burst = await asyncio.to_thread(
-                                self.messaging._burst_serial_announce, 4, 0.25,
+                            sent = await asyncio.to_thread(
+                                self.messaging._burst_serial_announce, 1,
                             )
-                            if burst:
-                                print(
-                                    f"[network] RNS announce burst on serial "
-                                    f"({burst}×, LAN+serial mode)"
-                                )
+                            if sent:
+                                print("[network] RNS announce on serial (LAN+serial mode)")
                     if (
                         lan_discovery_configured(configured)
                         and lan_ip_reachable()
@@ -3389,8 +3418,7 @@ class ChatWebServer:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-        peers = self._scoped_peers()
-        await self._broadcast({"type": "peers", "data": peers})
+        peers = await self._broadcast_peers(authoritative=True)
         if debounced and self.lan_beacon:
             beacon_sent = self.lan_beacon.last_announce_sent
         return {
@@ -3755,10 +3783,7 @@ class ChatWebServer:
                         ),
                     },
                 })
-                await self._broadcast({
-                    "type": "peers",
-                    "data": self._scoped_peers(),
-                })
+                await self._broadcast_peers(authoritative=True)
             self._apply_received_dir(settings)
             self._apply_retention()
             self._save_history()
@@ -4625,9 +4650,21 @@ class ChatWebServer:
         from chatxz.core.peer_probe import PROBE_INTERVAL_S
         await asyncio.sleep(6)
         while not self._shutting_down:
+            scope_changed = False
+            try:
+                scope_changed = await asyncio.to_thread(self._maybe_apply_live_scope_change)
+            except Exception as exc:
+                print(f"[probe] Live scope check failed: {exc}")
+            if scope_changed:
+                try:
+                    await self._broadcast_peers(authoritative=True)
+                except Exception as exc:
+                    print(f"[probe] Peers broadcast after scope drift failed: {exc}")
             try:
                 if self.discovery and self.discovery.accept_peers:
-                    await asyncio.to_thread(self._probe_discovered_peers)
+                    removed = await asyncio.to_thread(self._probe_discovered_peers)
+                    if removed or scope_changed:
+                        await self._broadcast_peers(authoritative=bool(removed))
             except Exception as exc:
                 print(f"[probe] Peer probe failed: {exc}")
             try:
@@ -4679,6 +4716,8 @@ class ChatWebServer:
                     (
                         (p.get("hash") or ""),
                         (p.get("identity_hash") or ""),
+                        (p.get("via") or ""),
+                        (p.get("ip") or ""),
                         int(p.get("last_seen", 0)),
                         p.get("rtt_ms"),
                         p.get("rtt_avg_ms"),

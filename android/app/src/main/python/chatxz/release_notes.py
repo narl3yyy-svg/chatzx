@@ -3,6 +3,11 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.4.0": [
+        "Serial RNS auto-announce is one packet every 30s (no more USB bursts that clogged messaging).",
+        "Discovered peers update live when LAN scope drifts, transport switches, or stale entries are purged.",
+        "Tap Announce sends a single serial packet in dual-transport mode; connect priming is gentler on USB.",
+    ],
     "0.3.171": [
         "Discovered list shows one path per peer — fastest RTT wins when LAN and serial are both up.",
         "Saving a new LAN scope refreshes discovery (drops stale subnet entries, keeps USB serial).",

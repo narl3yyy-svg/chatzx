@@ -2587,7 +2587,7 @@ function handleWSMessage(msg) {
     if (el) el.textContent = receiptIcon(r.status);
   } else if (msg.type === 'peers') {
     console.log('[ws] Peers received:', msg.data ? msg.data.length : 0, msg.data);
-    renderDiscovered(msg.data);
+    renderDiscovered(msg.data, { authoritative: !!msg.authoritative });
   } else if (msg.type === 'contacts') {
     if (Array.isArray(msg.data)) {
       renderContacts(msg.data);
@@ -2969,13 +2969,14 @@ function renderContacts(contacts) {
   if (cc) cc.textContent = contacts.length;
 }
 
-function renderDiscovered(peers) {
+function renderDiscovered(peers, opts) {
+  opts = opts || {};
   console.log('[render] Discovered peers:', peers);
   peers = peers || [];
   const prev = window._discoveredPeers || [];
-  if (!peers.length && prev.length) {
+  if (!peers.length && prev.length && !opts.authoritative) {
     const age = Date.now() - (window._discoveredPeersAt || 0);
-    if (age < 120000) {
+    if (age < 15000) {
       console.log('[render] Keeping discovered peers during transient empty poll');
       return;
     }
