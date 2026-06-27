@@ -140,6 +140,29 @@ class DiscoveryIdentityTests(unittest.TestCase):
                         disc._on_announce(peer_hash, app_data)
         self.assertNotIn("f1c2ac9061239f7c096701f02969729c", disc.peers)
 
+    def test_serial_announce_with_lan_ip_rejected(self):
+        disc = PeerDiscovery()
+        disc.running = True
+        disc.accept_peers = True
+        peer_hash = bytes.fromhex("87a012c46dc2274afccae6fe597b8675")
+        app_data = b'{"app":"chatxz","name":"13600k","ip":"10.10.10.2"}'
+        serial_iface = MagicMock()
+        with patch("chatxz.core.discovery.announce_packet_receiving_interface", return_value=serial_iface):
+            with patch("chatxz.core.discovery.interface_family", return_value="serial"):
+                with patch("chatxz.utils.platform.discovery_scope_ip", return_value="10.0.5.10"):
+                    disc._on_announce(peer_hash, app_data)
+        self.assertNotIn("87a012c46dc2274afccae6fe597b8675", disc.peers)
+
+    def test_ipless_rns_peer_rejected_in_sanitize(self):
+        disc = PeerDiscovery()
+        with patch.object(disc, "_scope_ip", return_value="10.0.5.10"):
+            with patch("chatxz.core.discovery.serial_discovery_active", return_value=True):
+                result = disc._sanitize_peer_scope({
+                    "via": "rns",
+                    "hash": "aa" * 16,
+                })
+        self.assertIsNone(result)
+
     def test_in_scope_lan_ip_stays_rns(self):
         disc = PeerDiscovery()
         disc.running = True
@@ -167,6 +190,54 @@ class DiscoveryIdentityTests(unittest.TestCase):
                     "hash": "aa" * 16,
                 })
         self.assertIsNone(result)
+
+    def test_sanitize_rejects_ipless_rns_when_usb_up(self):
+        disc = PeerDiscovery()
+        with patch.object(disc, "_scope_ip", return_value="10.0.5.10"):
+            with patch("chatxz.core.discovery.serial_discovery_active", return_value=True):
+                result = disc._sanitize_peer_scope({
+                    "via": "rns",
+                    "hash": "aa" * 16,
+                    "name": "13600k",
+                })
+        self.assertIsNone(result)
+
+    def test_bridged_serial_announce_with_ip_rejected(self):
+        disc = PeerDiscovery()
+        disc.running = True
+        disc.accept_peers = True
+        peer_hash = bytes.fromhex("87a012c46dc2274afccae6fe597b8675")
+        app_data = b'{"app":"chatxz","name":"13600k","ip":"10.10.10.2"}'
+        serial_iface = MagicMock()
+        with patch("chatxz.core.discovery.announce_packet_receiving_interface", return_value=serial_iface):
+            with patch("chatxz.core.discovery.interface_family", return_value="serial"):
+                with patch("chatxz.utils.platform.discovery_scope_ip", return_value="10.0.5.10"):
+                    disc._on_announce(peer_hash, app_data)
+        self.assertNotIn("87a012c46dc2274afccae6fe597b8675", disc.peers)
+
+    def test_beacon_rejects_out_of_scope_source_ip(self):
+        disc = PeerDiscovery()
+        disc.running = True
+        disc.accept_peers = True
+        data = {
+            "app": "chatxz",
+            "hash": "87a012c46dc2274afccae6fe597b8675",
+            "identity_hash": "a" * 32,
+            "name": "13600k",
+            "ip": "10.10.10.2",
+            "port": 8742,
+            "pubkey": "dGVzdA==",
+        }
+        with patch("chatxz.core.discovery.PeerDiscovery._scope_ip", return_value="10.0.5.10"):
+            with patch("chatxz.core.peer_identity.peer_record_from_beacon") as rec:
+                rec.return_value = {
+                    "hash": "87a012c46dc2274afccae6fe597b8675",
+                    "name": "13600k",
+                    "via": "beacon",
+                    "ip": "10.10.10.2",
+                }
+                ok = disc._on_beacon(data, "b" * 32, source_ip="10.10.10.2")
+        self.assertFalse(ok)
 
     def test_purge_out_of_scope_keeps_serial_peers(self):
         disc = PeerDiscovery()

@@ -134,7 +134,7 @@ class PeerDiscovery:
             candidate = self._attach_peer_ip(candidate, scope_only=True)
             ip = (candidate.get("ip") or "").strip()
         if not ip:
-            return candidate if serial_discovery_active() else None
+            return None
         if peer_in_scope(ip, scope):
             return candidate
         return None
@@ -158,6 +158,19 @@ class PeerDiscovery:
                 unregister_udp_peer_ip(ip)
                 del self.peers[key]
                 removed += 1
+        return removed
+
+    def purge_ipless_non_serial(self):
+        """Drop LAN/beacon peers with no in-scope IP (ghost entries when USB is up)."""
+        removed = 0
+        for key in list(self.peers.keys()):
+            peer = self.peers.get(key) or {}
+            if (peer.get("via") or "").strip() == "serial":
+                continue
+            if (peer.get("ip") or "").strip():
+                continue
+            del self.peers[key]
+            removed += 1
         return removed
 
     def purge_misclassified_serial(self):
@@ -267,6 +280,8 @@ class PeerDiscovery:
             if same_hash:
                 continue
             if same_ident or same_pubkey:
+                removed.append(normalize_hash(existing.get("hash")) or key)
+                del self.peers[key]
                 continue
             if (
                 same_name
@@ -427,10 +442,14 @@ class PeerDiscovery:
         scope = self._scope_ip()
         via = "rns"
         if packet_fam == "serial":
+            if announce_ip:
+                return
             via = "serial"
             announce_ip = ""
         elif packet_fam in ("udp", "lan", "tcp"):
-            if announce_ip and scope and not peer_in_scope(announce_ip, scope):
+            if not announce_ip:
+                return
+            if scope and not peer_in_scope(announce_ip, scope):
                 return
             via = "rns"
         elif announce_ip:
@@ -477,7 +496,7 @@ class PeerDiscovery:
         ip_hint = (self.peers.get(hash_hex) or {}).get("ip")
         if ip_hint:
             label = f"{label} ({ip_hint})"
-        elif via == "serial" or serial_discovery_active():
+        elif via == "serial":
             label = f"{label} (serial)"
         self._log_once(
             hash_hex,
@@ -515,6 +534,8 @@ class PeerDiscovery:
         except Exception:
             local_ip = ""
         if local_ip:
+            if source and not peer_in_scope(source, local_ip):
+                return False
             if peer_ip and not peer_in_scope(peer_ip, local_ip):
                 return False
             effective_ip = peer_ip or source
@@ -688,7 +709,7 @@ class PeerDiscovery:
                 continue
             ip = (peer.get("ip") or "").strip()
             if not ip:
-                if not scope_ip or serial_peers:
+                if (peer.get("via") or "").strip() == "serial":
                     no_ip_peers.append(peer)
                 continue
             existing = collapsed.get(ip)

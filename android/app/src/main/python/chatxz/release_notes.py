@@ -3,6 +3,11 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.3.166": [
+        "Cross-subnet LAN peers are fully rejected — bridged announces on USB (with an IP) are dropped.",
+        "IP-less LAN ghost peers no longer appear when serial is up; beacons must arrive from your subnet.",
+        "Same-identity discovery duplicates are merged; serial sessions stop failover-looping on path-table flaps.",
+    ],
     "0.3.165": [
         "Discovery tags USB only when the announce packet arrived on SerialInterface — LAN peers no longer show as USB.",
         "Cross-subnet LAN peers are rejected (Ubuntu no longer sees Windows on 10.0.5.x; Arch shows Windows as LAN on 10.10.10.x).",

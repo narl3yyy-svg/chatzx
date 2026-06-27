@@ -779,6 +779,7 @@ class ChatWebServer:
         if not self.discovery:
             return []
         self.discovery.purge_misclassified_serial()
+        self.discovery.purge_ipless_non_serial()
         return self.discovery.get_peers(scope_ip=self._discovery_scope_ip())
 
     def _peer_endpoint_for_transfer(self, peer_hash):

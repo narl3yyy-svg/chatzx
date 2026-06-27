@@ -1527,11 +1527,18 @@ class MessagingBackend:
                     return True, "send receipt timeout (link may be dead)"
 
         if not self._peer_has_path(peer) and not in_grace:
-            alt = self._preferred_failover_family(peer, attached)
-            if alt and self._has_online_family(alt):
-                return True, f"path lost, trying {alt}"
-            if not self._link_interface_healthy(self.active_link):
-                return True, "no path to peer (link interface dead)"
+            if (
+                att_fam == "serial"
+                and self._link_interface_healthy(self.active_link)
+                and self._peer_link_active(peer)
+            ):
+                pass
+            else:
+                alt = self._preferred_failover_family(peer, attached)
+                if alt and self._has_online_family(alt):
+                    return True, f"path lost, trying {alt}"
+                if not self._link_interface_healthy(self.active_link):
+                    return True, "no path to peer (link interface dead)"
 
         try:
             if getattr(self.active_link, "status", None) == RNS.Link.STALE:
@@ -1560,6 +1567,10 @@ class MessagingBackend:
                     return False, ""
         adopted = self._adopt_healthy_peer_link(peer)
         if adopted:
+            if self.active_link and is_serial_interface(
+                self._link_attached_interface(self.active_link)
+            ):
+                return False, ""
             if self.active_link and self._link_interface_healthy(self.active_link):
                 needs, reason = self.link_needs_failover()
                 if needs:
@@ -1568,6 +1579,8 @@ class MessagingBackend:
         if self._peer_link_active(peer):
             if self.active_link and not self._link_interface_healthy(self.active_link):
                 return True, "link interface offline"
+            if self.active_link and is_serial_interface(self._link_attached_interface(self.active_link)):
+                return False, ""
             if self.active_link:
                 needs, reason = self.link_needs_failover()
                 if needs:

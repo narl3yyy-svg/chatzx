@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.3.165
+**Current version:** 0.3.166
 
 ## Download
 
@@ -238,6 +238,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.3.166** — **Discovery scope hardening:** rejects bridged LAN announces on USB, IP-less LAN ghosts, and cross-subnet beacons; dedupes same-identity peers; serial links no longer failover-loop on path-table flaps
 - **v0.3.165** — **Transport-aware discovery + transfer UX:** serial badge only for real USB announces (cross-subnet LAN peers rejected); cancel propagates to receiver; file progress shows USB/LAN and receive status on both sides
 - **v0.3.164** — **Serial connect fix:** restores USB routes from announce receipts when LAN rebroadcast steals path_table; registers peer identity on announce; connect primes/reinforces serial path before outbound link
 - **v0.3.163** — **Serial discovery fix:** path table preferred over stale LAN rebroadcast for announce classification; out-of-scope LAN IPs reclassified as USB serial peers; discovery enabled on serial attach; scope purge skips serial entries
