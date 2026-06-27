@@ -2938,6 +2938,18 @@ class MessagingBackend:
             and self._link_acceptable_for_peer(found, peer)
         )
 
+    def _peer_link_usable(self, dest_hex, alt_hex=None):
+        """True when an active link also has a healthy interface and RNS path."""
+        if not self._peer_link_active(dest_hex, alt_hex):
+            return False, None
+        peer = self.dest_hash_for(dest_hex)
+        adopt = self._link_for_peer(peer) or self._find_active_link_for_peer(dest_hex, alt_hex)
+        if not adopt:
+            return False, None
+        if not self._link_interface_healthy(adopt) or not self._peer_has_path(dest_hex):
+            return False, adopt
+        return True, adopt
+
     def _wait_for_peer_link(self, dest_hex, alt_hex=None, timeout_s=REVERSE_CONNECT_WAIT_S):
         deadline = time.time() + timeout_s
         while time.time() < deadline:
@@ -4277,6 +4289,20 @@ class MessagingBackend:
                 self._session_peer_hash = session_hash
                 self.active_peer_hash = session_hash
                 self._teardown_other_peer_links(session_hash)
+                if (
+                    peer_ip
+                    and physical_lan_reachable()
+                    and not respond_to_wake
+                    and not self._peer_lan_recently_unreachable(peer_ip)
+                ):
+                    print(f"[connect] Waking LAN peer at {peer_ip}:{peer_port or 8742}")
+                    self._wake_peer(
+                        peer_ip, peer_port, self.my_dest_hash or "",
+                        caller_ip=caller_ip, caller_port=caller_port,
+                    )
+                    pruned = self._teardown_stale_peer_links(clean, handoff=True)
+                    if pruned:
+                        print(f"[connect] Closed {pruned} stale link(s) for {clean[:16]}...")
                 pruned = self._teardown_mismatched_links(clean)
                 if pruned:
                     print(f"[connect] Closed {pruned} stale link(s) for {clean[:16]}...")
@@ -4308,13 +4334,17 @@ class MessagingBackend:
                     self._teardown_active_link(preserve_peer=True, handoff=True)
                     print(f"[connect] Replacing link to {self.active_peer_hash[:16]} for better path...")
             elif self._peer_link_active(clean):
-                print(f"[connect] Already linked to {clean[:16]}... (parallel session)")
-                adopt = self._link_for_peer(clean) or self._find_active_link_for_peer(clean)
-                if user_initiated and adopt:
-                    self._notify_link_established(
-                        adopt, clean, promote_active=True, background=False,
-                    )
-                return self._finish_connect(clean, link=adopt)
+                usable, adopt = self._peer_link_usable(clean)
+                if usable:
+                    print(f"[connect] Already linked to {clean[:16]}... (parallel session)")
+                    if user_initiated and adopt:
+                        self._notify_link_established(
+                            adopt, clean, promote_active=True, background=False,
+                        )
+                    return self._finish_connect(clean, link=adopt)
+                pruned = self._teardown_stale_peer_links(clean, handoff=True)
+                if pruned:
+                    print(f"[connect] Closed {pruned} stale link(s) for {clean[:16]}...")
 
             known_identity = self._identity_for_hash(clean)
             if known_identity is None:
@@ -4365,10 +4395,14 @@ class MessagingBackend:
                 )
                 print(f"[connect] Adopted inbound link to {dest_hex[:16]}...")
                 return self._finish_connect(dest_hex, link=inbound)
-            if self._peer_link_active(dest_hex, clean):
+            usable, adopt = self._peer_link_usable(dest_hex, clean)
+            if usable:
                 print(f"[connect] Already linked to {dest_hex[:16]}... (inbound)")
-                adopt = self._link_for_peer(dest_hex) or self._find_active_link_for_peer(dest_hex, clean)
                 return self._finish_connect(dest_hex, link=adopt)
+            if adopt:
+                pruned = self._teardown_stale_peer_links(dest_hex, handoff=True)
+                if pruned:
+                    print(f"[connect] Closed {pruned} stale link(s) for {dest_hex[:16]}...")
 
             physical_lan = physical_lan_reachable()
             peer_lan_down = bool(peer_ip and self._peer_lan_recently_unreachable(peer_ip))

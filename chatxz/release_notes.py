@@ -3,6 +3,11 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.4.2": [
+        "Tap a contact to wake sleeping LAN peers — messages send again without re-announce (especially after Android screen lock).",
+        "Saved contacts show live RTT; peers you already saved no longer duplicate in Discovered.",
+        "Android APK: contact list is home — open a chat from there; back returns to the list, back again backgrounds the app.",
+    ],
     "0.4.1": [
         "LAN peers show RTT in Discovered — pings run on a configurable interval instead of being blocked by fresh beacons.",
         "Settings → Network: Link ping interval (5–300s) applies to both LAN UDP and USB serial liveness checks.",

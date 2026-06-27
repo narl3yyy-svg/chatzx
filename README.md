@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — your identity is a local keypair, and messages travel over encrypted RNS links on your LAN (Wi‑Fi, Ethernet, USB serial, or beyond).
 
-**Current version:** 0.4.1
+**Current version:** 0.4.2
 
 ## Download
 
@@ -238,6 +238,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.4.2** — **LAN wake + Android UX:** tap a contact to wake sleeping peers and reconnect; RTT on saved contacts; saved peers hidden from Discovered; Android APK uses contact list as home with two-step back navigation
 - **v0.4.1** — **LAN RTT + ping interval:** Discovered LAN peers show RTT ms; Settings → Network → Link ping interval (5–300s) for LAN and serial; Android beacons visible on desktop without full identity registration
 - **v0.4.0** — **Serial + discovery overhaul:** USB RNS auto-announce is one packet every 30s (no bursts); discovered peers update live on scope drift and transport changes; manual Announce uses single serial packet in dual-transport mode.
 

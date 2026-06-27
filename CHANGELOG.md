@@ -2,6 +2,17 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.4.2] — 2026-06-27
+
+### Fixed
+- **LAN wake on contact tap** — opening a contact or discovered peer sends HTTP wake + reconnect so sleeping Android/desktop peers accept messages without manual re-announce.
+- **Stale link reconnect** — connect no longer treats zombie RNS links as healthy; unhealthy links are torn down and re-established.
+- **RTT on saved contacts** — contact list shows live RTT from discovery even when the stored IP is unchanged.
+- **Discovered dedup** — peers already saved as contacts are hidden from Discovered.
+
+### Changed
+- **Android APK navigation** — contact list is the main screen; tap a peer to open chat; back once returns to the list, back again backgrounds the app.
+
 ## [0.4.1] — 2026-06-27
 
 ### Fixed

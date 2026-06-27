@@ -1263,6 +1263,46 @@ body.sidebar-open #sidebar-backdrop { display: block; }
   .composer-tools .input-btn { width: 34px; height: 34px; font-size: 16px; }
   #disconnect-btn { padding: 6px 12px; font-size: 11px; }
 }
+
+body.android-shell #workspace {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+body.android-shell #sidebar {
+  position: relative !important;
+  left: auto !important;
+  top: auto !important;
+  bottom: auto !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  transform: none !important;
+  box-shadow: none;
+  z-index: 1;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+body.android-shell.android-chat-open #sidebar {
+  display: none !important;
+}
+body.android-shell #main {
+  display: none;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+body.android-shell.android-chat-open #main {
+  display: flex;
+  flex-direction: column;
+}
+body.android-shell #sidebar-toggle {
+  display: none !important;
+}
+body.android-shell #sidebar-backdrop,
+body.android-shell.sidebar-open #sidebar-backdrop {
+  display: none !important;
+}
 </style>
 </head>
 <body>
@@ -1820,14 +1860,28 @@ function isMobileLayout() {
   return window.matchMedia('(max-width: 860px), (hover: none) and (pointer: coarse)').matches;
 }
 
+function isAndroidShell() {
+  return appPlatform === 'android' || !!window.chatxzAndroid?.isAndroid?.();
+}
+
+function updateAndroidShellLayout() {
+  if (!isAndroidShell()) {
+    document.body.classList.remove('android-shell', 'android-chat-open');
+    return;
+  }
+  document.body.classList.add('android-shell');
+  document.body.classList.toggle('android-chat-open', !!viewingPeer);
+}
+
 function setSidebarOpen(open) {
   sidebarOpen = open;
   document.getElementById('sidebar')?.classList.toggle('collapsed', !open);
-  document.body.classList.toggle('sidebar-open', open && isMobileLayout());
+  document.body.classList.toggle('sidebar-open', open && isMobileLayout() && !isAndroidShell());
   document.getElementById('sidebar-toggle')?.classList.toggle('active', open);
 }
 
 function closeSidebar() {
+  if (isAndroidShell()) return;
   if (isMobileLayout() && sidebarOpen) setSidebarOpen(false);
 }
 
@@ -1836,6 +1890,16 @@ function closeSidebarOnBackdrop(e) {
 }
 
 function initMobileLayout() {
+  if (isAndroidShell()) {
+    setSidebarOpen(true);
+    updateAndroidShellLayout();
+    updateAndroidComposerMode();
+    window.addEventListener('resize', () => {
+      updateAndroidComposerMode();
+      updateAndroidShellLayout();
+    });
+    return;
+  }
   setSidebarOpen(!isMobileLayout());
   updateAndroidComposerMode();
   window.addEventListener('resize', () => {
@@ -1957,6 +2021,10 @@ function repairNetworkInterfaces() {
 }
 
 function init() {
+  if (window.chatxzAndroid?.isAndroid?.()) {
+    appPlatform = 'android';
+    document.body.classList.add('android-shell');
+  }
   loadUnreadCounts();
   requestNotificationPermission();
   initMobileLayout();
@@ -2512,6 +2580,7 @@ function fetchIdentity() {
       appPlatform = d.platform || (window.chatxzAndroid?.isAndroid?.() ? 'android' : 'desktop');
       updatePlatformHints();
       updateAndroidComposerMode();
+      updateAndroidShellLayout();
       if (d.platform === 'android') {
         const hint = document.getElementById('settings-received-hint');
         if (hint) hint.textContent = 'Tap Browse to open the Android folder picker, then Save to apply.';
@@ -2966,6 +3035,17 @@ function seedPeerAliasesFromContacts(contacts) {
   });
 }
 
+function rttForContact(contact) {
+  const p = bestPeerForContact(window._discoveredPeers || [], contact);
+  return formatRtt(
+    p?.rtt_avg_ms || p?.rtt_ms || contact.rtt_avg_ms || contact.rtt_ms
+  );
+}
+
+function isSavedContact(peer) {
+  return allContacts.some(c => contactMatchesPeer(c, peer));
+}
+
 function renderContacts(contacts) {
   if (contacts === allContacts || !document.getElementById('contact-search')?.value) allContacts = contacts;
   seedPeerAliasesFromContacts(contacts);
@@ -2978,7 +3058,7 @@ function renderContacts(contacts) {
     const linked = isPeerLinked(c.hash);
     const unread = unreadForPeer(c.hash);
     const ipHint = c.ip ? ` · ${escapeHtml(c.ip)}` : '';
-    const rttHint = formatRtt(c.rtt_avg_ms || c.rtt_ms);
+    const rttHint = rttForContact(c);
     const rttBadge = rttHint ? `<span class="peer-rtt">${escapeHtml(rttHint)}</span>` : '';
     div.className = 'contact-item' + (active ? ' active' : '');
     div.innerHTML = `<div class="contact-avatar contact-avatar-saved">${escapeHtml(name).charAt(0).toUpperCase()}</div>
@@ -3014,7 +3094,9 @@ function renderDiscovered(peers, opts) {
   const el = document.getElementById('discovered-list');
   el.innerHTML = '';
   let hasLink = linkedPeers.size > 0;
-  let discovered = window._discoveredPeers ? window._discoveredPeers.filter(p => !p.connected) : [];
+  let discovered = window._discoveredPeers
+    ? window._discoveredPeers.filter(p => !p.connected && !isSavedContact(p))
+    : [];
   let count = discovered.length;
   const linkCount = linkedPeers.size;
   document.getElementById('peer-count').textContent = count + ' peer' + (count !== 1 ? 's' : '') + (linkCount ? ' · ' + linkCount + ' linked' : '');
@@ -3180,12 +3262,14 @@ function clearPeerHistory(peerHash) {
   }).catch(() => toast('Failed to clear history'));
 }
 
-function connectTo(hash, ip, port, via) {
+function connectTo(hash, ip, port, via, opts) {
+  opts = opts || {};
+  const wake = !!opts.wake;
   if (connectInFlight) {
     toast('Connection already in progress...');
     return;
   }
-  if (isPeerLinked(hash)) {
+  if (isPeerLinked(hash) && !wake) {
     openChat(hash, false);
     toast('Already connected');
     return;
@@ -3209,10 +3293,11 @@ function connectTo(hash, ip, port, via) {
     toast('Resolving peer IP from discovery...');
   }
   connectInFlight = true;
-  toast('Connecting...');
+  toast(wake ? 'Waking peer & connecting...' : 'Connecting...');
   const body = {hash};
   if (ip) body.ip = ip;
   if (port) body.port = port;
+  if (wake) body.wake = true;
   fetch('/api/connect', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -3942,14 +4027,25 @@ function syncContactIpsFromDiscovered(peers) {
     const p = bestPeerForContact(peers, c);
     if (!p) return c;
     const port = p.port || c.port || 8742;
-    if (c.ip === p.ip && (c.port || 8742) === port) return c;
     const scope = window._localLanIp;
-    if (scope && c.ip && sameSubnet(c.ip, scope) && !sameSubnet(p.ip, scope)) return c;
+    if (scope && c.ip && p.ip && sameSubnet(c.ip, scope) && !sameSubnet(p.ip, scope)) {
+      const rttSame = c.rtt_ms === p.rtt_ms && c.rtt_avg_ms === p.rtt_avg_ms;
+      if (rttSame) return c;
+      changed = true;
+      return {...c, rtt_ms: p.rtt_ms, rtt_avg_ms: p.rtt_avg_ms};
+    }
+    const ipSame = c.ip === p.ip && (c.port || 8742) === port;
+    const idSame = (c.identity_hash || '') === (p.identity_hash || c.identity_hash || '');
+    const rttSame = c.rtt_ms === p.rtt_ms && c.rtt_avg_ms === p.rtt_avg_ms;
+    if (ipSame && rttSame && idSame) return c;
     changed = true;
     return {
-      ...c, ip: p.ip, port,
+      ...c,
+      ip: ipSame ? c.ip : p.ip,
+      port,
       identity_hash: p.identity_hash || c.identity_hash,
-      rtt_ms: p.rtt_ms, rtt_avg_ms: p.rtt_avg_ms,
+      rtt_ms: p.rtt_ms,
+      rtt_avg_ms: p.rtt_avg_ms,
     };
   });
   if (changed) renderContacts(allContacts);
@@ -4337,13 +4433,22 @@ function closeChatView() {
   document.getElementById('peer-status').textContent = 'Pick a contact or discovered peer';
   document.getElementById('input-area').style.display = 'none';
   document.getElementById('disconnect-btn').style.display = 'none';
+  if (isAndroidShell()) {
+    document.body.classList.remove('android-chat-open');
+    setSidebarOpen(true);
+  }
+  updateAndroidShellLayout();
   syncUiState();
   renderContacts(allContacts);
   renderDiscovered(window._discoveredPeers || []);
 }
 
 function androidHandleBack() {
-  if (document.body.classList.contains('sidebar-open')) {
+  if (document.getElementById('save-contact-dialog')?.classList.contains('open')) {
+    closeSaveContact();
+    return true;
+  }
+  if (document.body.classList.contains('sidebar-open') && !isAndroidShell()) {
     closeSidebar();
     return true;
   }
@@ -4379,16 +4484,24 @@ function openChat(hash, tryConnect, meta) {
   document.getElementById('placeholder').style.display = 'none';
   document.getElementById('messages').style.display = 'flex';
   updatePeerHeader();
-  closeSidebar();
+  if (isAndroidShell()) {
+    document.body.classList.add('android-chat-open');
+  } else {
+    closeSidebar();
+  }
+  updateAndroidShellLayout();
   syncUiState();
   updateHubUi();
   loadHistoryForPeer(viewingPeer);
   pollQueue();
   renderContacts(allContacts);
   renderDiscovered(window._discoveredPeers || []);
-  if (tryConnect && !isPeerLinked(viewingPeer)) {
+  if (tryConnect) {
     const m = meta || peerMetaForHash(hash);
-    connectTo(hash, m?.ip, m?.port, m?.via);
+    const wake = m?.via !== 'serial';
+    if (wake || !isPeerLinked(viewingPeer)) {
+      connectTo(hash, m?.ip, m?.port, m?.via, {wake});
+    }
   } else if (!document.body.classList.contains('modal-open') && isPeerLinked(viewingPeer)) {
     document.getElementById('msg-input').focus();
   }

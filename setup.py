@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="chatxz",
-    version="0.4.1",
+    version="0.4.2",
     description="Decentralized chat over Reticulum Network Stack",
     packages=find_packages(),
     python_requires=">=3.10",
