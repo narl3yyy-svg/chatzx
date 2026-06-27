@@ -800,32 +800,62 @@ class ChatWebServer:
     def _brand_logo_path(self):
         return os.path.join(self.config_dir, "brand_logo.png")
 
+    def _probe_interval_s(self):
+        from chatxz.core.peer_probe import PROBE_INTERVAL_S, clamp_probe_interval
+        settings = self.load_settings()
+        return clamp_probe_interval(settings.get("probe_interval_s", PROBE_INTERVAL_S))
+
+    def _apply_probe_interval_settings(self, settings=None):
+        interval = self._probe_interval_s()
+        if self.lan_beacon:
+            self.lan_beacon.set_interval(interval)
+        if self.messaging:
+            self.messaging.announce_interval = interval
+
     def _probe_discovered_peers(self):
         if not self.discovery or not self.discovery.accept_peers:
             return 0
         if self.messaging and self.messaging._has_active_transfer():
             return 0
-        from chatxz.core.peer_probe import PROBE_STALE_S, probe_serial_path, probe_udp_peer
+        from chatxz.core.peer_probe import (
+            link_rtt_ms,
+            probe_serial_path,
+            probe_udp_peer,
+        )
 
         now = time.time()
+        probe_interval = self._probe_interval_s()
+        rtt_updated = False
         for peer in list(self.discovery.peers.values()):
             hash_hex = peer.get("hash") or ""
             via = (peer.get("via") or "").strip()
             ip = (peer.get("ip") or "").strip()
-            last_seen = float(peer.get("last_seen") or 0)
-            if last_seen and (now - last_seen) < PROBE_STALE_S:
+            last_probe = float(peer.get("last_rtt_probe_at") or 0)
+            if last_probe and (now - last_probe) < probe_interval:
                 continue
-            if via == "serial" or not ip:
+            peer["last_rtt_probe_at"] = now
+            is_serial = via == "serial"
+            rtt = None
+            if self.messaging:
+                rtt = link_rtt_ms(self.messaging, hash_hex)
+            if rtt is None and is_serial:
                 rtt = probe_serial_path(hash_hex, timeout_s=1.5)
                 if rtt is not None:
                     self.discovery.update_peer_probe(hash_hex, rtt_ms=rtt, ok=True)
+                    rtt_updated = True
                 continue
-            rtt = probe_udp_peer(ip, timeout_s=1.5)
-            if rtt is not None:
-                self.discovery.update_peer_probe(hash_hex, rtt_ms=rtt, ok=True)
-            else:
-                self.discovery.update_peer_probe(hash_hex, ok=False)
-        return self.discovery.purge_stale_probes()
+            if ip:
+                if rtt is None:
+                    rtt = probe_udp_peer(ip, timeout_s=1.5)
+                if rtt is not None:
+                    self.discovery.update_peer_probe(hash_hex, rtt_ms=rtt, ok=True)
+                    rtt_updated = True
+                else:
+                    self.discovery.update_peer_probe(hash_hex, ok=False)
+        removed = self.discovery.purge_stale_probes()
+        if rtt_updated and self.websockets and self._loop:
+            self._schedule_peers_broadcast()
+        return removed
 
     async def _remove_history_message(self, msg_id):
         clean = (msg_id or "").strip()
@@ -1259,6 +1289,7 @@ class ChatWebServer:
             "hub_server_hash": "",
             "auto_interface_enabled": True,
             "auto_announce": False,
+            "probe_interval_s": 30,
             "setup_complete": False,
             "last_release_notes_seen": "",
         }
@@ -1557,9 +1588,12 @@ class ChatWebServer:
                 on_periodic=self._on_beacon_periodic if auto_announce else None,
             )
             self.lan_beacon.start()
+            self._apply_probe_interval_settings(settings)
         else:
             self.lan_beacon = None
             print("[network] Serial/other-only mode — LAN beacon disabled")
+        if self.messaging:
+            self._apply_probe_interval_settings(settings)
         if auto_announce:
             print("[network] Auto-announce on — periodic LAN + serial discovery every 30s")
         else:
@@ -3720,6 +3754,9 @@ class ChatWebServer:
                 config_dirty = True
             if "auto_announce" in data:
                 settings["auto_announce"] = bool(data["auto_announce"])
+            if "probe_interval_s" in data:
+                from chatxz.core.peer_probe import clamp_probe_interval
+                settings["probe_interval_s"] = clamp_probe_interval(data.get("probe_interval_s"))
             if "setup_complete" in data:
                 settings["setup_complete"] = bool(data["setup_complete"])
             if "last_release_notes_seen" in data:
@@ -3755,6 +3792,8 @@ class ChatWebServer:
                     asyncio.create_task(self._apply_hub_runtime(settings))
                 if "auto_announce" in data:
                     self._apply_auto_announce_settings(settings)
+                if "probe_interval_s" in data:
+                    self._apply_probe_interval_settings(settings)
                 return web.json_response({
                     "status": "ok",
                     "settings": self._settings_api_payload(settings),
@@ -3770,6 +3809,8 @@ class ChatWebServer:
                 await asyncio.to_thread(self._apply_hub_runtime, settings)
             if "auto_announce" in data:
                 self._apply_auto_announce_settings(settings)
+            if "probe_interval_s" in data:
+                self._apply_probe_interval_settings(settings)
             if self.messaging:
                 self.messaging.display_name = settings.get("name", "")
             if lan_scope_changed and self.websockets and self._loop:
@@ -4647,9 +4688,9 @@ class ChatWebServer:
             self._prune_stale_session_system_messages()
 
     async def _peer_probe_loop(self):
-        from chatxz.core.peer_probe import PROBE_INTERVAL_S
         await asyncio.sleep(6)
         while not self._shutting_down:
+            probe_interval = self._probe_interval_s()
             scope_changed = False
             try:
                 scope_changed = await asyncio.to_thread(self._maybe_apply_live_scope_change)
@@ -4668,7 +4709,7 @@ class ChatWebServer:
             except Exception as exc:
                 print(f"[probe] Peer probe failed: {exc}")
             try:
-                await asyncio.sleep(PROBE_INTERVAL_S)
+                await asyncio.sleep(probe_interval)
             except asyncio.CancelledError:
                 return
 

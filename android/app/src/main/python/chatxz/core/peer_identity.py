@@ -138,22 +138,27 @@ def register_identity_from_announce(peer, announced_identity=None):
 
 def peer_record_from_beacon(data):
     """Build a normalized discovery peer dict from beacon payload."""
-    connect = register_beacon_identity(data)
-    if not connect:
+    if not data or data.get("app") != APP_NAME:
+        return None
+    connect = ""
+    try:
+        connect = register_beacon_identity(data) or ""
+    except Exception:
+        connect = ""
+    hash_hex = normalize_hash(connect or data.get("hash"))
+    if len(hash_hex) != 32:
         return None
     identity_hex = normalize_hash(data.get("identity_hash"))
-    name = (data.get("name") or "").strip()
-    if not name or name == connect[:8]:
-        name = connect[:8]
+    name = (data.get("name") or "").strip() or hash_hex[:8]
     peer = {
-        "hash": connect,
+        "hash": hash_hex,
         "name": name,
         "app": APP_NAME,
-        "ip": data.get("ip"),
+        "ip": (data.get("ip") or "").strip() or None,
         "port": data.get("port", 8742),
         "via": "beacon",
     }
-    if identity_hex and identity_hex != connect:
+    if identity_hex and identity_hex != hash_hex:
         peer["identity_hash"] = identity_hex
     if data.get("pubkey"):
         peer["pubkey"] = data.get("pubkey")

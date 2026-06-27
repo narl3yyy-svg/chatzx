@@ -10,10 +10,49 @@ from chatxz.core.lan_beacon import BEACON_PORT, MAGIC
 from chatxz.core.lan_rns import peer_path_on_family, request_paths_for_hash
 
 PROBE_INTERVAL_S = 30
+PROBE_INTERVAL_MIN_S = 5
+PROBE_INTERVAL_MAX_S = 300
 PROBE_TIMEOUT_S = 3.0
 PROBE_MAX_RTT_MS = 10000
 PROBE_STALE_S = 30
 PROBE_AVG_WINDOW = 6
+
+
+def clamp_probe_interval(seconds):
+    """User-configurable ping interval for LAN and serial liveness checks."""
+    try:
+        value = int(seconds)
+    except (TypeError, ValueError):
+        value = PROBE_INTERVAL_S
+    return max(PROBE_INTERVAL_MIN_S, min(PROBE_INTERVAL_MAX_S, value))
+
+
+def link_rtt_ms(messaging, hash_hex):
+    """RTT from an active RNS link to the peer, if any."""
+    if not messaging or not hash_hex:
+        return None
+    clean = (hash_hex or "").replace(":", "").strip().lower()
+    if len(clean) != 32:
+        return None
+    try:
+        link = messaging._link_for_peer(clean)
+    except Exception:
+        return None
+    if not link:
+        return None
+    try:
+        import RNS
+        if link.status != RNS.Link.ACTIVE:
+            return None
+    except Exception:
+        pass
+    rtt = getattr(link, "rtt", None)
+    if rtt is None:
+        return None
+    try:
+        return max(1, int(float(rtt) * 1000))
+    except (TypeError, ValueError):
+        return None
 
 _pending_probes = {}
 _pending_lock = threading.Lock()

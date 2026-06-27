@@ -3,6 +3,11 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.4.1": [
+        "LAN peers show RTT in Discovered — pings run on a configurable interval instead of being blocked by fresh beacons.",
+        "Settings → Network: Link ping interval (5–300s) applies to both LAN UDP and USB serial liveness checks.",
+        "Android beacons appear on desktop even when identity registration is still pending.",
+    ],
     "0.4.0": [
         "Serial RNS auto-announce is one packet every 30s (no more USB bursts that clogged messaging).",
         "Discovered peers update live when LAN scope drifts, transport switches, or stale entries are purged.",

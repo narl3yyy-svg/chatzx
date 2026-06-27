@@ -2,6 +2,15 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.4.1] — 2026-06-27
+
+### Fixed
+- **LAN RTT in Discovered** — UDP beacon pings no longer skipped while peers are actively announcing; RTT updates on a configurable interval.
+- **Android on desktop** — beacon peers appear even when RNS identity registration is still pending (hash/name/IP sufficient).
+
+### Added
+- **Settings → Network → Link ping interval** (5–300s, default 30) — controls LAN UDP and USB serial liveness pings and RTT refresh.
+
 ## [0.4.0] — 2026-06-27
 
 ### Fixed

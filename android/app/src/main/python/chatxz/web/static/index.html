@@ -1634,6 +1634,12 @@ body.sidebar-open #sidebar-backdrop { display: block; }
               <input type="checkbox" id="settings-auto-announce" onchange="saveAutoAnnounce()">
             </div>
           </label>
+          <div class="settings-section" style="margin-top:14px">
+            <label for="settings-probe-interval">Link ping interval (seconds)</label>
+            <input type="number" id="settings-probe-interval" min="5" max="300" step="1" value="30"
+              onchange="saveProbeInterval()" onblur="saveProbeInterval()">
+            <p class="field-hint">How often to ping discovered peers (LAN UDP and USB serial) and refresh RTT in the sidebar. 5–300s.</p>
+          </div>
         </div>
 
         <div class="settings-block">
@@ -2061,6 +2067,8 @@ function applySettingsToForm(s, ifaces) {
   if (autoIface) autoIface.checked = s.auto_interface_enabled !== false;
   const autoAnn = document.getElementById('settings-auto-announce');
   if (autoAnn) autoAnn.checked = !!s.auto_announce;
+  const probeEl = document.getElementById('settings-probe-interval');
+  if (probeEl) probeEl.value = String(s.probe_interval_s != null ? s.probe_interval_s : 30);
   onHubRoleChange();
   updateHubUi();
 }
@@ -2204,6 +2212,24 @@ function saveAutoAnnounce() {
     if (d.status === 'ok') {
       window._appSettings = d.settings || {};
       toast('Auto-announce ' + (enabled ? 'enabled' : 'disabled'));
+    } else toast('Save failed: ' + (d.error || ''));
+  }).catch(() => toast('Save failed'));
+}
+
+function saveProbeInterval() {
+  const el = document.getElementById('settings-probe-interval');
+  let sec = parseInt(el?.value, 10);
+  if (!Number.isFinite(sec)) sec = 30;
+  sec = Math.max(5, Math.min(300, sec));
+  if (el) el.value = String(sec);
+  fetch('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({probe_interval_s: sec}),
+  }).then(r => r.json()).then(d => {
+    if (d.status === 'ok') {
+      window._appSettings = d.settings || {};
+      toast('Link ping interval: ' + sec + 's');
     } else toast('Save failed: ' + (d.error || ''));
   }).catch(() => toast('Save failed'));
 }
@@ -4262,10 +4288,13 @@ function saveSettings() {
   const hub_host = document.getElementById('settings-hub-host')?.value.trim() || '';
   const hub_port = parseInt(document.getElementById('settings-hub-port')?.value, 10) || 4242;
   const auto_announce = !!document.getElementById('settings-auto-announce')?.checked;
+  let probe_interval_s = parseInt(document.getElementById('settings-probe-interval')?.value, 10);
+  if (!Number.isFinite(probe_interval_s)) probe_interval_s = 30;
+  probe_interval_s = Math.max(5, Math.min(300, probe_interval_s));
   fetch('/api/settings', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name, history_retention: retention, received_dir, hub_role, hub_host, hub_port, auto_announce})
+    body: JSON.stringify({name, history_retention: retention, received_dir, hub_role, hub_host, hub_port, auto_announce, probe_interval_s})
   }).then(async r => {
     const d = await r.json();
     if (r.ok && d.status === 'ok') {

@@ -70,6 +70,14 @@ class LanBeacon:
             self._periodic_thread = None
         print(f"[beacon] Listening on UDP {BEACON_PORT} (periodic={'on' if self.periodic else 'off'})")
 
+    def set_interval(self, seconds):
+        """Beacon announce interval (seconds)."""
+        try:
+            value = int(seconds)
+        except (TypeError, ValueError):
+            value = self._interval
+        self._interval = max(5, min(300, value))
+
     def set_periodic(self, enabled, on_periodic=None):
         """Enable or disable background beacon announces without restarting."""
         enabled = bool(enabled)
@@ -113,7 +121,7 @@ class LanBeacon:
             "ip": self.ip or "",
             "port": self.port,
         }
-        if self.identity_hash and self.identity_hash != self.dest_hash:
+        if self.identity_hash:
             payload["identity_hash"] = self.identity_hash
         if self.identity_pubkey:
             try:
