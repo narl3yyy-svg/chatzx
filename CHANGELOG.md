@@ -2,6 +2,11 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.6.6] — 2026-06-28
+
+### Fixed
+- **Silent calls after v0.6.5** — 640-byte μ-law frames exceeded RNS MTU (1054 B > 1016 B budget); LAN frames reduced to 480 samples (30 ms) so packets are delivered.
+
 ## [0.6.5] — 2026-06-28
 
 ### Fixed

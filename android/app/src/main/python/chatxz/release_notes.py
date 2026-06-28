@@ -3,6 +3,9 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.6.6": [
+        "Call audio frames were too large for RNS MTU and were silently dropped — LAN μ-law frames are now 30 ms (480 samples).",
+    ],
     "0.6.5": [
         "Call audio uses μ-law compression and gapless ring-buffer playback — fixes garbled, stuttery voice on LAN.",
         "60 ms jitter buffer and paced send keep audio smooth; 16 kHz AudioContext aligns capture and playback.",

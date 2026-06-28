@@ -5885,7 +5885,8 @@ function callAudioConfig() {
   if (via === 'serial') {
     return { rate: 8000, frameSamples: 160, jitterTarget: 320, jitterMax: 640, useMulaw: true };
   }
-  return { rate: 16000, frameSamples: 640, jitterTarget: 960, jitterMax: 1920, useMulaw: true };
+  // 480 μ-law bytes ≈ 840 B JSON packet (RNS link budget 1016 B at 1.06 KB MTU)
+  return { rate: 16000, frameSamples: 480, jitterTarget: 960, jitterMax: 1920, useMulaw: true };
 }
 
 const CALL_RING_CAPACITY = 32000;

@@ -3,6 +3,7 @@ import json
 from chatxz.core.voice_call import (
     CALL_ACCEPT,
     CALL_AUDIO,
+    CALL_AUDIO_MAX_MULAW_LAN,
     CALL_INVITE,
     CALL_TYPES,
     STATE_ACTIVE,
@@ -10,6 +11,8 @@ from chatxz.core.voice_call import (
     STATE_INCOMING,
     STATE_OUTGOING,
     VoiceCallSession,
+    estimate_call_audio_packet_size,
+    max_mulaw_bytes_for_mtu,
     new_call_id,
     parse_call_payload,
 )
@@ -68,6 +71,15 @@ def test_voice_call_session_incoming_activate_mismatch():
     assert vc.state == STATE_INCOMING
     assert vc.activate("call-1")
     assert vc.state == STATE_ACTIVE
+
+
+def test_call_audio_mulaw_fits_rns_mtu():
+    max_bytes = max_mulaw_bytes_for_mtu(1064)
+    assert max_bytes >= CALL_AUDIO_MAX_MULAW_LAN
+    size, budget = estimate_call_audio_packet_size(CALL_AUDIO_MAX_MULAW_LAN)
+    assert size <= budget
+    over, _ = estimate_call_audio_packet_size(640)
+    assert over > budget
 
 
 def test_voice_call_audio_seq_increments():
