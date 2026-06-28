@@ -3,6 +3,13 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.7.6": [
+        "Fixed silent calls: browser sends proven μ-law frames again (WebCodecs Opus encode was producing zero packets on desktop/Android).",
+        "Opus receive still works — native Arch/Android peers are heard via WebCodecs decoder.",
+        "Native PyAudio: lower mic gate, DTX frames allowed, peak diagnostics and send logging in server output.",
+        "Ubuntu: ./run.sh auto-recreates .venv with --system-site-packages when apt python3-pyaudio is installed.",
+        "Call dashboard shows microphone status and warns when no audio is flowing.",
+    ],
     "0.7.5": [
         "Unified LAN call codec: desktop browsers use WebCodecs Opus (48 kHz) like Android and native audio — μ-law only when Opus is unavailable.",
         "Fixed one-way/silent calls: Opus decoder now initializes for receive even when sending μ-law; incoming Opus from native peers plays correctly.",

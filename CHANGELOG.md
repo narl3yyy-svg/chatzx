@@ -2,6 +2,15 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.7.6] — 2026-06-28
+
+### Fixed
+- **Silent calls on all platforms** — reverted browser send to μ-law (v0.7.4 path); WebCodecs Opus encoder produced no output on desktop/Android WebView.
+- **Opus receive preserved** — browsers still decode incoming Opus from native peers.
+- **Native audio send** — lower RMS gate (48), allow small Opus frames, log mic peak and native out frames.
+- **Ubuntu pyaudio** — `run.sh` auto-recreates `.venv` with `--system-site-packages` when apt `python3-pyaudio` exists.
+- **Call UI** — microphone status pill and no-audio warning (secure-context hint on desktop).
+
 ## [0.7.5] — 2026-06-28
 
 ### Fixed

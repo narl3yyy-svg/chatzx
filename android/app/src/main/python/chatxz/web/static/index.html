@@ -727,6 +727,10 @@ body::before {
 }
 .call-stat .value.good { color: var(--success); }
 .call-stat .value.warn { color: var(--warning); }
+.call-audio-hint {
+  margin-top: 10px; padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.4;
+  background: rgba(245,185,66,0.12); color: var(--warning); border: 1px solid rgba(245,185,66,0.35);
+}
 .call-dash-actions {
   display: flex; gap: 10px; padding: 0 18px 18px; justify-content: center;
 }
@@ -2016,7 +2020,9 @@ body.android-shell.sidebar-open #sidebar-backdrop {
         <div class="call-stat"><span class="label">Audio sent</span><span class="value" id="call-stat-txout">0</span></div>
         <div class="call-stat"><span class="label">Jitter buffer</span><span class="value" id="call-stat-jitter">0 ms</span></div>
         <div class="call-stat"><span class="label">Codec</span><span class="value" id="call-stat-codec">—</span></div>
+        <div class="call-stat"><span class="label">Microphone</span><span class="value" id="call-stat-mic">—</span></div>
       </div>
+      <div class="call-audio-hint" id="call-audio-hint" style="display:none"></div>
     </div>
     <div class="call-dash-actions">
       <button type="button" class="call-minimize-btn" onclick="minimizeCallDashboard()">Minimize</button>
@@ -6106,9 +6112,48 @@ function updateCallDashboard() {
   if (codecEl) {
     const mode = callServerStats.mode ? ` · ${callServerStats.mode}` : '';
     if (cfg.native) codecEl.textContent = `Opus 48k · native${mode}`;
-    else if (cfg.useOpus) codecEl.textContent = 'Opus 48k';
-    else if (cfg.useMulaw) codecEl.textContent = `μ-law ${cfg.rate / 1000}k`;
+    else if (cfg.useMulaw) {
+      codecEl.textContent = `μ-law ${cfg.rate / 1000}k send` + (cfg.recvOpus ? ' · Opus rx' : '');
+    } else if (cfg.useOpus) codecEl.textContent = 'Opus 48k';
     else codecEl.textContent = `PCM ${cfg.rate / 1000}k`;
+  }
+  const micEl = document.getElementById('call-stat-mic');
+  if (micEl) {
+    let micLabel = '—';
+    let micClass = '';
+    if (cfg.native || useNativeCallAudio()) {
+      micLabel = cfg.native ? 'Native' : 'Server';
+      micClass = ' good';
+    } else if (callCaptureNode && sharedMicActive()) {
+      micLabel = 'Active';
+      micClass = ' good';
+    } else if (callState === 'active') {
+      micLabel = callCaptureNode ? 'Muted' : 'Off';
+      micClass = ' warn';
+    }
+    micEl.textContent = micLabel;
+    micEl.className = 'value' + micClass;
+  }
+  const hintEl = document.getElementById('call-audio-hint');
+  if (hintEl) {
+    const elapsed = callStartedAt ? Date.now() - callStartedAt : 0;
+    if (callState === 'active' && elapsed > 2800) {
+      if (outN === 0 && inN === 0) {
+        hintEl.style.display = 'block';
+        hintEl.textContent = !window.isSecureContext && !isAndroidShell()
+          ? 'No audio — open http://127.0.0.1:8742 (mic needs secure context on desktop)'
+          : 'No audio detected — check microphone permission and speak into the mic';
+      } else if (outN === 0 && !cfg.native && !useNativeCallAudio()) {
+        hintEl.style.display = 'block';
+        hintEl.textContent = 'Not sending audio — allow microphone access for this site';
+      } else {
+        hintEl.style.display = 'none';
+        hintEl.textContent = '';
+      }
+    } else {
+      hintEl.style.display = 'none';
+      hintEl.textContent = '';
+    }
   }
 }
 
@@ -6155,7 +6200,7 @@ function startCallStatsPolling() {
 function showActiveCall(peer, label) {
   callState = 'active';
   callPeer = peerKey(peer) || peer;
-  void primeCallOpusReceive();
+  if (callAudioConfig().recvOpus) void primeCallOpusReceive();
   document.getElementById('call-incoming-overlay')?.classList.remove('open');
   if (!callTimerId) {
     callStartedAt = Date.now();
@@ -6212,20 +6257,19 @@ function callAudioConfig() {
   if (useNativeCallAudio()) {
     return {
       rate: 48000, frameSamples: 960, jitterTarget: 2880, jitterMax: 5760,
-      useOpus: true, useMulaw: false, native: true,
+      useOpus: true, useMulaw: false, native: true, recvOpus: true,
     };
   }
   if (via === 'serial') {
-    return { rate: 8000, frameSamples: 160, jitterTarget: 320, jitterMax: 640, useOpus: false, useMulaw: true };
+    return {
+      rate: 8000, frameSamples: 160, jitterTarget: 320, jitterMax: 640,
+      useOpus: false, useMulaw: true, recvOpus: false,
+    };
   }
-  const opus = browserOpusSupported() && callBrowserOpusOk !== false;
+  // Browser LAN: μ-law send (reliable on all platforms); Opus decode for native peers.
   return {
-    rate: opus ? 48000 : 16000,
-    frameSamples: opus ? 960 : 480,
-    jitterTarget: opus ? 2880 : 960,
-    jitterMax: opus ? 5760 : 1920,
-    useOpus: opus,
-    useMulaw: !opus,
+    rate: 16000, frameSamples: 480, jitterTarget: 960, jitterMax: 1920,
+    useOpus: false, useMulaw: true, recvOpus: browserOpusSupported(),
   };
 }
 
@@ -6662,12 +6706,10 @@ async function startCallCapture() {
     primeCallPlayback();
     stopCallCapturePipeline();
     callCaptureSource = ctx.createMediaStreamSource(stream);
-    if (callBrowserOpusOk === null) {
-      callBrowserOpusOk = await probeBrowserOpus(48000);
-    }
-    await primeCallOpusReceive();
     let cfg = callAudioConfig();
+    if (cfg.recvOpus) await primeCallOpusReceive();
     if (cfg.useOpus) {
+      if (callBrowserOpusOk === null) callBrowserOpusOk = await probeBrowserOpus(48000);
       const encOk = await ensureCallOpusEncoder(cfg);
       const decOk = callOpusRecvPrimed || await ensureCallOpusDecoder(cfg);
       if (!encOk || !decOk) {

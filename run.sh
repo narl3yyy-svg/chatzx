@@ -34,10 +34,43 @@ deps_voice_ok() {
     "$1" -c "from chatxz.core.call_audio_engine import call_audio_available; import sys; sys.exit(0 if call_audio_available() else 1)" 2>/dev/null
 }
 
+recreate_venv_with_system_packages() {
+    local SYS_PY
+    SYS_PY="$(system_python)"
+    if [ -z "$SYS_PY" ]; then
+        return 1
+    fi
+    echo "[setup] Recreating .venv with --system-site-packages (apt python3-pyaudio)..."
+    rm -rf "$VENV"
+    if ! "$SYS_PY" -m venv --system-site-packages "$VENV"; then
+        return 1
+    fi
+    "$VENV_PY" -m pip install -q --upgrade pip
+    if ! "$VENV_PY" -m pip install -q "rns>=1.3.0" "aiohttp>=3.9.0"; then
+        return 1
+    fi
+    if "$VENV_PY" -m pip install -q aiortc 2>/dev/null; then
+        :
+    fi
+    touch "$READY_MARK"
+    PYTHON="$VENV_PY"
+    return 0
+}
+
 install_voice_deps() {
     local py="$1"
     if deps_voice_ok "$py"; then
         return 0
+    fi
+    local SYS_PY
+    SYS_PY="$(system_python)"
+    if [ "$py" = "$VENV_PY" ] && [ -n "$SYS_PY" ] \
+        && "$SYS_PY" -c "import pyaudio" 2>/dev/null \
+        && ! "$py" -c "import pyaudio" 2>/dev/null; then
+        if recreate_venv_with_system_packages && deps_voice_ok "$VENV_PY"; then
+            echo "[setup] Using apt python3-pyaudio via --system-site-packages"
+            return 0
+        fi
     fi
     echo "Installing voice dependencies (pyaudio, aiortc)..."
     local log="$DIR/.voice-install.log"
@@ -51,7 +84,7 @@ install_voice_deps() {
     fi
     echo "  Ubuntu/Debian: sudo apt install portaudio19-dev python3-dev python3-pyaudio"
     echo "  Arch: sudo pacman -S portaudio python-pyaudio"
-    echo "  Then re-run: ./run.sh web  (or rm -rf .venv && ./run.sh web to pick up apt python3-pyaudio)"
+    echo "  Then re-run: ./run.sh web"
     return 1
 }
 

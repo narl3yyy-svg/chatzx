@@ -183,17 +183,28 @@ class CallAudioEngine:
         rate = OPUS_SAMPLE_RATE
         frame_count = OPUS_FRAME_SAMPLES
 
+        self._mic_diag = 8
+
         def input_cb(in_data, frame_count, time_info, status):
             if not self._running or not self._send_enabled:
                 return (None, pyaudio.paComplete)
-            if not self._pcm_has_audio(in_data):
+            peak = self._pcm_peak(in_data)
+            if self._mic_diag > 0:
+                self._mic_diag -= 1
+                print(f"[call-audio] mic peak {peak}")
+            if peak < 48:
                 return (None, pyaudio.paContinue)
             opus = self._codec.encode_pcm(in_data)
-            if opus and len(opus) > 4:
+            if opus:
                 self._seq_out += 1
                 b64 = base64.b64encode(opus).decode("ascii")
                 if self._send_fn(b64, OPUS_CODEC):
                     self.frames_sent += 1
+                    if self.frames_sent <= 2 or self.frames_sent % 40 == 0:
+                        print(
+                            f"[call-audio] Native out #{self.frames_sent} "
+                            f"({len(b64)} b64, peak {peak})"
+                        )
             return (None, pyaudio.paContinue)
 
         def output_cb(in_data, frame_count, time_info, status):
@@ -294,13 +305,16 @@ class CallAudioEngine:
         return pcm[: OPUS_FRAME_SAMPLES * 2]
 
     @staticmethod
-    def _pcm_has_audio(pcm_s16: bytes, threshold: int = 240) -> bool:
+    def _pcm_peak(pcm_s16: bytes) -> int:
         if len(pcm_s16) < 2:
-            return False
+            return 0
         count = len(pcm_s16) // 2
         samples = struct.unpack(f"<{count}h", pcm_s16[: count * 2])
-        peak = max(abs(s) for s in samples) if samples else 0
-        return peak >= threshold
+        return max(abs(s) for s in samples) if samples else 0
+
+    @staticmethod
+    def _pcm_has_audio(pcm_s16: bytes, threshold: int = 48) -> bool:
+        return CallAudioEngine._pcm_peak(pcm_s16) >= threshold
 
     def stats(self) -> dict:
         return {
