@@ -23,8 +23,15 @@ def normalize_contact(entry):
     lan = (entry.get("lan_hash") or "").replace(":", "")
     serial = (entry.get("serial_hash") or "").replace(":", "")
     if serial and lan and lan == serial:
-        entry.pop("lan_hash", None)
-        lan = ""
+        if (entry.get("ip") or "").strip():
+            entry.pop("serial_hash", None)
+            serial = ""
+        else:
+            entry.pop("lan_hash", None)
+            lan = ""
+            if h == serial:
+                entry.pop("hash", None)
+                h = ""
     if serial and h == serial and not lan:
         entry.pop("hash", None)
         h = ""
@@ -329,12 +336,18 @@ def save_contact(
     clean = (peer_hash or "").strip().replace(":", "")
     if not clean:
         raise ValueError("hash required")
+    lan_hex = (lan_hash or "").strip().replace(":", "")
+    ser_hex = (serial_hash or "").strip().replace(":", "")
     transport = (via or "").strip().lower()
     explicit_serial = transport == "serial"
     explicit_lan = transport in ("lan", "rns", "beacon", "udp", "tcp")
-    if serial_hash and not lan_hash and not explicit_lan:
+    dual_save = bool(lan_hex and ser_hex and lan_hex != ser_hex)
+    if dual_save:
+        explicit_serial = False
+        explicit_lan = True
+    elif ser_hex and not lan_hex and not explicit_lan:
         explicit_serial = True
-    if lan_hash and not serial_hash and not explicit_serial:
+    elif lan_hex and not ser_hex and not explicit_serial:
         explicit_lan = True
     is_serial = explicit_serial and not explicit_lan
     if not explicit_serial and not explicit_lan:
@@ -365,25 +378,44 @@ def save_contact(
     resolved_name = _resolve_contact_name(existing, display, custom_name=user_named)
     if resolved_name:
         existing["name"] = resolved_name
-    if is_serial:
-        existing["serial_hash"] = clean
-        if serial_hash:
-            existing["serial_hash"] = str(serial_hash).strip().replace(":", "")
-        if identity_hash or serial_identity_hash:
+    if dual_save:
+        existing["lan_hash"] = lan_hex
+        existing["hash"] = lan_hex
+        existing["serial_hash"] = ser_hex
+        if lan_identity_hash or identity_hash:
+            ident = str(lan_identity_hash or identity_hash).strip().replace(":", "")
+            existing["lan_identity_hash"] = ident
+            existing["identity_hash"] = ident
+        if serial_identity_hash:
+            existing["serial_identity_hash"] = str(
+                serial_identity_hash
+            ).strip().replace(":", "")
+        if ip is not None and str(ip).strip():
+            existing["ip"] = str(ip).strip()
+        if port is not None:
+            try:
+                existing["port"] = int(port)
+            except (TypeError, ValueError):
+                pass
+    elif is_serial:
+        ser_target = ser_hex or (clean if clean != lan_hex else "")
+        if ser_target:
+            existing["serial_hash"] = ser_target
+        if serial_identity_hash or identity_hash:
             existing["serial_identity_hash"] = str(
                 serial_identity_hash or identity_hash
             ).strip().replace(":", "")
         lan = (existing.get("lan_hash") or "").replace(":", "")
-        if lan and lan != clean:
+        if lan and lan != ser_target:
             existing["hash"] = lan
         else:
             existing.pop("hash", None)
-            if (existing.get("lan_hash") or "").replace(":", "") == clean:
+            if (existing.get("lan_hash") or "").replace(":", "") == ser_target:
                 existing.pop("lan_hash", None)
     else:
-        existing["lan_hash"] = lan_hash or clean
+        existing["lan_hash"] = lan_hex or clean
         existing["hash"] = existing["lan_hash"]
-        if identity_hash or lan_identity_hash:
+        if lan_identity_hash or identity_hash:
             ident = str(lan_identity_hash or identity_hash).strip().replace(":", "")
             existing["lan_identity_hash"] = ident
             existing["identity_hash"] = ident
@@ -394,11 +426,18 @@ def save_contact(
                 existing["port"] = int(port)
             except (TypeError, ValueError):
                 pass
-    if lan_hash:
-        existing["lan_hash"] = str(lan_hash).strip().replace(":", "")
-        existing["hash"] = existing["lan_hash"]
-    if serial_hash:
-        existing["serial_hash"] = str(serial_hash).strip().replace(":", "")
+        if ser_hex:
+            existing["serial_hash"] = ser_hex
+            if serial_identity_hash:
+                existing["serial_identity_hash"] = str(
+                    serial_identity_hash
+                ).strip().replace(":", "")
+
+    existing = normalize_contact(existing)
+    lan_final = (existing.get("lan_hash") or "").replace(":", "")
+    ser_final = (existing.get("serial_hash") or "").replace(":", "")
+    if lan_final and ser_final and lan_final == ser_final:
+        existing.pop("serial_hash", None)
 
     file_key = contact_primary_hash(existing) or clean
     path = _contact_path(config_dir, file_key)

@@ -50,6 +50,36 @@ class ContactNamePersistenceTests(unittest.TestCase):
         self.assertNotEqual((contact.get("hash") or "").replace(":", ""), serial)
         self.assertNotEqual((contact.get("lan_hash") or "").replace(":", ""), serial)
 
+    def test_dual_hash_single_request_with_via_serial(self):
+        lan = "7a0deda8ee4dcb5cb1e4bb88ce5af188"
+        serial = "178560472b3d6332e27aafb2fef8fe7a"
+        contact = save_contact(
+            self.tmp,
+            lan,
+            name="arch",
+            ip="10.0.30.112",
+            via="serial",
+            lan_hash=lan,
+            serial_hash=serial,
+            custom_name=True,
+        )
+        self.assertEqual(contact.get("lan_hash"), lan)
+        self.assertEqual(contact.get("serial_hash"), serial)
+        self.assertNotEqual(contact.get("lan_hash"), contact.get("serial_hash"))
+
+    def test_normalize_drops_duplicate_serial_when_equal_to_lan(self):
+        from chatxz.core.contacts import normalize_contact
+
+        row = normalize_contact({
+            "hash": "aaaa",
+            "lan_hash": "aaaa",
+            "serial_hash": "aaaa",
+            "ip": "10.0.30.112",
+            "name": "arch",
+        })
+        self.assertEqual(row.get("lan_hash"), "aaaa")
+        self.assertNotIn("serial_hash", row)
+
     def test_save_serial_then_lan_keeps_distinct_hashes(self):
         save_contact(
             self.tmp,

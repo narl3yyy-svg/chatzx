@@ -3383,7 +3383,27 @@ function contactLanHash(c) {
 }
 
 function contactSerialHash(c) {
-  return (c.serial_hash || '').replace(/:/g, '');
+  const serial = (c.serial_hash || '').replace(/:/g, '');
+  const lan = contactLanHash(c);
+  if (serial && lan && serial === lan) return '';
+  return serial;
+}
+
+function isValidSerialDiscoveredPeer(p, lanPeer) {
+  if (!p || (p.via || p.transport || '') !== 'serial') return false;
+  const h = peerKey(p.hash);
+  if (!h) return false;
+  const lanH = lanPeer ? peerKey(lanPeer.hash) : '';
+  if (lanH && h === lanH) return false;
+  if ((p.ip || '').trim()) return false;
+  return true;
+}
+
+function pickLanAndSerialPeers(hash) {
+  const related = relatedDiscoveredPeers(hash);
+  const lanPeer = related.find(p => (p.via || p.transport || '') !== 'serial') || null;
+  const serialPeer = related.find(p => isValidSerialDiscoveredPeer(p, lanPeer)) || null;
+  return { lanPeer, serialPeer, related };
 }
 
 function contactViewingActive(c) {
@@ -3568,7 +3588,7 @@ function renderContacts(contacts) {
       unreadForPeer(c.hash),
     );
     const lanRow = renderContactTransportRow(c, 'lan');
-    const serialRow = serialHash ? renderContactTransportRow(c, 'serial') : '';
+    const serialRow = serialHash && serialHash !== lanHash ? renderContactTransportRow(c, 'serial') : '';
     const rows = lanRow + serialRow;
     const nameRtt = formatRtt(
       (discoveredForContactTransport(c, 'lan')?.rtt_avg_ms
@@ -3781,40 +3801,46 @@ function doSaveContact() {
     return;
   }
   const disc = discoveredPeerExact(hash) || discoveredPeerForHash(hash);
-  const related = relatedDiscoveredPeers(hash);
-  const lanPeer = related.find(p => (p.via || p.transport || '') !== 'serial');
-  const serialPeer = related.find(p => (p.via || p.transport || '') === 'serial');
+  const { lanPeer, serialPeer } = pickLanAndSerialPeers(hash);
   const meta = peerMetaForHash(hash) || {};
   const discVia = (disc?.via || disc?.transport || meta.via || '').toLowerCase();
   const via = discVia === 'serial' ? 'serial' : (discVia ? 'lan' : undefined);
   const clean = hash.replace(/:/g, '');
+  const dual = !!(lanPeer && serialPeer);
   const body = {
-    hash: clean,
     name: name || disc?.name || serialPeer?.name || lanPeer?.name || meta.name || clean.substring(0, 12),
     port: disc?.port || lanPeer?.port || serialPeer?.port || meta.port || undefined,
-    via,
     custom_name: !!name,
   };
-  if (serialPeer) {
-    body.serial_hash = peerKey(serialPeer.hash);
-    if (serialPeer.identity_hash) body.identity_hash = peerKey(serialPeer.identity_hash);
-    body.via = 'serial';
-  } else if (via === 'serial') {
-    body.serial_hash = clean;
-  }
   if (lanPeer) {
     body.lan_hash = peerKey(lanPeer.hash);
     body.hash = body.lan_hash;
     body.ip = lanPeer.ip || undefined;
+    body.via = 'lan';
     if (lanPeer.identity_hash) body.identity_hash = peerKey(lanPeer.identity_hash);
-    if (!body.via) body.via = 'lan';
   } else if (via === 'lan') {
     body.lan_hash = clean;
     body.hash = clean;
     body.ip = disc?.ip || meta.ip || undefined;
+    body.via = 'lan';
     if (disc?.identity_hash || meta.identity_hash) {
       body.identity_hash = peerKey(disc?.identity_hash || meta.identity_hash);
     }
+  } else {
+    body.hash = clean;
+  }
+  if (serialPeer) {
+    body.serial_hash = peerKey(serialPeer.hash);
+    if (serialPeer.identity_hash) body.serial_identity_hash = peerKey(serialPeer.identity_hash);
+    if (!dual) {
+      body.hash = body.serial_hash;
+      body.via = 'serial';
+      delete body.ip;
+    }
+  } else if (via === 'serial' && isValidSerialDiscoveredPeer(disc, lanPeer)) {
+    body.serial_hash = clean;
+    body.hash = clean;
+    body.via = 'serial';
   }
   fetch('/api/contacts', {
     method: 'POST',
@@ -4679,7 +4705,8 @@ function syncContactIpsFromDiscovered(peers) {
     if (serialP?.hash) {
       const live = peerKey(serialP.hash);
       const saved = peerKey(contactSerialHash(c));
-      if (live && saved !== live) {
+      const lanLive = peerKey(lanP?.hash || contactLanHash(c));
+      if (live && live !== lanLive && saved !== live) {
         next.serial_hash = live;
         rowChanged = true;
       }
@@ -4716,8 +4743,23 @@ function syncContactIpsFromDiscovered(peers) {
   if (changed) renderContacts(allContacts);
 }
 
+function filterPhantomSerialPeers(peers) {
+  const list = peers || [];
+  const lanHashes = new Set(
+    list.filter(p => (p.via || p.transport || '') !== 'serial').map(p => peerKey(p.hash)).filter(Boolean)
+  );
+  return list.filter(p => {
+    if ((p.via || p.transport || '') !== 'serial') return true;
+    const h = peerKey(p.hash);
+    if (!h) return false;
+    if (lanHashes.has(h)) return false;
+    if ((p.ip || '').trim()) return false;
+    return true;
+  });
+}
+
 function mergeDiscoveredPeers(prev, incoming) {
-  if (!incoming || !incoming.length) return prev || [];
+  if (!incoming || !incoming.length) return filterPhantomSerialPeers(prev || []);
   const byKey = {};
   (prev || []).forEach(p => {
     const k = peerMergeKey(p);
@@ -4730,7 +4772,7 @@ function mergeDiscoveredPeers(prev, incoming) {
     if (p.identity_hash) registerPeerAliases(p.hash, p.identity_hash);
     byKey[k] = merged;
   });
-  return Object.values(byKey);
+  return filterPhantomSerialPeers(Object.values(byKey));
 }
 
 function populateLanInterfaceSelect(interfaces, selected) {

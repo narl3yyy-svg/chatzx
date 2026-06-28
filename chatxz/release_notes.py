@@ -3,6 +3,10 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.5.13": [
+        "Dual-hash contact save no longer copies the LAN hash into the USB row when both transports are discovered.",
+        "Phantom serial discovery rows (same hash as LAN) are filtered client-side; duplicate serial_hash is dropped when it matches lan_hash.",
+    ],
     "0.5.12": [
         "Saving a USB/serial contact no longer copies the serial hash into the LAN row — both transports merge in one save when discovered.",
         "Voice message bubbles are wider so the audio scrubber is easier to use.",
