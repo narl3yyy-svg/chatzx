@@ -617,43 +617,122 @@ body::before {
   flex-shrink: 0;
 }
 #disconnect-btn:hover { background: rgba(255,107,122,0.2); }
-#call-btn {
-  background: rgba(76, 175, 120, 0.12); border: 1px solid rgba(76, 175, 120, 0.35);
-  color: #6ee7a0; padding: 6px 12px; border-radius: var(--radius-md);
-  cursor: pointer; font-size: 16px; line-height: 1; transition: all var(--transition);
-  flex-shrink: 0;
+.header-call-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: linear-gradient(135deg, rgba(61,214,140,0.18), rgba(76,175,120,0.12));
+  border: 1px solid rgba(61,214,140,0.45); color: #8ef0c0;
+  padding: 8px 14px; border-radius: var(--radius-md);
+  cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 600;
+  line-height: 1; transition: all var(--transition); flex-shrink: 0;
 }
-#call-btn:hover:not(:disabled) { background: rgba(76, 175, 120, 0.22); }
-#call-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-#call-btn.active { background: rgba(255, 107, 122, 0.15); border-color: rgba(255, 107, 122, 0.4); color: var(--danger); }
+.header-call-btn .call-btn-icon { font-size: 15px; line-height: 1; }
+.header-call-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(61,214,140,0.28), rgba(76,175,120,0.2));
+  border-color: rgba(61,214,140,0.65); color: #b8f5d4;
+}
+.header-call-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.header-call-btn.hangup {
+  background: linear-gradient(135deg, rgba(255,107,122,0.2), rgba(255,80,100,0.12));
+  border-color: rgba(255,107,122,0.5); color: #ff8f9a;
+}
+.header-call-btn.hangup:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(255,107,122,0.32), rgba(255,80,100,0.2));
+  color: #ffb3bb;
+}
 .call-overlay {
   position: fixed; inset: 0; z-index: 60; display: none;
   align-items: center; justify-content: center;
-  background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(6px);
+  background: rgba(4, 6, 10, 0.72); backdrop-filter: blur(10px);
 }
 .call-overlay.open { display: flex; }
 .call-panel {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius-lg); padding: 24px 28px; max-width: 360px; width: 90%;
-  text-align: center; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  background: linear-gradient(160deg, #151b28 0%, #10151f 100%);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl); padding: 28px 26px 22px; max-width: 380px; width: 92%;
+  text-align: center; box-shadow: var(--shadow-lg);
 }
-.call-panel h3 { margin: 0 0 6px; font-size: 18px; }
-.call-panel .call-sub { color: var(--text3); font-size: 12px; margin-bottom: 18px; }
-.call-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.call-panel h3 { margin: 0 0 6px; font-size: 20px; font-weight: 600; color: var(--text); }
+.call-panel .call-sub { color: var(--text2); font-size: 13px; margin-bottom: 22px; }
+.call-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
 .call-actions button {
-  min-width: 110px; padding: 10px 16px; border-radius: var(--radius-md);
-  border: 1px solid var(--border); cursor: pointer; font-family: inherit; font-size: 13px;
+  min-width: 120px; padding: 12px 18px; border-radius: var(--radius-md);
+  border: 1px solid var(--border); cursor: pointer; font-family: inherit;
+  font-size: 13px; font-weight: 600; transition: all var(--transition);
 }
-.call-actions .accept { background: rgba(76, 175, 120, 0.2); border-color: rgba(76, 175, 120, 0.4); color: #6ee7a0; }
-.call-actions .reject, .call-actions .hangup { background: var(--danger-soft); border-color: rgba(255,107,122,0.35); color: var(--danger); }
-#call-bar {
-  display: none; align-items: center; gap: 12px; padding: 8px 16px;
-  background: rgba(76, 175, 120, 0.08); border-bottom: 1px solid rgba(76, 175, 120, 0.2);
-  font-size: 12px; color: var(--text2); flex-shrink: 0;
+.call-actions .accept {
+  background: linear-gradient(135deg, rgba(61,214,140,0.25), rgba(76,175,120,0.15));
+  border-color: rgba(61,214,140,0.5); color: #8ef0c0;
 }
-#call-bar.active { display: flex; }
-#call-bar .call-timer { font-variant-numeric: tabular-nums; min-width: 42px; }
-#call-bar .call-label { flex: 1; }
+.call-actions .accept:hover { background: rgba(61,214,140,0.32); color: #b8f5d4; }
+.call-actions .reject, .call-actions .hangup {
+  background: linear-gradient(135deg, rgba(255,107,122,0.22), rgba(255,80,100,0.12));
+  border-color: rgba(255,107,122,0.45); color: #ff8f9a;
+}
+.call-actions .reject:hover, .call-actions .hangup:hover {
+  background: rgba(255,107,122,0.3); color: #ffb3bb;
+}
+.call-dashboard {
+  background: linear-gradient(165deg, #141a27 0%, #0e1219 55%, #0a0e15 100%);
+  border: 1px solid rgba(124,106,239,0.25);
+  border-radius: var(--radius-xl); width: min(420px, 94vw);
+  box-shadow: var(--shadow-lg); overflow: hidden;
+}
+.call-dash-top {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px; border-bottom: 1px solid var(--border);
+  background: rgba(124,106,239,0.08);
+}
+.call-state-pill {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 4px 10px; border-radius: 999px;
+  background: var(--success-soft); color: var(--success); border: 1px solid rgba(61,214,140,0.35);
+}
+.call-state-pill.ringing { background: rgba(245,185,66,0.15); color: var(--warning); border-color: rgba(245,185,66,0.4); }
+.call-state-pill.outgoing { background: var(--primary-soft); color: var(--primary-hover); border-color: rgba(124,106,239,0.4); }
+.call-timer-lg {
+  font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums;
+  color: var(--text); letter-spacing: 0.04em;
+}
+.call-dash-body { padding: 20px 18px 10px; text-align: center; }
+.call-dash-peer {
+  margin: 0 0 4px; font-size: 20px; font-weight: 600; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.call-dash-sub { font-size: 12px; color: var(--text2); margin-bottom: 16px; }
+.call-stats-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 16px;
+}
+.call-stat {
+  background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+  border-radius: var(--radius-md); padding: 10px 12px; text-align: left;
+}
+.call-stat .label {
+  display: block; font-size: 10px; color: var(--text3); text-transform: uppercase;
+  letter-spacing: 0.06em; margin-bottom: 4px;
+}
+.call-stat .value {
+  font-size: 15px; font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums;
+}
+.call-stat .value.good { color: var(--success); }
+.call-stat .value.warn { color: var(--warning); }
+.call-dash-actions {
+  display: flex; gap: 10px; padding: 0 18px 18px; justify-content: center;
+}
+.call-hangup-btn {
+  flex: 1; max-width: 220px; padding: 13px 20px; border-radius: var(--radius-md);
+  border: 1px solid rgba(255,107,122,0.5); cursor: pointer; font-family: inherit;
+  font-size: 14px; font-weight: 700; color: #fff;
+  background: linear-gradient(135deg, #e84d62 0%, #c73548 100%);
+  box-shadow: 0 4px 16px rgba(232,77,98,0.35); transition: all var(--transition);
+}
+.call-hangup-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.call-minimize-btn {
+  padding: 13px 16px; border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong); background: rgba(255,255,255,0.04);
+  color: var(--text2); cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 500;
+}
+.call-minimize-btn:hover { color: var(--text); border-color: var(--border-strong); }
+#call-bar { display: none !important; }
 .dock-status #disconnect-btn { margin-right: 4px; }
 
 #placeholder {
@@ -1589,14 +1668,12 @@ body.android-shell.sidebar-open #sidebar-backdrop {
         </div>
       </div>
       <div class="header-actions">
-        <button id="call-btn" onclick="toggleVoiceCall()" title="Voice call" disabled style="display:none">📞</button>
+        <button id="call-btn" class="header-call-btn" onclick="toggleVoiceCall()" title="Voice call" disabled style="display:none">
+          <span class="call-btn-icon">📞</span><span class="call-btn-label">Call</span>
+        </button>
       </div>
     </div>
-    <div id="call-bar">
-      <span class="call-timer" id="call-timer">00:00</span>
-      <span class="call-label" id="call-bar-label">On call</span>
-      <button type="button" class="reject hangup" onclick="endVoiceCall()">Hang up</button>
-    </div>
+    <div id="call-bar" aria-hidden="true"></div>
 
     <div id="placeholder">
       <div class="welcome-card">
@@ -1906,6 +1983,31 @@ body.android-shell.sidebar-open #sidebar-backdrop {
     <div class="call-actions">
       <button type="button" class="reject" onclick="rejectVoiceCall()">Decline</button>
       <button type="button" class="accept" onclick="acceptVoiceCall()">Accept</button>
+    </div>
+  </div>
+</div>
+
+<div id="call-active-overlay" class="call-overlay">
+  <div class="call-dashboard" onclick="event.stopPropagation()">
+    <div class="call-dash-top">
+      <span class="call-state-pill" id="call-state-pill">Live</span>
+      <span class="call-timer-lg" id="call-timer">00:00</span>
+    </div>
+    <div class="call-dash-body">
+      <h2 class="call-dash-peer" id="call-dash-peer">—</h2>
+      <div class="call-dash-sub" id="call-dash-sub">—</div>
+      <div class="call-stats-grid">
+        <div class="call-stat"><span class="label">Link RTT</span><span class="value good" id="call-stat-rtt">—</span></div>
+        <div class="call-stat"><span class="label">Transport</span><span class="value" id="call-stat-transport">—</span></div>
+        <div class="call-stat"><span class="label">Audio received</span><span class="value" id="call-stat-rxin">0</span></div>
+        <div class="call-stat"><span class="label">Audio sent</span><span class="value" id="call-stat-txout">0</span></div>
+        <div class="call-stat"><span class="label">Jitter buffer</span><span class="value" id="call-stat-jitter">0 ms</span></div>
+        <div class="call-stat"><span class="label">Codec</span><span class="value" id="call-stat-codec">—</span></div>
+      </div>
+    </div>
+    <div class="call-dash-actions">
+      <button type="button" class="call-minimize-btn" onclick="minimizeCallDashboard()">Minimize</button>
+      <button type="button" class="call-hangup-btn" onclick="endVoiceCall()">Hang up</button>
     </div>
   </div>
 </div>
@@ -2780,8 +2882,15 @@ function updatePeerHeader() {
     const showCall = linked && !hubChat && viewingPeer;
     callBtn.style.display = showCall ? 'block' : 'none';
     callBtn.disabled = !showCall;
-    callBtn.classList.toggle('active', callState === 'active' || callState === 'outgoing');
-    callBtn.title = (callState === 'active' || callState === 'outgoing') ? 'Hang up' : 'Voice call';
+    const onCall = callState === 'active' || callState === 'outgoing';
+    callBtn.classList.toggle('hangup', onCall);
+    callBtn.title = onCall ? 'Hang up' : 'Voice call';
+    const icon = callBtn.querySelector('.call-btn-icon');
+    const lbl = callBtn.querySelector('.call-btn-label');
+    if (icon) icon.textContent = onCall ? '✕' : '📞';
+    if (lbl) lbl.textContent = onCall ? 'Hang up' : 'Call';
+    if (onCall && callDashMinimized) callBtn.onclick = () => openCallDashboard(true);
+    else callBtn.onclick = toggleVoiceCall;
   }
   setLinkStatus(linked ? 'connected' : 'disconnected', linked ? 'Active' : 'Inactive');
   document.getElementById('input-area').style.display = 'block';
@@ -5759,7 +5868,12 @@ let callRingRead = 0;
 let callRingCount = 0;
 let callJitterPrimed = false;
 let callTimerId = null;
+let callStatsTimerId = null;
 let callStartedAt = 0;
+let callDashMinimized = false;
+let callLocalFramesIn = 0;
+let callLocalFramesOut = 0;
+let callServerStats = {};
 let ringtoneTimer = null;
 let sharedMicStream = null;
 let sharedMicRefs = 0;
@@ -5786,12 +5900,18 @@ function resetCallUi() {
   resetCallRingBuffer();
   callJitterPrimed = false;
   if (callTimerId) { clearInterval(callTimerId); callTimerId = null; }
+  if (callStatsTimerId) { clearInterval(callStatsTimerId); callStatsTimerId = null; }
   callStartedAt = 0;
+  callDashMinimized = false;
+  callLocalFramesIn = 0;
+  callLocalFramesOut = 0;
+  callServerStats = {};
   document.getElementById('call-incoming-overlay')?.classList.remove('open');
-  document.getElementById('call-bar')?.classList.remove('active');
+  document.getElementById('call-active-overlay')?.classList.remove('open');
   const timer = document.getElementById('call-timer');
   if (timer) timer.textContent = '00:00';
   updatePeerHeader();
+  updateCallDashboard();
 }
 
 function showIncomingCall(peer, data) {
@@ -5846,14 +5966,103 @@ function stopCallRingtone() {
   }
 }
 
+function callPeerDisplayName(peer) {
+  return contactNameFor(peer) || truncateHash(peer) || 'Peer';
+}
+
+function formatCallRtt(ms) {
+  if (ms == null || ms === '' || Number.isNaN(Number(ms))) return '—';
+  const n = Number(ms);
+  return n < 1 ? '<1 ms' : `${Math.round(n)} ms`;
+}
+
+function updateCallDashboard() {
+  const peer = callPeer || viewingPeer;
+  const name = callPeerDisplayName(peer);
+  const peerEl = document.getElementById('call-dash-peer');
+  const subEl = document.getElementById('call-dash-sub');
+  const pill = document.getElementById('call-state-pill');
+  const cfg = callAudioConfig();
+  if (peerEl) peerEl.textContent = name;
+  if (subEl) {
+    const iface = peerInterfaceLabel(callVia || viewingVia);
+    const hash = truncateHash(peerKey(peer) || peer || '');
+    subEl.textContent = `${iface} · ${hash}`;
+  }
+  if (pill) {
+    pill.className = 'call-state-pill' + (
+      callState === 'outgoing' ? ' outgoing' :
+      callState === 'incoming' ? ' ringing' : ''
+    );
+    pill.textContent = callState === 'outgoing' ? 'Calling' :
+      callState === 'incoming' ? 'Ringing' : 'Live';
+  }
+  const lk = linkKey(callPeer || viewingPeer, normalizeVia(callVia || viewingVia) === 'serial' ? 'serial' : 'lan');
+  const localRtt = lk && linkRttByKey[lk] != null ? Number(linkRttByKey[lk]) : null;
+  const serverRtt = callServerStats.rtt_ms;
+  const rttEl = document.getElementById('call-stat-rtt');
+  if (rttEl) {
+    const shown = serverRtt != null ? serverRtt : localRtt;
+    rttEl.textContent = formatCallRtt(shown);
+    rttEl.className = 'value' + (shown != null && shown < 80 ? ' good' : shown > 200 ? ' warn' : '');
+  }
+  const tx = document.getElementById('call-stat-txout');
+  const rx = document.getElementById('call-stat-rxin');
+  const outN = Math.max(callLocalFramesOut, callServerStats.audio_out || 0);
+  const inN = Math.max(callLocalFramesIn, callServerStats.audio_in || 0);
+  if (tx) tx.textContent = String(outN);
+  if (rx) rx.textContent = String(inN);
+  const jitterEl = document.getElementById('call-stat-jitter');
+  if (jitterEl) {
+    const rate = (callAudioCtx && callAudioCtx.sampleRate) || cfg.rate;
+    const ms = Math.round((callRingCount / rate) * 1000);
+    jitterEl.textContent = `${ms} ms`;
+    jitterEl.className = 'value' + (ms > 120 ? ' warn' : ms >= 40 ? ' good' : '');
+  }
+  const transportEl = document.getElementById('call-stat-transport');
+  if (transportEl) {
+    const mtu = callServerStats.link_mtu;
+    transportEl.textContent = mtu ? `${peerInterfaceLabel(callVia || viewingVia)} · ${mtu} B` :
+      peerInterfaceLabel(callVia || viewingVia);
+  }
+  const codecEl = document.getElementById('call-stat-codec');
+  if (codecEl) {
+    codecEl.textContent = cfg.useMulaw ? `μ-law ${cfg.rate / 1000}k` : `PCM ${cfg.rate / 1000}k`;
+  }
+}
+
+function openCallDashboard(force) {
+  if (callState !== 'active' && callState !== 'outgoing') return;
+  if (!force && callDashMinimized) return;
+  document.getElementById('call-active-overlay')?.classList.add('open');
+  callDashMinimized = false;
+  updateCallDashboard();
+}
+
+function minimizeCallDashboard() {
+  callDashMinimized = true;
+  document.getElementById('call-active-overlay')?.classList.remove('open');
+}
+
+function startCallStatsPolling() {
+  if (callStatsTimerId) clearInterval(callStatsTimerId);
+  const poll = () => {
+    if (callState !== 'active' && callState !== 'outgoing') return;
+    callApi({action: 'status'}).then(d => {
+      if (!d || d.error) return;
+      callServerStats = d;
+      updateCallDashboard();
+    }).catch(() => {});
+    updateCallDashboard();
+  };
+  poll();
+  callStatsTimerId = setInterval(poll, 1500);
+}
+
 function showActiveCall(peer, label) {
   callState = 'active';
   callPeer = peerKey(peer) || peer;
   document.getElementById('call-incoming-overlay')?.classList.remove('open');
-  const bar = document.getElementById('call-bar');
-  const barLabel = document.getElementById('call-bar-label');
-  if (bar) bar.classList.add('active');
-  if (barLabel) barLabel.textContent = label || `On call with ${contactNameFor(callPeer) || truncateHash(callPeer)}`;
   if (!callTimerId) {
     callStartedAt = Date.now();
     callTimerId = setInterval(() => {
@@ -5863,8 +6072,30 @@ function showActiveCall(peer, label) {
       const mm = String(Math.floor(s / 60)).padStart(2, '0');
       const ss = String(s % 60).padStart(2, '0');
       el.textContent = `${mm}:${ss}`;
+      updateCallDashboard();
     }, 1000);
   }
+  openCallDashboard(true);
+  startCallStatsPolling();
+  updatePeerHeader();
+}
+
+function showOutgoingCall(peer) {
+  callState = 'outgoing';
+  callPeer = peerKey(peer) || peer;
+  document.getElementById('call-incoming-overlay')?.classList.remove('open');
+  if (!callTimerId) {
+    callStartedAt = Date.now();
+    callTimerId = setInterval(() => {
+      const el = document.getElementById('call-timer');
+      if (!el) return;
+      const s = Math.floor((Date.now() - callStartedAt) / 1000);
+      el.textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+      updateCallDashboard();
+    }, 1000);
+  }
+  openCallDashboard(true);
+  startCallStatsPolling();
   updatePeerHeader();
 }
 
@@ -6133,6 +6364,8 @@ async function releaseSharedMic(force) {
 }
 
 function sendCallAudioFrame(b64, codec) {
+  callLocalFramesOut++;
+  updateCallDashboard();
   const payload = {
     type: 'call_audio',
     peer: callPeer,
@@ -6249,6 +6482,7 @@ function stopCallCapturePipeline() {
 
 function enqueueCallAudio(b64, codec) {
   if (!b64 || callState !== 'active') return;
+  callLocalFramesIn++;
   const decoded = decodeCallAudio(b64, codec);
   if (!decoded || !decoded.samples.length) return;
   const ctx = ensureCallAudioCtx();
@@ -6265,6 +6499,7 @@ function enqueueCallAudio(b64, codec) {
   if (!callJitterPrimed && callRingCount >= cfg.jitterTarget) {
     callJitterPrimed = true;
   }
+  updateCallDashboard();
 }
 
 function handleCallWS(event, data) {
@@ -6275,11 +6510,9 @@ function handleCallWS(event, data) {
     return;
   }
   if (event === 'outgoing') {
-    callState = 'outgoing';
-    callPeer = peer;
     callId = data.call_id || callId;
     callVia = normalizeVia(data.transport || data.via || viewingVia);
-    updatePeerHeader();
+    showOutgoingCall(peer);
     return;
   }
   if (event === 'accepted') {
@@ -6332,11 +6565,10 @@ async function toggleVoiceCall() {
     toast(res.error === 'invite failed' ? 'Could not start call — check link' : res.error);
     return;
   }
-  callState = 'outgoing';
-  callPeer = peerKey(viewingPeer);
   callId = res.call_id;
+  callVia = normalizeVia(viewingVia);
+  showOutgoingCall(viewingPeer);
   toast('Calling…');
-  updatePeerHeader();
 }
 
 async function acceptVoiceCall() {

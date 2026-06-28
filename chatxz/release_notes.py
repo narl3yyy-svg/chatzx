@@ -3,6 +3,10 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.6.7": [
+        "Server auto-splits oversized call audio to fit RNS MTU — fixes silent calls when the browser cached old frame sizes.",
+        "New live call dashboard: link RTT, audio frames in/out, jitter buffer, codec, and styled hang-up controls.",
+    ],
     "0.6.6": [
         "Call audio frames were too large for RNS MTU and were silently dropped — LAN μ-law frames are now 30 ms (480 samples).",
     ],

@@ -62,6 +62,7 @@ from chatxz.core.voice_call import (
     STATE_OUTGOING,
     VoiceCallSession,
     parse_call_payload,
+    split_call_audio_b64,
 )
 from chatxz.core.serial_transfer import (
     boost_serial_establishment_timeout,
@@ -5535,26 +5536,55 @@ class MessagingBackend:
             return False
         peer = self.voice_call.peer_hash
         cid = call_id or self.voice_call.call_id
-        seq = self.voice_call.next_audio_seq()
-        ok = self._send_call_packet(peer, CALL_AUDIO, {
-            "call_id": cid,
-            "seq": seq,
-            "codec": codec,
-            "data": audio_b64,
-        }, self.voice_call.transport)
+        link = self._call_link_for_peer(peer, self.voice_call.transport)
+        link_mtu = int(getattr(link, "mtu", 1064) or 1064) if link else 1064
+        chunks = split_call_audio_b64(
+            audio_b64,
+            codec,
+            call_id=cid,
+            link_mtu=link_mtu,
+        )
+        if not chunks:
+            return False
+        ok_any = False
         sent = int(getattr(self, "_call_audio_sent", 0) or 0)
-        if ok:
-            sent += 1
-            self._call_audio_sent = sent
-            if sent <= 2 or sent % 40 == 0:
-                print(f"[call] Audio out #{sent} ({len(audio_b64)} b64) → {peer[:16]}...")
-        return ok
+        for chunk_b64 in chunks:
+            seq = self.voice_call.next_audio_seq()
+            ok = self._send_call_packet(peer, CALL_AUDIO, {
+                "call_id": cid,
+                "seq": seq,
+                "codec": codec,
+                "data": chunk_b64,
+            }, self.voice_call.transport)
+            if ok:
+                ok_any = True
+                sent += 1
+                self._call_audio_sent = sent
+                if sent <= 2 or sent % 40 == 0:
+                    print(f"[call] Audio out #{sent} ({len(chunk_b64)} b64) → {peer[:16]}...")
+        return ok_any
 
     def call_status(self):
         vc = self.voice_call
+        peer = vc.peer_hash
+        link = self._call_link_for_peer(peer, vc.transport) if peer else None
+        rtt_ms = None
+        link_mtu = None
+        if link:
+            link_mtu = int(getattr(link, "mtu", 0) or 0) or None
+            rtt = getattr(link, "rtt", None)
+            if rtt is not None:
+                try:
+                    rtt_ms = round(float(rtt) * 1000, 1)
+                except (TypeError, ValueError):
+                    rtt_ms = None
         return {
             "state": vc.state,
             "call_id": vc.call_id,
-            "peer": vc.peer_hash,
+            "peer": peer,
             "transport": vc.transport,
+            "rtt_ms": rtt_ms,
+            "link_mtu": link_mtu,
+            "audio_in": int(getattr(self, "_call_audio_recv", 0) or 0),
+            "audio_out": int(getattr(self, "_call_audio_sent", 0) or 0),
         }

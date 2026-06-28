@@ -2,6 +2,12 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.6.7] — 2026-06-28
+
+### Fixed
+- **Audio still dropped on Ubuntu** — server splits oversized call-audio frames to fit RNS MTU (fixes stale browser cache sending 640-byte μ-law blobs).
+- **Call UI** — styled Call / Hang up header buttons; live call dashboard with RTT, transport, audio in/out, jitter buffer, and codec stats.
+
 ## [0.6.6] — 2026-06-28
 
 ### Fixed

@@ -15,6 +15,7 @@ from chatxz.core.voice_call import (
     max_mulaw_bytes_for_mtu,
     new_call_id,
     parse_call_payload,
+    split_call_audio_b64,
 )
 
 
@@ -71,6 +72,20 @@ def test_voice_call_session_incoming_activate_mismatch():
     assert vc.state == STATE_INCOMING
     assert vc.activate("call-1")
     assert vc.state == STATE_ACTIVE
+
+
+def test_split_call_audio_oversized_mulaw():
+    big = split_call_audio_b64(
+        __import__("base64").b64encode(bytes([0x7F]) * 640).decode("ascii"),
+        "audio/pcmulaw;rate=16000",
+        call_id="1b0f674d-6d4",
+        link_mtu=1064,
+    )
+    assert len(big) >= 2
+    for chunk in big:
+        raw_len = len(__import__("base64").b64decode(chunk))
+        size, budget = estimate_call_audio_packet_size(raw_len, call_id="1b0f674d-6d4")
+        assert size <= budget
 
 
 def test_call_audio_mulaw_fits_rns_mtu():

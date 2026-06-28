@@ -75,6 +75,75 @@ def max_mulaw_bytes_for_mtu(link_mtu=1064, codec="audio/pcmulaw;rate=16000"):
     return lo
 
 
+def _raw_audio_chunk_fits(raw_len, codec, call_id, link_mtu):
+    if "mulaw" in (codec or ""):
+        size, budget = estimate_call_audio_packet_size(
+            raw_len, call_id=call_id, codec=codec, link_mtu=link_mtu,
+        )
+        return size <= budget
+    piece = bytes([0x7F]) * raw_len
+    b64 = base64.b64encode(piece).decode("ascii")
+    payload = {
+        "call_id": call_id,
+        "seq": 9999,
+        "codec": codec,
+        "data": b64,
+    }
+    envelope = {
+        "type": CALL_AUDIO,
+        "content": json.dumps(payload),
+        "timestamp": 1710000000.0,
+        "msg_id": "abcd1234efgh",
+    }
+    budget = max(400, int(link_mtu or 500) - 48)
+    return len(json.dumps(envelope).encode("utf-8")) <= budget
+
+
+def split_call_audio_b64(
+    audio_b64,
+    codec="audio/pcmulaw;rate=16000",
+    *,
+    call_id="00000000-000",
+    seq=1,
+    link_mtu=1064,
+):
+    """Split a base64 audio blob into MTU-safe chunks (handles stale large client frames)."""
+    if not audio_b64:
+        return []
+    try:
+        raw = base64.b64decode(audio_b64, validate=True)
+    except Exception:
+        return [audio_b64]
+    if not raw:
+        return []
+    codec = codec or "audio/pcmulaw;rate=16000"
+    if _raw_audio_chunk_fits(len(raw), codec, call_id, link_mtu):
+        return [audio_b64]
+    align = 2 if codec.startswith("audio/pcm") and "mulaw" not in codec else 1
+    chunks = []
+    pos = 0
+    while pos < len(raw):
+        remaining = len(raw) - pos
+        lo, hi = align, remaining
+        best = 0
+        while lo <= hi:
+            mid = ((lo + hi) // 2) // align * align or align
+            if mid > remaining:
+                mid = (remaining // align) * align
+            if mid < align:
+                break
+            if _raw_audio_chunk_fits(mid, codec, call_id, link_mtu):
+                best = mid
+                lo = mid + align
+            else:
+                hi = mid - align
+        if best < align:
+            break
+        chunks.append(base64.b64encode(raw[pos:pos + best]).decode("ascii"))
+        pos += best
+    return chunks or [audio_b64]
+
+
 def parse_call_payload(content):
     if not content:
         return {}
