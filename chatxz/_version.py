@@ -1,5 +1,5 @@
 """App version — keep in sync with version.properties via scripts/bump-version.sh."""
 
-__version__ = "0.7.7"
-__version_code__ = 191
+__version__ = "0.8.0"
+__version_code__ = 192
 

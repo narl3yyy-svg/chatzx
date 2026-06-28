@@ -3,6 +3,13 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.8.0": [
+        "Voice calls are Opus-only (48 kHz, 20 ms) on every platform — no more μ-law codec mixing.",
+        "Desktop: custom libopus + PyAudio engine with adaptive jitter buffer (replaces aiortc).",
+        "Android: native AudioRecord/MediaCodec Opus/AudioTrack — no browser mic fallback for calls.",
+        "Fixes garbled, stuttery audio caused by codec mismatch and tiny jitter buffer.",
+        "Install: Arch/Ubuntu need libopus + pyaudio (./run.sh installs pyaudio automatically).",
+    ],
     "0.7.7": [
         "Fixed instant call hang-up: glare (both sides calling) resolves automatically — no more mutual busy/reject.",
         "Stale call state clears after timeout — Arch no longer stays busy and rejects every invite.",

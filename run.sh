@@ -49,9 +49,7 @@ recreate_venv_with_system_packages() {
     if ! "$VENV_PY" -m pip install -q "rns>=1.3.0" "aiohttp>=3.9.0"; then
         return 1
     fi
-    if "$VENV_PY" -m pip install -q aiortc 2>/dev/null; then
-        :
-    fi
+
     touch "$READY_MARK"
     PYTHON="$VENV_PY"
     return 0
@@ -72,18 +70,18 @@ install_voice_deps() {
             return 0
         fi
     fi
-    echo "Installing voice dependencies (pyaudio, aiortc)..."
+    echo "Installing voice dependencies (pyaudio)..."
     local log="$DIR/.voice-install.log"
-    if "$py" -m pip install -q pyaudio aiortc 2>"$log"; then
+    if "$py" -m pip install -q pyaudio 2>"$log"; then
         rm -f "$log"
         return 0
     fi
-    echo "[setup] Native call audio unavailable (pyaudio/aiortc). Browser mic fallback still works."
+    echo "[setup] Native call audio unavailable (libopus and/or pyaudio). Browser Opus fallback still works."
     if [ -s "$log" ]; then
         tail -n 2 "$log" | sed 's/^/[setup] /'
     fi
-    echo "  Ubuntu/Debian: sudo apt install portaudio19-dev python3-dev python3-pyaudio"
-    echo "  Arch: sudo pacman -S portaudio python-pyaudio"
+    echo "  Ubuntu/Debian: sudo apt install libopus0 portaudio19-dev python3-dev python3-pyaudio"
+    echo "  Arch: sudo pacman -S opus portaudio python-pyaudio"
     echo "  Then re-run: ./run.sh web"
     return 1
 }

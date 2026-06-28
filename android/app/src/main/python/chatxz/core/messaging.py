@@ -5541,6 +5541,9 @@ class MessagingBackend:
                 return
             if call_id and call_id != self.voice_call.call_id:
                 return
+            codec = (payload.get("codec") or "").strip()
+            if codec and "opus" not in codec.lower():
+                return
             recv = int(getattr(self, "_call_audio_recv", 0) or 0) + 1
             self._call_audio_recv = recv
             if recv <= 2 or recv % 40 == 0:

@@ -2,6 +2,18 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.8.0] — 2026-06-28
+
+### Changed
+- **Opus-only voice calls** — all platforms use Opus 48 kHz / 20 ms frames end-to-end; μ-law removed from call path.
+- **Custom libopus engine** — desktop uses ctypes libopus + PyAudio callbacks (no aiortc/WebRTC).
+- **Adaptive jitter buffer** — playout delay adapts to network jitter with PLC; fixes 0–20 ms buffer flicker and garbled audio.
+- **Android native audio** — `CallAudioEngine` (AudioRecord + MediaCodec Opus + AudioTrack) replaces broken browser μ-law fallback.
+
+### Fixed
+- Codec mismatch garbling when browser sent μ-law and native expected Opus (or padded μ-law incorrectly to 48 kHz).
+- Android `[call-audio] Native unavailable` — Java Opus engine starts on call accept.
+
 ## [0.7.7] — 2026-06-28
 
 ### Fixed

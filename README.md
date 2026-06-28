@@ -51,7 +51,9 @@ Regenerate identities under **Settings → Profile** (**Regenerate LAN** / **Reg
 - **Android sleep** — tap the contact to wake and reconnect (LAN wake is automatic).
 - **Cross-subnet LAN** — pick matching pinned IPv4 on both devices.
 
-**Voice calls (v0.6.0):** when connected to a peer, tap **📞** in the chat header for a live duplex call over RNS (LAN or USB). Voice **notes** (🎤) remain separate one-shot recordings.
+**Voice calls:** when connected to a peer, tap **📞** in the chat header for a live duplex **Opus** call over RNS (LAN or USB). Desktop uses native libopus + PyAudio; Android uses native AudioRecord/MediaCodec; browsers use WebCodecs Opus. Voice **notes** (🎤) remain separate one-shot recordings.
+
+**Voice deps (desktop):** `./run.sh web` installs PyAudio; system **libopus** is required (`pacman -S opus` / `apt install libopus0`). Without native deps, the browser Opus fallback is used.
 
 ## Download
 

@@ -6121,7 +6121,9 @@ function updateCallDashboard() {
     const rate = (callAudioCtx && callAudioCtx.sampleRate) || cfg.rate;
     const ms = callServerStats.jitter_ms != null
       ? callServerStats.jitter_ms
-      : Math.round((callRingCount / rate) * 1000);
+      : callServerStats.playout_delay_ms != null
+        ? callServerStats.playout_delay_ms
+        : Math.round((callRingCount / rate) * 1000);
     jitterEl.textContent = `${ms} ms`;
     jitterEl.className = 'value' + (ms > 120 ? ' warn' : ms >= 40 ? ' good' : '');
   }
@@ -6135,9 +6137,7 @@ function updateCallDashboard() {
   if (codecEl) {
     const mode = callServerStats.mode ? ` · ${callServerStats.mode}` : '';
     if (cfg.native) codecEl.textContent = `Opus 48k · native${mode}`;
-    else if (cfg.useMulaw) {
-      codecEl.textContent = `μ-law ${cfg.rate / 1000}k send` + (cfg.recvOpus ? ' · Opus rx' : '');
-    } else if (cfg.useOpus) codecEl.textContent = 'Opus 48k';
+    else if (cfg.useOpus) codecEl.textContent = 'Opus 48k · browser';
     else codecEl.textContent = `PCM ${cfg.rate / 1000}k`;
   }
   const micEl = document.getElementById('call-stat-mic');
@@ -6181,7 +6181,11 @@ function updateCallDashboard() {
 }
 
 function useNativeCallAudio() {
-  return !!(callServerStats && callServerStats.running && callServerStats.engine === 'native-opus');
+  if (callServerStats && callServerStats.running && callServerStats.engine === 'native-opus') {
+    return true;
+  }
+  return !!(isAndroidShell() && callServerStats && callServerStats.state === 'active'
+    && callServerStats.native_android);
 }
 
 function nativeCallAudioCapable() {
@@ -6276,24 +6280,13 @@ function ensureCallAudioCtx() {
 }
 
 function callAudioConfig() {
-  const via = normalizeVia(callVia || viewingVia);
-  if (useNativeCallAudio()) {
-    return {
-      rate: 48000, frameSamples: 960, jitterTarget: 2880, jitterMax: 5760,
-      useOpus: true, useMulaw: false, native: true, recvOpus: true,
-    };
-  }
-  if (via === 'serial') {
-    return {
-      rate: 8000, frameSamples: 160, frameMs: 20, jitterTarget: 1600, jitterMax: 3200,
-      useOpus: false, useMulaw: true, recvOpus: false,
-    };
-  }
-  // Browser LAN: μ-law send (reliable on all platforms); Opus decode for native peers.
-  return {
-    rate: 16000, frameSamples: 320, frameMs: 20, jitterTarget: 4800, jitterMax: 9600,
-    useOpus: false, useMulaw: true, recvOpus: browserOpusSupported(),
+  const opus = {
+    rate: 48000, frameSamples: 960, frameMs: 20,
+    jitterTarget: 2880, jitterMax: 7200, jitterMin: 1920,
+    useOpus: true, useMulaw: false, recvOpus: true,
   };
+  if (useNativeCallAudio()) return { ...opus, native: true };
+  return { ...opus, native: false };
 }
 
 async function primeCallOpusReceive() {
@@ -6327,8 +6320,13 @@ async function ensureCallOpusDecoder(cfg) {
         ensureCallPlaybackNode();
         ringWriteSamples(buf);
         const c = callAudioConfig();
-        if (callRingCount > c.jitterMax) ringDropSamples(callRingCount - c.jitterMax);
-        if (!callJitterPrimed && callRingCount >= c.jitterTarget) callJitterPrimed = true;
+        const minKeep = c.jitterMin || c.jitterTarget;
+        if (callRingCount > c.jitterMax) {
+          ringDropSamples(Math.max(0, callRingCount - c.jitterMax));
+        }
+        if (!callJitterPrimed && callRingCount >= (c.jitterTarget || minKeep)) {
+          callJitterPrimed = true;
+        }
         callLocalFramesIn++;
         updateCallDashboard();
       } finally {
@@ -6360,6 +6358,7 @@ async function ensureCallOpusEncoder(cfg) {
       sampleRate: cfg.rate,
       numberOfChannels: 1,
       bitrate: 32000,
+      latencyMode: 'realtime',
     });
     return callOpusEncoder.state === 'configured';
   } catch (_) {
@@ -6715,7 +6714,7 @@ function scheduleCallNativeFallbackWatchdog() {
     } catch (_) {}
     const sent = Number(callServerStats.frames_sent || callServerStats.audio_out || 0);
     if (useNativeCallAudio() && sent === 0) {
-      toast('Native mic silent — switching to browser microphone');
+      toast('Native mic unavailable — switching to browser Opus');
       await startCallCapture({forceBrowser: true});
     }
   }, 4000);
@@ -6758,19 +6757,17 @@ async function startCallCapture(opts) {
     primeCallPlayback();
     stopCallCapturePipeline();
     callCaptureSource = ctx.createMediaStreamSource(stream);
-    let cfg = callAudioConfig();
-    if (cfg.recvOpus) await primeCallOpusReceive();
-    if (cfg.useOpus) {
-      if (callBrowserOpusOk === null) callBrowserOpusOk = await probeBrowserOpus(48000);
-      const encOk = await ensureCallOpusEncoder(cfg);
-      const decOk = callOpusRecvPrimed || await ensureCallOpusDecoder(cfg);
-      if (!encOk || !decOk) {
-        callBrowserOpusOk = false;
-        cfg = callAudioConfig();
-      } else {
-        callOpusRecvPrimed = true;
-      }
+    const cfg = callAudioConfig();
+    await primeCallOpusReceive();
+    if (callBrowserOpusOk === null) callBrowserOpusOk = await probeBrowserOpus(48000);
+    const encOk = await ensureCallOpusEncoder(cfg);
+    const decOk = callOpusRecvPrimed || await ensureCallOpusDecoder(cfg);
+    if (!encOk || !decOk) {
+      callBrowserOpusOk = false;
+      toast('Opus not supported in this browser — update Chrome/Firefox or use native audio');
+      return false;
     }
+    callOpusRecvPrimed = true;
     const processor = ctx.createScriptProcessor(2048, 1, 1);
     const silent = ctx.createGain();
     silent.gain.value = 0;
@@ -6790,13 +6787,10 @@ async function startCallCapture(opts) {
         const pcm = resampleLinearToPcm(chunk, inputRate, cfg.rate);
         if (pcm.length < cfg.frameSamples) return;
         const slice = pcm.subarray(0, cfg.frameSamples);
-        if (cfg.useOpus && callOpusEncoder && callOpusEncoder.state === 'configured') {
+        if (callOpusEncoder && callOpusEncoder.state === 'configured') {
           const floats = new Float32Array(cfg.frameSamples);
           for (let i = 0; i < cfg.frameSamples; i++) floats[i] = slice[i] / 32768;
           encodeCallFrameOpus(floats, cfg);
-        } else {
-          const frame = encodeCallFrame(slice, {useMulaw: cfg.useMulaw !== false, rate: cfg.rate});
-          callPendingSend = frame;
         }
       }
     };
@@ -6804,7 +6798,6 @@ async function startCallCapture(opts) {
     processor.connect(silent);
     silent.connect(ctx.destination);
     callCaptureNode = processor;
-    startCallSendPacer(cfg);
     clearCallNativeWatchdog();
     return true;
   } catch (err) {
@@ -6828,41 +6821,19 @@ function stopCallCapturePipeline() {
 function enqueueCallAudio(b64, codec, opts) {
   if (!b64 || callState !== 'active') return;
   if (useNativeCallAudio() || (opts && opts.native_playback)) return;
-  if ((codec || '').includes('opus') && b64.length <= 8) return;
-  const decoded = decodeCallAudio(b64, codec);
-  if (!decoded) return;
-  if (decoded.opus) {
-    const rate = parseCallAudioRate(codec) || 48000;
-    const decCfg = { useOpus: true, rate };
-    if (!callOpusDecoder || callOpusDecoder.state !== 'configured') {
-      void ensureCallOpusDecoder(decCfg).then(ok => {
-        if (ok) {
-          callOpusRecvPrimed = true;
-          if (callState === 'active') decodeOpusB64(b64, decCfg);
-        }
-      });
-      return;
-    }
-    decodeOpusB64(decoded.b64, decCfg);
+  if (!(codec || '').includes('opus') || b64.length <= 8) return;
+  const rate = parseCallAudioRate(codec) || 48000;
+  const decCfg = { useOpus: true, rate };
+  if (!callOpusDecoder || callOpusDecoder.state !== 'configured') {
+    void ensureCallOpusDecoder(decCfg).then(ok => {
+      if (ok) {
+        callOpusRecvPrimed = true;
+        if (callState === 'active') decodeOpusB64(b64, decCfg);
+      }
+    });
     return;
   }
-  if (!decoded.samples.length) return;
-  callLocalFramesIn++;
-  const ctx = ensureCallAudioCtx();
-  let samples = decoded.samples;
-  if (decoded.rate !== ctx.sampleRate) {
-    samples = resampleFloats(samples, decoded.rate, ctx.sampleRate);
-  }
-  ensureCallPlaybackNode();
-  const cfg = callAudioConfig();
-  ringWriteSamples(samples);
-  if (callRingCount > cfg.jitterMax) {
-    ringDropSamples(callRingCount - cfg.jitterMax);
-  }
-  if (!callJitterPrimed && callRingCount >= cfg.jitterTarget) {
-    callJitterPrimed = true;
-  }
-  updateCallDashboard();
+  decodeOpusB64(b64, decCfg);
 }
 
 function handleCallWS(event, data) {

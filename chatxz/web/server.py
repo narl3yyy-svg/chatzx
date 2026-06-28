@@ -476,6 +476,7 @@ class ChatWebServer:
         self.messaging = None
         self.voice_recorder = None
         self.call_audio_engine = None
+        self._android_call_audio = False
 
         self.websockets = set()
         self.message_history = self._load_history()
@@ -2492,13 +2493,62 @@ class ChatWebServer:
                 self._loop
             )
 
+    def _native_call_audio_ready(self):
+        if is_android():
+            return True
+        return call_audio_available()
+
+    def _start_android_call_audio(self):
+        from chatxz import android_call_audio
+
+        def send_audio(b64, codec):
+            try:
+                return bool(self.messaging.call_send_audio(b64, codec))
+            except Exception:
+                return False
+
+        def play_audio(seq, b64):
+            try:
+                from java import jclass
+                engine = jclass("com.chatxz.android.CallAudioEngine").getInstance()
+                engine.playOpus(int(seq), b64)
+            except Exception as e:
+                print(f"[call-audio] Android playback failed: {e}")
+
+        android_call_audio.register_handlers(send_audio, play_audio)
+        try:
+            from java import jclass
+            ok = bool(jclass("com.chatxz.android.CallAudioEngine").getInstance().start())
+        except Exception as e:
+            print(f"[call-audio] Android engine start failed: {e}")
+            ok = False
+        if ok:
+            self._android_call_audio = True
+            print("[call-audio] Android native Opus engine started")
+        else:
+            android_call_audio.clear_handlers()
+            print("[call-audio] Android native engine unavailable — browser Opus fallback")
+
+    def _stop_android_call_audio(self):
+        from chatxz import android_call_audio
+        try:
+            from java import jclass
+            jclass("com.chatxz.android.CallAudioEngine").getInstance().stop()
+        except Exception:
+            pass
+        android_call_audio.clear_handlers()
+        self._android_call_audio = False
+
     def _start_call_audio_engine(self):
-        if self.call_audio_engine:
+        if self.call_audio_engine or getattr(self, "_android_call_audio", False):
             return
         if not self.messaging:
             return
+        if is_android():
+            self._start_android_call_audio()
+            return
         if not call_audio_available():
-            print("[call-audio] Native unavailable — pip install pyaudio aiortc (or ./run.sh install)")
+            print("[call-audio] Native unavailable — install libopus + pyaudio (./run.sh install)")
             return
 
         def send_audio(b64, codec):
@@ -2511,15 +2561,26 @@ class ChatWebServer:
         if engine.start():
             self.call_audio_engine = engine
         else:
-            print("[call-audio] Native engine failed to start — browser will use mic fallback")
+            print("[call-audio] Native engine failed — browser Opus fallback")
 
     def _stop_call_audio_engine(self):
+        if getattr(self, "_android_call_audio", False):
+            self._stop_android_call_audio()
         if self.call_audio_engine:
             try:
                 self.call_audio_engine.stop()
             except Exception:
                 pass
             self.call_audio_engine = None
+
+    def _deliver_call_audio_frame(self, seq, data, codec):
+        codec = (codec or OPUS_CODEC).strip()
+        if getattr(self, "_android_call_audio", False):
+            from chatxz import android_call_audio
+            android_call_audio.play_incoming_opus(seq, data)
+            return
+        if self.call_audio_engine:
+            self.call_audio_engine.receive_frame(seq, data, codec)
 
     def _on_call_event(self, event, peer_hash, payload=None):
         payload = payload or {}
@@ -2529,16 +2590,19 @@ class ChatWebServer:
         elif event in ("ended", "rejected"):
             self._ws_call_audio_sent = 0
             self._stop_call_audio_engine()
-        elif event == "audio" and self.call_audio_engine:
+        elif event == "audio":
             seq = int(payload.get("seq") or 0)
             data = payload.get("data") or ""
             codec = (payload.get("codec") or OPUS_CODEC).strip()
-            self.call_audio_engine.receive_frame(seq, data, codec)
+            if "opus" in codec.lower():
+                self._deliver_call_audio_frame(seq, data, codec)
 
         if not (self.websockets and self._loop):
             return
         data = {"peer": peer_hash or "", **payload}
-        if self.call_audio_engine and event == "audio":
+        if event == "audio" and (
+            self.call_audio_engine or getattr(self, "_android_call_audio", False)
+        ):
             data["native_playback"] = True
         asyncio.run_coroutine_threadsafe(
             self._broadcast({"type": f"call_{event}", "data": data}),
@@ -2684,7 +2748,7 @@ class ChatWebServer:
             "serial_active": serial_active,
             "serial_configured": serial_configured,
             "serial_in_rns": serial_in_rns,
-            "native_call_audio": call_audio_available(),
+            "native_call_audio": self._native_call_audio_ready(),
             "call_codec": OPUS_CODEC,
         })
 
@@ -4805,6 +4869,13 @@ class ChatWebServer:
             st = self.messaging.call_status()
             if self.call_audio_engine:
                 st.update(self.call_audio_engine.stats())
+            if getattr(self, "_android_call_audio", False):
+                st.update({
+                    "engine": "native-opus",
+                    "native_android": True,
+                    "running": True,
+                    "codec": OPUS_CODEC,
+                })
             return web.json_response(st)
 
         if action == "invite":
@@ -5511,16 +5582,20 @@ class ChatWebServer:
                 audio_b64 = data.get("audio") or data.get("data") or ""
                 if not audio_b64:
                     return
+                if getattr(self, "_android_call_audio", False):
+                    return
                 engine = self.call_audio_engine
                 if engine and getattr(engine, "frames_sent", 0) > 0:
                     return
-                codec = (data.get("codec") or "audio/pcm;rate=8000").strip()
+                codec = (data.get("codec") or OPUS_CODEC).strip()
+                if "opus" not in codec.lower():
+                    return
                 call_id = (data.get("call_id") or "").strip() or None
                 sent = int(getattr(self, "_ws_call_audio_sent", 0) or 0) + 1
                 self._ws_call_audio_sent = sent
-                if sent <= 2 or sent % 40 == 0:
+                if sent <= 2 or sent % 50 == 0:
                     mode = "fallback" if engine else "browser"
-                    print(f"[call] Browser audio out #{sent} ({len(audio_b64)} b64, {codec}, {mode})")
+                    print(f"[call] Opus out #{sent} ({len(audio_b64)} b64, {mode})")
                 await asyncio.to_thread(
                     self.messaging.call_send_audio,
                     audio_b64,
