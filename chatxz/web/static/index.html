@@ -2891,14 +2891,14 @@ function fetchIdentity() {
       if (d.linked_peers && d.linked_peers.length) {
         syncLinkedPeers(d.linked_peers);
       } else if (d.connected) {
-        setLinkPeer(d.connected, true);
-      } else {
+        setLinkPeer(d.connected, true, viaForLinkedPeer(d.connected));
+      } else if (!viewingPeer) {
         linkedPeers.clear();
         linkPeer = null;
       }
       updatePeerHeader();
       const saved = localStorage.getItem(LS_VIEWING_PEER);
-      const savedIsContact = saved && allContacts.some(c => peersMatch(c.hash, saved));
+      const savedIsContact = saved && isSavedContactHash(saved);
       if (savedIsContact && !viewingPeer) openChat(saved, false);
       else if (saved && !savedIsContact) {
         try { localStorage.removeItem(LS_VIEWING_PEER); } catch (_) {}
@@ -3018,13 +3018,13 @@ function handleWSMessage(msg) {
         viewingPeer = repl;
       } else if (peerKey(viewingPeer) === key && !repl) {
         viewingPeer = null;
-        closeChat();
+        viewingVia = null;
+        closeChatView();
       }
       if (linkPeer && peerKey(linkPeer.split(':')[0]) === key) linkPeer = null;
       window._discoveredPeers = (window._discoveredPeers || []).filter(p =>
         peerKey(p.hash) !== key && peerKey(p.identity_hash) !== key
       );
-      allContacts = allContacts.filter(c => !contactHasHash(c, old));
     });
     if (data.replacement_peer) {
       registerPeerAliases(data.replacement_peer.hash, data.replacement_peer.identity_hash);
@@ -3051,12 +3051,14 @@ function handleWSMessage(msg) {
     if (msg.data?.hash) {
       const h = msg.data.hash;
       registerPeerAliases(h, ...(msg.data.aliases || []));
-      if (msg.data.rtt_ms != null) applyLinkRttToDiscovered(h, msg.data.rtt_ms, viewingVia);
+      const linkVia = msg.data.via || viaForLinkedPeer(h) || viewingVia;
+      if (msg.data.rtt_ms != null) applyLinkRttToDiscovered(h, msg.data.rtt_ms, linkVia);
       const passive = msg.data.passive || msg.data.user_disconnected;
-      if (!passive && msg.data.promote_active !== false) {
-        setLinkPeer(h, true);
+      if (msg.data.linked_peers) {
+        syncLinkedPeers(msg.data.linked_peers);
+      } else if (!passive && msg.data.promote_active !== false) {
+        setLinkPeer(h, true, linkVia);
       }
-      if (msg.data.linked_peers && !passive) syncLinkedPeers(msg.data.linked_peers);
       const now = Date.now();
       if (connectInFlight && !msg.data.background) {
         connectInFlight = false;
@@ -3090,7 +3092,8 @@ function handleWSMessage(msg) {
   } else if (msg.type === 'connect_ok') {
     if (connectInFlight) {
       connectInFlight = false;
-      setLinkPeer(msg.hash, true);
+      const okVia = msg.via || viewingVia || viaForLinkedPeer(msg.hash);
+      setLinkPeer(msg.hash, true, okVia);
       if (msg.linked_peers) syncLinkedPeers(msg.linked_peers);
       if (!viewingPeer || peersMatch(viewingPeer, msg.hash)) openChat(msg.hash, false);
       toast('Connected!');
@@ -3466,6 +3469,26 @@ function contactSavedHashes(c) {
     .map(peerKey).filter(Boolean);
 }
 
+function isSavedContactHash(hash) {
+  const key = peerKey(hash);
+  if (!key) return false;
+  return allContacts.some(c =>
+    contactSavedHashes(c).some(h => h === key || peersMatch(h, hash))
+  );
+}
+
+function viaForLinkedPeer(hash) {
+  const h = peerKey(hash);
+  if (!h) return null;
+  for (const lp of linkedPeers) {
+    const parts = String(lp).split(':');
+    if (parts.length >= 2 && peersMatch(parts[0], h)) {
+      return normalizeVia(parts[1]);
+    }
+  }
+  return null;
+}
+
 function isDiscoveredPeerSaved(peer) {
   const peerH = peerKey(peer.hash);
   const peerIdent = peerKey(peer.identity_hash);
@@ -3563,7 +3586,7 @@ function renderContacts(contacts) {
         const p = discoveredForContactTransport(c, via);
         const hash = (p?.hash || (via === 'serial' ? contactSerialHash(c) : contactLanHash(c)));
         openChat(hash, true, {
-          via: via === 'serial' ? 'serial' : undefined,
+          via: via === 'serial' ? 'serial' : 'lan',
           ip: via === 'lan' ? (p?.ip || c.ip) : undefined,
           port: p?.port || c.port,
         });
@@ -3791,11 +3814,27 @@ function actionClearPeerHistory() {
 
 function actionDelete() {
   if (ctxHash) {
+    const deletedKey = peerKey(ctxHash);
     fetch('/api/contacts/' + ctxHash.replace(/:/g, ''), { method: 'DELETE' })
-      .then(() => {
+      .then(r => r.json())
+      .then(d => {
+        if (d.status !== 'ok') {
+          toast('Delete failed: ' + (d.error || ''));
+          return;
+        }
+        if (viewingPeer && peersMatch(viewingPeer, ctxHash)) {
+          closeChatView();
+        }
+        try {
+          const saved = localStorage.getItem(LS_VIEWING_PEER);
+          if (saved && peerKey(saved) === deletedKey) {
+            localStorage.removeItem(LS_VIEWING_PEER);
+          }
+        } catch (_) {}
         toast('Contact deleted');
         fetchIdentity();
-      });
+      })
+      .catch(() => toast('Delete failed'));
   }
   toggleActionPanel();
 }
@@ -3805,13 +3844,16 @@ function clearPeerHistory(peerHash) {
   if (!peer) return;
   const label = contactNameFor(peer) || truncateHash(peer);
   if (!confirm('Delete all messages with ' + label + '?')) return;
+  const aliases = new Set([peerKey(peer)]);
+  const contact = allContacts.find(c => contactSavedHashes(c).some(h => peersMatch(h, peer)));
+  if (contact) contactSavedHashes(contact).forEach(h => aliases.add(h));
   fetch('/api/history/clear', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({peer})
+    body: JSON.stringify({peer, aliases: [...aliases]})
   }).then(r => r.json()).then(d => {
     if (d.status === 'ok') {
-      if (viewingPeer && peersMatch(viewingPeer, peer)) {
+      if (viewingPeer && (peersMatch(viewingPeer, peer) || [...aliases].some(h => peersMatch(h, viewingPeer)))) {
         document.getElementById('messages').innerHTML = '';
       }
       toast('Chat history cleared');
@@ -5065,8 +5107,7 @@ function openChat(hash, tryConnect, meta) {
   if (hash === HUB_GROUP_PEER) viewingPeer = HUB_GROUP_PEER;
   viewingVia = meta?.via ? normalizeVia(meta.via) : null;
   clearUnread(viewingPeer);
-  const persistView = viewingPeer === HUB_GROUP_PEER
-    || allContacts.some(c => peersMatch(c.hash, viewingPeer));
+  const persistView = viewingPeer === HUB_GROUP_PEER || isSavedContactHash(viewingPeer);
   try {
     if (persistView) localStorage.setItem(LS_VIEWING_PEER, viewingPeer);
     else localStorage.removeItem(LS_VIEWING_PEER);
@@ -5105,12 +5146,13 @@ function disconnect() {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({peer, via}),
   }).then(r => r.json()).then(d => {
-    if (peer) setLinkPeer(peer, false, via);
-    if (peer) applyLinkRttToDiscovered(peer, null, via);
     if (d.linked_peers) syncLinkedPeers(d.linked_peers);
-    else updatePeerHeader();
+    else {
+      if (peer) setLinkPeer(peer, false, via);
+      if (peer) applyLinkRttToDiscovered(peer, null, via);
+      updatePeerHeader();
+    }
     if (!linkedPeers.size) setLinkStatus('disconnected', 'Inactive');
-    fetchIdentity();
   }).catch(() => toast('Disconnect failed'));
 }
 
@@ -5256,11 +5298,12 @@ function isPeerLinked(hash, via) {
   const h = peerKey(hash);
   if (!h) return false;
   const explicit = via ? normalizeVia(via) : (viewingVia ? normalizeVia(viewingVia) : null);
+  const hashMatches = (base) => peersMatch(base, h);
   if (explicit) {
     if (linkedPeers.has(linkKey(h, explicit))) return true;
     for (const lp of linkedPeers) {
       const parts = String(lp).split(':');
-      if (parts.length >= 2 && normalizeVia(parts[1]) === explicit && peersMatch(parts[0], h)) {
+      if (parts.length >= 2 && normalizeVia(parts[1]) === explicit && hashMatches(parts[0])) {
         return true;
       }
     }
@@ -5269,7 +5312,13 @@ function isPeerLinked(hash, via) {
   if (linkedPeers.has(h)) return true;
   for (const lp of linkedPeers) {
     const base = String(lp).split(':')[0];
-    if (peersMatch(base, h)) return true;
+    if (hashMatches(base)) return true;
+  }
+  for (const alias of peerAliasGroups.get(h) || []) {
+    for (const lp of linkedPeers) {
+      const base = String(lp).split(':')[0];
+      if (peersMatch(base, alias)) return true;
+    }
   }
   return false;
 }

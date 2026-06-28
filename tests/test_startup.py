@@ -81,6 +81,8 @@ class StartupTests(unittest.TestCase):
         serial = next(i for i in updated if i["id"] == "s1")
         self.assertFalse(serial["enabled"])
         self.assertTrue(serial.get("user_disabled"))
+        self.assertFalse(ri.configured_serial_enabled(updated))
+        self.assertFalse(ri.serial_runtime_active(serial))
 
 
 if __name__ == "__main__":

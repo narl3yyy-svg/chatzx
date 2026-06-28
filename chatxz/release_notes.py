@@ -3,6 +3,13 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.5.10": [
+        "Disconnect no longer removes saved contacts when peer hashes are superseded.",
+        "Connected state shows correctly for background LAN links; LAN contact rows pass via=lan.",
+        "Clear chat history matches all LAN/serial aliases for a saved contact.",
+        "Deleting a contact clears session state so restart does not auto-reconnect.",
+        "Serial USB stays off when disabled in settings (no hot-add or discovery).",
+    ],
     "0.5.9": [
         "Serial USB enables without restart — identity and RNS hot-add on first connect.",
         "USB unplug/replug recovers automatically while the server stays running.",

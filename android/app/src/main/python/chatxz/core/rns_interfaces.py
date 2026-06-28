@@ -218,12 +218,14 @@ def configured_tcp_lan_listen(interfaces=None, config_dir=None):
 
 
 def configured_serial_enabled(interfaces=None, config_dir=None):
-    """True when a serial port is configured and accessible."""
+    """True when serial is enabled in settings (not user-disabled)."""
     items = normalize_interface_list(interfaces or load_settings_interfaces(config_dir))
     for iface in items:
         if iface.get("preset") != "serial" and iface.get("type") != "SerialInterface":
             continue
-        if serial_runtime_active(iface):
+        if iface.get("user_disabled") or iface.get("enabled") is False:
+            continue
+        if (iface.get("port") or "").strip():
             return True
     return False
 
@@ -296,8 +298,10 @@ def serial_port_available(port):
 
 
 def serial_runtime_active(iface):
-    """True when a serial port is configured and this process can open it."""
+    """True when serial is enabled in settings and this process can open the port."""
     if iface.get("preset") != "serial" and iface.get("type") != "SerialInterface":
+        return False
+    if iface.get("user_disabled") or iface.get("enabled") is False:
         return False
     port = (iface.get("port") or "").strip()
     if not port:
@@ -1218,6 +1222,8 @@ def ensure_runtime_tcp_hub(settings=None, config_dir=None):
 
 
 def ensure_runtime_serial(settings_interfaces=None):
+    if not configured_serial_enabled(settings_interfaces):
+        return None
     port, speed = configured_serial_port(settings_interfaces)
     if not port:
         return None

@@ -1127,16 +1127,17 @@ class ChatWebServer:
             return filtered[-limit:]
         if not peer:
             return self.message_history[-limit:]
+        aliases = self._history_peer_aliases(peer)
         filtered = []
         for m in self.message_history:
             if self._is_session_system_message(m):
                 continue
             cp = self._peer_dest_hash(m.get("chat_peer") or m.get("peer"))
-            if cp and self._peers_equivalent(cp, peer):
+            if cp and self._history_matches_peer(cp, aliases):
                 filtered.append(self._enrich_message(m))
                 continue
             sender = self._peer_dest_hash(m.get("sender"))
-            if sender and self._peers_equivalent(sender, peer) and m.get("sender") != "system":
+            if sender and self._history_matches_peer(sender, aliases) and m.get("sender") != "system":
                 filtered.append(self._enrich_message(m))
                 continue
             if not m.get("outgoing") and m.get("sender") != "system":
@@ -1821,10 +1822,8 @@ class ChatWebServer:
         )
 
     def _is_saved_contact(self, peer_hash):
-        for contact in list_contacts(self.config_dir):
-            if self._peers_equivalent(contact.get("hash"), peer_hash):
-                return True
-        return False
+        from chatxz.core.contacts import find_contact_by_hash
+        return find_contact_by_hash(self.config_dir, peer_hash) is not None
 
     def _clear_queue_for_peer(self, peer_hash):
         if not self.messaging:
@@ -2228,8 +2227,9 @@ class ChatWebServer:
                     identity_hash=(new_peer or {}).get("identity_hash"),
                 )
                 self._schedule_contacts_broadcast()
+            elif contact:
+                self._schedule_contacts_broadcast()
             else:
-                delete_saved_contact(self.config_dir, old)
                 self._clear_history_for_peer(old)
                 self._clear_queue_for_peer(old)
             if self.active_peer and self._peers_equivalent(self.active_peer, old):
@@ -2446,6 +2446,12 @@ class ChatWebServer:
         path_switch = bool(getattr(self.messaging, "_last_handoff", False))
         label = "passive" if passive else ("background" if background else "active")
         print(f"[connect] Link with {resolved[:16]}... ({label})")
+        link_via = None
+        if self.messaging and link:
+            try:
+                link_via = self.messaging._transport_from_link(link)
+            except Exception:
+                link_via = None
         if self.websockets and self._loop:
             asyncio.run_coroutine_threadsafe(
                 self._broadcast({
@@ -2453,6 +2459,7 @@ class ChatWebServer:
                     "data": {
                         "hash": resolved,
                         "aliases": self._peer_alias_list(resolved),
+                        "via": link_via,
                         "path_switch": path_switch,
                         "background": background,
                         "promote_active": promote_active,
@@ -2635,6 +2642,17 @@ class ChatWebServer:
         try:
             peer_hash = request.match_info["hash"].replace(":", "")
             if delete_saved_contact(self.config_dir, peer_hash):
+                resolved = self._peer_dest_hash(peer_hash)
+                if self.messaging and resolved:
+                    self.messaging.disconnect_peer(resolved, user_initiated=True)
+                    self.messaging.mark_user_disconnected(resolved)
+                    self.messaging.clear_session_peer()
+                if self.active_peer and self._peers_equivalent(self.active_peer, peer_hash):
+                    self.active_peer = None
+                if self._ui_state.get("viewing_peer") and self._peers_equivalent(
+                    self._ui_state.get("viewing_peer"), peer_hash
+                ):
+                    self._ui_state["viewing_peer"] = None
                 self._schedule_contacts_broadcast()
                 return web.json_response({"status": "ok"})
             return web.json_response({"error": "not found"}, status=404)
@@ -3745,7 +3763,9 @@ class ChatWebServer:
         elif self.messaging:
             self.messaging.disconnect_all_peers(clear_session=True)
         if self.active_peer and peer and self._peers_equivalent(self.active_peer, peer):
-            self.active_peer = None
+            remaining = self.messaging.linked_peers() if self.messaging else []
+            if not remaining:
+                self.active_peer = None
         await self._broadcast({
             "type": "link_closed",
             "data": {
@@ -4887,28 +4907,71 @@ class ChatWebServer:
         await self._broadcast({"type": "queue_cleared", "data": {"count": cleared}})
         return web.json_response({"status": "ok", "cleared": cleared})
 
-    def _clear_history_for_peer(self, peer_hash):
+    def _history_peer_aliases(self, peer_hash):
         peer = self._peer_dest_hash(peer_hash)
         if not peer:
+            return set()
+        aliases = {peer}
+        if self.messaging:
+            for alias in self.messaging.peer_aliases_for(peer):
+                clean = self._peer_dest_hash(alias)
+                if clean:
+                    aliases.add(clean)
+        from chatxz.core.contacts import find_contact_by_hash, _contact_hashes
+        contact = find_contact_by_hash(self.config_dir, peer)
+        if contact:
+            aliases.update(_contact_hashes(contact))
+        return aliases
+
+    def _history_matches_peer(self, entry_peer, target_aliases):
+        if not entry_peer or not target_aliases:
+            return False
+        clean = self._peer_dest_hash(entry_peer)
+        if not clean:
+            return False
+        if clean in target_aliases:
+            return True
+        return any(self._peers_equivalent(clean, alias) for alias in target_aliases)
+
+    def _clear_history_for_peer(self, peer_hash, extra_aliases=None):
+        aliases = self._history_peer_aliases(peer_hash)
+        if extra_aliases:
+            for alias in extra_aliases:
+                clean = self._peer_dest_hash(alias)
+                if clean:
+                    aliases.add(clean)
+        if not aliases:
             return 0
         before = len(self.message_history)
         self.message_history = [
             m for m in self.message_history
-            if not self._peers_equivalent(m.get("chat_peer") or m.get("peer"), peer)
+            if not self._history_matches_peer(m.get("chat_peer") or m.get("peer"), aliases)
         ]
         self._save_history()
         return before - len(self.message_history)
 
     async def handle_history_clear(self, request):
         peer = request.query.get("peer", "").strip()
+        extra_aliases = None
         if not peer and request.can_read_body:
             try:
                 data = await request.json()
                 peer = (data.get("peer") or "").strip()
+                raw_aliases = data.get("aliases")
+                if isinstance(raw_aliases, list):
+                    extra_aliases = raw_aliases
+            except Exception:
+                pass
+        elif request.can_read_body:
+            try:
+                data = await request.json()
+                raw_aliases = data.get("aliases")
+                if isinstance(raw_aliases, list):
+                    extra_aliases = raw_aliases
             except Exception:
                 pass
         if peer:
-            removed = self._clear_history_for_peer(peer)
+            removed = self._clear_history_for_peer(peer, extra_aliases=extra_aliases)
             peer_clean = self._peer_dest_hash(peer)
             await self._broadcast({
                 "type": "peer_history_cleared",
