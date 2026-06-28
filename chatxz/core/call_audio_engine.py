@@ -1,11 +1,9 @@
-"""Duplex voice call audio: libopus + PyAudio callbacks + adaptive jitter buffer."""
+"""Desktop voice call audio: libopus encode/decode + PyAudio I/O + jitter buffer."""
 
 from __future__ import annotations
 
 import base64
 import struct
-import threading
-import time
 from typing import Callable, Optional
 
 from chatxz.core.opus_native import (
@@ -19,11 +17,6 @@ from chatxz.core.opus_native import (
 )
 from chatxz.core.voice_jitter_buffer import SILENCE_PCM, VoiceJitterBuffer
 
-# Backward-compatible aliases
-CallJitterBuffer = VoiceJitterBuffer
-OPUS_PREFETCH_FRAMES = 4
-OPUS_MAX_BUFFER_FRAMES = 12
-
 
 def call_audio_available() -> bool:
     if not opus_available():
@@ -36,7 +29,7 @@ def call_audio_available() -> bool:
 
 
 class VoiceCallAudio:
-    """Capture → Opus encode → RNS send; receive → jitter buffer → playback."""
+    """Capture → Opus encode → send; receive → jitter buffer → playback."""
 
     def __init__(self, send_fn: Callable[[str, str], bool]):
         self._send_fn = send_fn
@@ -234,18 +227,4 @@ class VoiceCallAudio:
         }
 
 
-# Backward-compatible name used by server
 CallAudioEngine = VoiceCallAudio
-
-
-# Legacy shim — tests referenced OpusCallCodec
-class OpusCallCodec:
-    def __init__(self):
-        self._enc = OpusEncoder()
-        self._dec = OpusDecoder()
-
-    def encode_pcm(self, pcm_s16_mono: bytes):
-        return self._enc.encode(pcm_s16_mono)
-
-    def decode_opus(self, opus_bytes: bytes, _timestamp: int = 0):
-        return self._dec.decode(opus_bytes)

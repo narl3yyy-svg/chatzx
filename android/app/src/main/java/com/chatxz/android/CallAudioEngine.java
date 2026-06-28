@@ -193,7 +193,7 @@ public final class CallAudioEngine {
     private void deliverToPython(String b64) {
         try {
             Python py = Python.getInstance();
-            PyObject mod = py.getModule("chatxz.android_call_audio");
+            PyObject mod = py.getModule("chatxz.core.android_call_audio");
             mod.callAttr("on_encoded_opus", b64);
         } catch (Exception e) {
             Log.w(TAG, "python deliver failed", e);

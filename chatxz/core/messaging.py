@@ -49,6 +49,7 @@ from chatxz.core.lan_rns import (
 )
 from chatxz.utils.platform import is_android, lan_ip, physical_lan_reachable
 from chatxz.core.lan_transfer import register_offer, remove_offer
+from chatxz.core.opus_native import OPUS_CODEC
 from chatxz.core.voice_call import (
     CALL_ACCEPT,
     CALL_AUDIO,
@@ -5624,7 +5625,7 @@ class MessagingBackend:
         print(f"[call] Ended ({cid})")
         return True
 
-    def call_send_audio(self, audio_b64, codec="audio/webm", call_id=None):
+    def call_send_audio(self, audio_b64, codec=OPUS_CODEC, call_id=None):
         if self.voice_call.state != STATE_ACTIVE:
             return False
         if not audio_b64:

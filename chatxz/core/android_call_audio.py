@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import base64
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 _send_fn: Optional[Callable[[str, str], bool]] = None
 _play_fn: Optional[Callable[[int, str], None]] = None
@@ -25,7 +24,7 @@ def clear_handlers() -> None:
 
 
 def on_encoded_opus(b64: str) -> bool:
-    """Called from Java when AudioRecord+MediaCodec produces an Opus packet."""
+    """Called from Java when MediaCodec produces an Opus packet."""
     if not b64 or not _send_fn:
         return False
     from chatxz.core.opus_native import OPUS_CODEC

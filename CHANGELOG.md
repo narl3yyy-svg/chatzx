@@ -2,6 +2,13 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.8.1] — 2026-06-28
+
+### Changed
+- **Voice code cleanup** — removed all μ-law/PCM call paths, dead browser helpers, and legacy aiortc shims.
+- **Consolidated modules** — `android_call_audio` moved to `core/`; MTU helpers renamed for Opus in `voice_call.py`.
+- **Documentation** — added `docs/VOICE.md` with architecture, platform setup, and troubleshooting.
+
 ## [0.8.0] — 2026-06-28
 
 ### Changed

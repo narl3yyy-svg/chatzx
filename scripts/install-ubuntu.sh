@@ -15,9 +15,9 @@ sudo apt update
 sudo apt install -y python3 python3-pip python3-setuptools python3-dev build-essential
 
 # Optional: voice support
-read -p "Install voice support (pyaudio + aiortc Opus)? [y/N]: " voice_opt
+read -p "Install voice support (libopus + pyaudio)? [y/N]: " voice_opt
 if [[ "$voice_opt" =~ ^[Yy]$ ]]; then
-    sudo apt install -y portaudio19-dev python3-pyaudio ffmpeg libavformat-dev libavdevice-dev
+    sudo apt install -y libopus0 portaudio19-dev python3-pyaudio
 fi
 
 # Optional: image display in terminal

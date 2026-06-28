@@ -1,13 +1,14 @@
-"""Duplex voice call signaling and audio frames over RNS links."""
+"""Voice call signaling and Opus audio framing over RNS links."""
 
 import base64
 import json
 import time
 import uuid
 
-# μ-law bytes per frame that fit RNS link MTU (1064 B hardware → ~1016 B app budget).
-CALL_AUDIO_MAX_MULAW_LAN = 480
-CALL_AUDIO_MAX_MULAW_SERIAL = 160
+from chatxz.core.opus_native import OPUS_CODEC
+
+# Typical Opus voip packets are 40–120 B — well under RNS link MTU (~1016 B app budget).
+CALL_AUDIO_MAX_OPUS_BYTES = 400
 
 CALL_INVITE = "__call_invite"
 CALL_ACCEPT = "__call_accept"
@@ -34,16 +35,16 @@ def new_call_id():
 
 
 def estimate_call_audio_packet_size(
-    mulaw_bytes,
+    raw_bytes: int,
     *,
-    call_id="00000000-000",
-    seq=9999,
-    codec="audio/pcmulaw;rate=16000",
-    msg_id="abcd1234efgh",
-    link_mtu=1064,
+    call_id: str = "00000000-000",
+    seq: int = 9999,
+    codec: str = OPUS_CODEC,
+    msg_id: str = "abcd1234efgh",
+    link_mtu: int = 1064,
 ):
-    """Return encoded ChatMessage size for a μ-law audio payload."""
-    data_b64 = base64.b64encode(bytes([0x7F]) * mulaw_bytes).decode("ascii")
+    """Return encoded CALL_AUDIO JSON size and MTU budget for a payload."""
+    data_b64 = base64.b64encode(bytes([0x7F]) * raw_bytes).decode("ascii")
     payload = {
         "call_id": call_id,
         "seq": seq,
@@ -61,8 +62,8 @@ def estimate_call_audio_packet_size(
     return packet_len, budget
 
 
-def max_mulaw_bytes_for_mtu(link_mtu=1064, codec="audio/pcmulaw;rate=16000"):
-    """Largest μ-law payload that fits the call-audio JSON envelope."""
+def max_audio_bytes_for_mtu(link_mtu: int = 1064, codec: str = OPUS_CODEC) -> int:
+    """Largest raw audio payload that fits the CALL_AUDIO JSON envelope."""
     budget = max(400, int(link_mtu or 500) - 48)
     lo, hi = 1, 2000
     while lo < hi:
@@ -75,12 +76,7 @@ def max_mulaw_bytes_for_mtu(link_mtu=1064, codec="audio/pcmulaw;rate=16000"):
     return lo
 
 
-def _raw_audio_chunk_fits(raw_len, codec, call_id, link_mtu):
-    if "mulaw" in (codec or ""):
-        size, budget = estimate_call_audio_packet_size(
-            raw_len, call_id=call_id, codec=codec, link_mtu=link_mtu,
-        )
-        return size <= budget
+def _raw_audio_chunk_fits(raw_len: int, codec: str, call_id: str, link_mtu: int) -> bool:
     piece = bytes([0x7F]) * raw_len
     b64 = base64.b64encode(piece).decode("ascii")
     payload = {
@@ -100,14 +96,14 @@ def _raw_audio_chunk_fits(raw_len, codec, call_id, link_mtu):
 
 
 def split_call_audio_b64(
-    audio_b64,
-    codec="audio/pcmulaw;rate=16000",
+    audio_b64: str,
+    codec: str = OPUS_CODEC,
     *,
-    call_id="00000000-000",
-    seq=1,
-    link_mtu=1064,
+    call_id: str = "00000000-000",
+    seq: int = 1,
+    link_mtu: int = 1064,
 ):
-    """Split a base64 audio blob into MTU-safe chunks (handles stale large client frames)."""
+    """Split a base64 Opus blob into MTU-safe chunks if needed."""
     if not audio_b64:
         return []
     try:
@@ -116,28 +112,23 @@ def split_call_audio_b64(
         return [audio_b64]
     if not raw:
         return []
-    codec = codec or "audio/pcmulaw;rate=16000"
+    codec = codec or OPUS_CODEC
     if _raw_audio_chunk_fits(len(raw), codec, call_id, link_mtu):
         return [audio_b64]
-    align = 2 if codec.startswith("audio/pcm") and "mulaw" not in codec else 1
     chunks = []
     pos = 0
     while pos < len(raw):
         remaining = len(raw) - pos
-        lo, hi = align, remaining
+        lo, hi = 1, remaining
         best = 0
         while lo <= hi:
-            mid = ((lo + hi) // 2) // align * align or align
-            if mid > remaining:
-                mid = (remaining // align) * align
-            if mid < align:
-                break
+            mid = (lo + hi) // 2
             if _raw_audio_chunk_fits(mid, codec, call_id, link_mtu):
                 best = mid
-                lo = mid + align
+                lo = mid + 1
             else:
-                hi = mid - align
-        if best < align:
+                hi = mid - 1
+        if best < 1:
             break
         chunks.append(base64.b64encode(raw[pos:pos + best]).decode("ascii"))
         pos += best
@@ -155,7 +146,7 @@ def parse_call_payload(content):
 
 
 class VoiceCallSession:
-    """Tracks one duplex call per messaging backend."""
+    """Tracks one duplex call per messaging backend (signaling only)."""
 
     STALE_OUTGOING_SEC = 45.0
     STALE_INCOMING_SEC = 90.0

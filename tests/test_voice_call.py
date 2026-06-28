@@ -1,10 +1,11 @@
 import json
 import time
 
+from chatxz.core.opus_native import OPUS_CODEC
 from chatxz.core.voice_call import (
     CALL_ACCEPT,
     CALL_AUDIO,
-    CALL_AUDIO_MAX_MULAW_LAN,
+    CALL_AUDIO_MAX_OPUS_BYTES,
     CALL_INVITE,
     CALL_TYPES,
     STATE_ACTIVE,
@@ -13,7 +14,7 @@ from chatxz.core.voice_call import (
     STATE_OUTGOING,
     VoiceCallSession,
     estimate_call_audio_packet_size,
-    max_mulaw_bytes_for_mtu,
+    max_audio_bytes_for_mtu,
     new_call_id,
     parse_call_payload,
     split_call_audio_b64,
@@ -75,10 +76,10 @@ def test_voice_call_session_incoming_activate_mismatch():
     assert vc.state == STATE_ACTIVE
 
 
-def test_split_call_audio_oversized_mulaw():
+def test_split_call_audio_oversized_opus():
     big = split_call_audio_b64(
-        __import__("base64").b64encode(bytes([0x7F]) * 640).decode("ascii"),
-        "audio/pcmulaw;rate=16000",
+        __import__("base64").b64encode(bytes([0x7F]) * 900).decode("ascii"),
+        OPUS_CODEC,
         call_id="1b0f674d-6d4",
         link_mtu=1064,
     )
@@ -89,12 +90,12 @@ def test_split_call_audio_oversized_mulaw():
         assert size <= budget
 
 
-def test_call_audio_mulaw_fits_rns_mtu():
-    max_bytes = max_mulaw_bytes_for_mtu(1064)
-    assert max_bytes >= CALL_AUDIO_MAX_MULAW_LAN
-    size, budget = estimate_call_audio_packet_size(CALL_AUDIO_MAX_MULAW_LAN)
+def test_call_audio_opus_fits_rns_mtu():
+    max_bytes = max_audio_bytes_for_mtu(1064)
+    assert max_bytes >= CALL_AUDIO_MAX_OPUS_BYTES
+    size, budget = estimate_call_audio_packet_size(CALL_AUDIO_MAX_OPUS_BYTES)
     assert size <= budget
-    over, _ = estimate_call_audio_packet_size(640)
+    over, _ = estimate_call_audio_packet_size(900)
     assert over > budget
 
 

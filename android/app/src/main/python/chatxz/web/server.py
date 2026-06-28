@@ -2499,7 +2499,7 @@ class ChatWebServer:
         return call_audio_available()
 
     def _start_android_call_audio(self):
-        from chatxz import android_call_audio
+        from chatxz.core import android_call_audio
 
         def send_audio(b64, codec):
             try:
@@ -2530,7 +2530,7 @@ class ChatWebServer:
             print("[call-audio] Android native engine unavailable — browser Opus fallback")
 
     def _stop_android_call_audio(self):
-        from chatxz import android_call_audio
+        from chatxz.core import android_call_audio
         try:
             from java import jclass
             jclass("com.chatxz.android.CallAudioEngine").getInstance().stop()
@@ -2576,7 +2576,7 @@ class ChatWebServer:
     def _deliver_call_audio_frame(self, seq, data, codec):
         codec = (codec or OPUS_CODEC).strip()
         if getattr(self, "_android_call_audio", False):
-            from chatxz import android_call_audio
+            from chatxz.core import android_call_audio
             android_call_audio.play_incoming_opus(seq, data)
             return
         if self.call_audio_engine:

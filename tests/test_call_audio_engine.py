@@ -1,11 +1,6 @@
-from chatxz.core.call_audio_engine import (
-    CallJitterBuffer,
-    OpusCallCodec,
-    SILENCE_PCM,
-    VoiceJitterBuffer,
-    call_audio_available,
-)
-from chatxz.core.opus_native import opus_available
+from chatxz.core.call_audio_engine import VoiceCallAudio, call_audio_available
+from chatxz.core.opus_native import OpusDecoder, OpusEncoder, opus_available
+from chatxz.core.voice_jitter_buffer import SILENCE_PCM, VoiceJitterBuffer
 
 
 def test_call_jitter_buffer_plc():
@@ -35,11 +30,16 @@ def test_call_audio_available_reports_bool():
     assert isinstance(call_audio_available(), bool)
 
 
-def test_opus_codec_decodes_silence_frame():
+def test_opus_roundtrip_via_engine_codecs():
     if not opus_available():
         return
-    codec = OpusCallCodec()
-    pkt = codec.encode_pcm(SILENCE_PCM)
+    enc = OpusEncoder()
+    dec = OpusDecoder()
+    pkt = enc.encode(SILENCE_PCM)
     assert pkt and len(pkt) >= 1
-    pcm = codec.decode_opus(pkt)
+    pcm = dec.decode(pkt)
     assert pcm and len(pcm) == 960 * 2
+
+
+def test_voice_call_audio_class_exists():
+    assert VoiceCallAudio.available() == call_audio_available()

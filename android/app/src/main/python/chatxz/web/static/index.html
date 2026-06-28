@@ -5947,13 +5947,11 @@ let callOpusEncoder = null;
 let callOpusDecoder = null;
 let callOpusDecodeTs = 0;
 let callOpusEncodeTs = 0;
-let callOpusPending = null;
 let callBrowserOpusOk = null;
 let callOpusRecvPrimed = false;
 let callNativeWatchId = null;
-let callSendPaceTimer = null;
-let callPendingSend = null;
 let ringtoneTimer = null;
+const CALL_OPUS_CODEC = 'audio/opus;rate=48000;frame=20';
 let sharedMicStream = null;
 let sharedMicRefs = 0;
 let sharedMicForCall = false;
@@ -5974,18 +5972,9 @@ function clearCallNativeWatchdog() {
   }
 }
 
-function clearCallSendPacer() {
-  if (callSendPaceTimer) {
-    clearInterval(callSendPaceTimer);
-    callSendPaceTimer = null;
-  }
-  callPendingSend = null;
-}
-
 function resetCallUi() {
   stopCallRingtone();
   clearCallNativeWatchdog();
-  clearCallSendPacer();
   callState = 'idle';
   callPeer = null;
   callId = null;
@@ -6227,7 +6216,7 @@ function startCallStatsPolling() {
 function showActiveCall(peer, label) {
   callState = 'active';
   callPeer = peerKey(peer) || peer;
-  if (callAudioConfig().recvOpus) void primeCallOpusReceive();
+  void primeCallOpusReceive();
   document.getElementById('call-incoming-overlay')?.classList.remove('open');
   if (!callTimerId) {
     callStartedAt = Date.now();
@@ -6283,7 +6272,7 @@ function callAudioConfig() {
   const opus = {
     rate: 48000, frameSamples: 960, frameMs: 20,
     jitterTarget: 2880, jitterMax: 7200, jitterMin: 1920,
-    useOpus: true, useMulaw: false, recvOpus: true,
+    useOpus: true,
   };
   if (useNativeCallAudio()) return { ...opus, native: true };
   return { ...opus, native: false };
@@ -6349,7 +6338,7 @@ async function ensureCallOpusEncoder(cfg) {
         let bin = '';
         const bytes = new Uint8Array(chunk.data);
         for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-        sendCallAudioFrame(btoa(bin), `audio/opus;rate=${cfg.rate};frame=20`);
+        sendCallAudioFrame(btoa(bin), CALL_OPUS_CODEC);
       },
       error: () => { callBrowserOpusOk = false; },
     });
@@ -6420,60 +6409,6 @@ function ringReadTo(out, count) {
   for (let i = n; i < count; i++) out[i] = 0;
 }
 
-function linearToMulaw(sample) {
-  const CLIP = 32635;
-  const BIAS = 0x84;
-  let sign = (sample >> 8) & 0x80;
-  if (sign) sample = -sample;
-  if (sample > CLIP) sample = CLIP;
-  sample += BIAS;
-  let exp = 7;
-  for (let mask = 0x4000; (sample & mask) === 0 && exp > 0; mask >>= 1) exp--;
-  const mantissa = (sample >> (exp + 3)) & 0x0f;
-  return ~(sign | (exp << 4) | mantissa) & 0xff;
-}
-
-function mulawToLinear(ulaw) {
-  ulaw = (~ulaw) & 0xff;
-  const sign = ulaw & 0x80;
-  const exp = (ulaw >> 4) & 0x07;
-  const mantissa = ulaw & 0x0f;
-  let sample = ((mantissa << 3) + 0x84) << exp;
-  sample -= 0x84;
-  return sign ? -sample : sample;
-}
-
-function pcmToMulawBytes(pcm) {
-  const bytes = new Uint8Array(pcm.length);
-  for (let i = 0; i < pcm.length; i++) bytes[i] = linearToMulaw(pcm[i]);
-  return bytes;
-}
-
-function pcmToMulawB64(pcm) {
-  const bytes = pcmToMulawBytes(pcm);
-  let bin = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-  }
-  return btoa(bin);
-}
-
-function mulawB64ToFloats(b64) {
-  const bin = atob(b64);
-  const floats = new Float32Array(bin.length);
-  for (let i = 0; i < bin.length; i++) {
-    floats[i] = mulawToLinear(bin.charCodeAt(i)) / 32768;
-  }
-  return floats;
-}
-
-function encodeCallFrame(pcm, cfg) {
-  if (cfg.useMulaw) {
-    return { b64: pcmToMulawB64(pcm), codec: `audio/pcmulaw;rate=${cfg.rate}` };
-  }
-  return { b64: pcmToB64(pcm), codec: callPcmCodec(cfg.rate) };
-}
-
 function encodeCallFrameOpus(floats, cfg) {
   if (!callOpusEncoder || callOpusEncoder.state !== 'configured') return;
   const data = new AudioData({
@@ -6514,72 +6449,10 @@ function resampleLinearToPcm(input, inputRate, outputRate) {
   return floatToPcm(floats);
 }
 
-function pcmToB64(pcm) {
-  const bytes = new Uint8Array(pcm.length * 2);
-  const view = new DataView(bytes.buffer);
-  for (let i = 0; i < pcm.length; i++) view.setInt16(i * 2, pcm[i], true);
-  let bin = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-  }
-  return btoa(bin);
-}
-
-function b64ToPcm(b64) {
-  const bin = atob(b64);
-  const samples = Math.floor(bin.length / 2);
-  const pcm = new Int16Array(samples);
-  for (let i = 0; i < samples; i++) {
-    const lo = bin.charCodeAt(i * 2);
-    const hi = bin.charCodeAt(i * 2 + 1);
-    let v = (hi << 8) | lo;
-    if (v >= 0x8000) v -= 0x10000;
-    pcm[i] = v;
-  }
-  return pcm;
-}
-
-function callPcmCodec(rate) {
-  return `audio/pcm;rate=${rate || callAudioConfig().rate}`;
-}
-
 function parseCallAudioRate(codec) {
   const raw = codec || '';
   const m = raw.match(/rate=(\d+)/i);
   return m ? parseInt(m[1], 10) : callAudioConfig().rate;
-}
-
-function resampleFloats(input, inputRate, outputRate) {
-  if (!input || !input.length || inputRate === outputRate) return input;
-  const outLen = Math.max(1, Math.round(input.length * outputRate / inputRate));
-  const out = new Float32Array(outLen);
-  for (let i = 0; i < outLen; i++) {
-    const src = i * inputRate / outputRate;
-    const idx = Math.floor(src);
-    const frac = src - idx;
-    const s0 = input[Math.min(idx, input.length - 1)] || 0;
-    const s1 = input[Math.min(idx + 1, input.length - 1)] || s0;
-    out[i] = s0 + (s1 - s0) * frac;
-  }
-  return out;
-}
-
-function decodeCallAudio(b64, codec) {
-  const rate = parseCallAudioRate(codec);
-  const raw = codec || '';
-  if (raw.includes('opus')) {
-    return { opus: true, b64, rate };
-  }
-  if (raw.includes('pcmulaw')) {
-    return { samples: mulawB64ToFloats(b64), rate };
-  }
-  if (raw.startsWith('audio/pcm')) {
-    const pcm = b64ToPcm(b64);
-    const floats = new Float32Array(pcm.length);
-    for (let i = 0; i < pcm.length; i++) floats[i] = pcm[i] / 32768;
-    return { samples: floats, rate };
-  }
-  return null;
 }
 
 function sharedMicActive() {
@@ -6652,7 +6525,7 @@ function sendCallAudioFrame(b64, codec) {
     via: callVia || viewingVia,
     call_id: callId,
     audio: b64,
-    codec: codec || callPcmCodec(callAudioConfig().rate),
+    codec: codec || CALL_OPUS_CODEC,
   };
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(payload));
@@ -6664,7 +6537,7 @@ function sendCallAudioFrame(b64, codec) {
     via: callVia || viewingVia,
     call_id: callId,
     audio: b64,
-    codec: codec || callPcmCodec(callAudioConfig().rate),
+    codec: codec || CALL_OPUS_CODEC,
   }).catch(() => {});
 }
 
@@ -6718,17 +6591,6 @@ function scheduleCallNativeFallbackWatchdog() {
       await startCallCapture({forceBrowser: true});
     }
   }, 4000);
-}
-
-function startCallSendPacer(cfg) {
-  clearCallSendPacer();
-  const intervalMs = cfg.frameMs || 20;
-  callSendPaceTimer = setInterval(() => {
-    if (callState !== 'active' || !callPendingSend) return;
-    const frame = callPendingSend;
-    callPendingSend = null;
-    sendCallAudioFrame(frame.b64, frame.codec);
-  }, intervalMs);
 }
 
 async function startCallCapture(opts) {
@@ -6807,7 +6669,6 @@ async function startCallCapture(opts) {
 }
 
 function stopCallCapturePipeline() {
-  clearCallSendPacer();
   if (callCaptureNode) {
     try { callCaptureNode.disconnect(); } catch (_) {}
     callCaptureNode = null;
