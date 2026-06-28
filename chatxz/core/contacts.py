@@ -15,6 +15,123 @@ def _contact_path(config_dir, peer_hash):
     return os.path.join(contacts_dir(config_dir), clean)
 
 
+def _deleted_index_path(config_dir):
+    return os.path.join(contacts_dir(config_dir), ".deleted.json")
+
+
+def _load_deleted_index(config_dir):
+    path = _deleted_index_path(config_dir)
+    if not os.path.isfile(path):
+        return {"hashes": [], "identities": [], "names": []}
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            return {"hashes": [], "identities": [], "names": []}
+        return {
+            "hashes": list(data.get("hashes") or []),
+            "identities": list(data.get("identities") or []),
+            "names": list(data.get("names") or []),
+        }
+    except Exception:
+        return {"hashes": [], "identities": [], "names": []}
+
+
+def _save_deleted_index(config_dir, index):
+    path = _deleted_index_path(config_dir)
+    payload = {
+        "hashes": sorted(set(index.get("hashes") or [])),
+        "identities": sorted(set(index.get("identities") or [])),
+        "names": sorted(set(index.get("names") or [])),
+    }
+    with open(path, "w") as fh:
+        json.dump(payload, fh, indent=2)
+
+
+def _record_contact_deleted(config_dir, contact):
+    idx = _load_deleted_index(config_dir)
+    c = normalize_contact(contact or {})
+    for h in _contact_hashes(c):
+        if h and h not in idx["hashes"]:
+            idx["hashes"].append(h)
+    ident = (c.get("identity_hash") or "").replace(":", "")
+    if ident and ident not in idx["identities"]:
+        idx["identities"].append(ident)
+    name = (c.get("name") or "").strip().lower()
+    if name and not _name_is_hash_like(c.get("name"), _contact_hashes(c)):
+        if name not in idx["names"]:
+            idx["names"].append(name)
+    _save_deleted_index(config_dir, idx)
+
+
+def clear_contact_deleted(config_dir, contact=None, peer_hash=None):
+    """Remove a peer from the deleted blocklist after an explicit user save."""
+    idx = _load_deleted_index(config_dir)
+    if not any((idx.get("hashes"), idx.get("identities"), idx.get("names"))):
+        return
+    targets = set()
+    if contact:
+        targets |= _contact_hashes(normalize_contact(contact))
+        ident = (contact.get("identity_hash") or "").replace(":", "")
+        if ident:
+            targets.add(ident)
+    clean = (peer_hash or "").strip().replace(":", "")
+    if clean:
+        targets.add(clean)
+    if not targets:
+        return
+    idx["hashes"] = [h for h in idx["hashes"] if h not in targets]
+    idx["identities"] = [h for h in idx["identities"] if h not in targets]
+    _save_deleted_index(config_dir, idx)
+
+
+def peer_is_deleted(config_dir, peer):
+    """True when discovery should not recreate or refresh a removed contact."""
+    peer = dict(peer or {})
+    idx = _load_deleted_index(config_dir)
+    if not any((idx.get("hashes"), idx.get("identities"), idx.get("names"))):
+        return False
+    new_hash = (peer.get("hash") or "").replace(":", "")
+    if new_hash and new_hash in idx["hashes"]:
+        return True
+    ident = (peer.get("identity_hash") or "").replace(":", "")
+    if ident and ident in idx["identities"]:
+        return True
+    peer_name = (peer.get("name") or "").strip().lower()
+    if peer_name and peer_name in idx["names"]:
+        return True
+    for blocked in idx["names"]:
+        if blocked and _names_related(blocked, peer_name):
+            return True
+    return False
+
+
+def _iter_contact_files(config_dir):
+    base = contacts_dir(config_dir)
+    if not os.path.isdir(base):
+        return
+    for fname in sorted(os.listdir(base)):
+        if fname.startswith("."):
+            continue
+        entry = load_contact(config_dir, fname)
+        if entry:
+            yield fname, entry
+
+
+def _related_contact_files(config_dir, seed):
+    """All on-disk rows that belong to the same peer (split lan/serial files)."""
+    seed = normalize_contact(dict(seed or {}))
+    if not seed:
+        return []
+    matches = []
+    for fname, entry in _iter_contact_files(config_dir):
+        if _should_merge_contacts(seed, entry) or set(_contact_hashes(seed)) & set(
+            _contact_hashes(entry)
+        ):
+            matches.append((fname, entry))
+    return matches
+
+
 def normalize_contact(entry):
     """Ensure dual-hash fields exist (v0.5 migration)."""
     if not entry:
@@ -175,6 +292,8 @@ def sync_contact_from_discovery(
     new_hash = (peer.get("hash") or "").replace(":", "")
     if not new_hash:
         return None
+    if peer_is_deleted(config_dir, peer):
+        return None
     family = _peer_transport_family(peer.get("via"))
     peer_ip = (peer.get("ip") or "").strip()
     peer_ident = (peer.get("identity_hash") or "").replace(":", "")
@@ -226,12 +345,20 @@ def sync_contact_from_discovery(
                 entry["identity_hash"] = peer_ident
                 changed = True
 
-        if peer_name:
+        if peer_name and not entry.get("custom_name"):
             resolved = _resolve_contact_name(entry, peer_name)
-            if resolved and resolved != (entry.get("name") or "").strip():
-                if not entry.get("custom_name"):
-                    entry["name"] = resolved
-                    changed = True
+            saved = (entry.get("name") or "").strip()
+            if resolved and not saved:
+                entry["name"] = resolved
+                changed = True
+            elif (
+                resolved
+                and saved
+                and _name_is_hash_like(saved, _contact_hashes(entry))
+                and not _name_is_hash_like(resolved, _contact_hashes(entry))
+            ):
+                entry["name"] = resolved
+                changed = True
 
         if not changed:
             return entry
@@ -446,6 +573,7 @@ def save_contact(
     _purge_stale_contact_files(config_dir, existing, file_key)
     if clean != file_key:
         _unlink_contact_file(config_dir, clean)
+    clear_contact_deleted(config_dir, contact=existing, peer_hash=clean)
     return existing
 
 
@@ -464,13 +592,25 @@ def delete_contact(config_dir, peer_hash):
     if not clean:
         return False
     contact = find_contact_by_hash(config_dir, clean)
+    targets = []
     if contact:
-        removed = False
-        for h in _contact_hashes(contact):
-            if _unlink_contact_file(config_dir, h):
-                removed = True
-        return removed
-    return _unlink_contact_file(config_dir, clean)
+        targets.extend(_related_contact_files(config_dir, contact))
+    else:
+        entry = load_contact(config_dir, clean)
+        if entry:
+            targets.append((clean, entry))
+    if not targets:
+        return _unlink_contact_file(config_dir, clean)
+    removed = False
+    seen_files = set()
+    for fname, entry in targets:
+        if fname in seen_files:
+            continue
+        seen_files.add(fname)
+        if _unlink_contact_file(config_dir, fname):
+            removed = True
+        _record_contact_deleted(config_dir, entry)
+    return removed
 
 
 def _purge_stale_contact_files(config_dir, entry, keep_key):
@@ -714,6 +854,13 @@ def migrate_contact_by_ip(config_dir, ip, new_hash, name=None, port=None, identi
     ip = (ip or "").strip()
     new_clean = (new_hash or "").strip().replace(":", "")
     if not ip or not new_clean:
+        return []
+    if peer_is_deleted(config_dir, {
+        "hash": new_clean,
+        "identity_hash": identity_hash,
+        "name": name,
+        "ip": ip,
+    }):
         return []
     removed = []
     for contact in list_contacts(config_dir):

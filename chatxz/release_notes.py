@@ -3,6 +3,11 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.6.1": [
+        "Contact delete removes split LAN/USB files and blocks discovery from recreating the peer (fixes 835… serial ghost contacts).",
+        "Saved contact names stay visible when peers are offline.",
+        "Voice calls use PCM audio frames that fit RNS MTU — fixes silent calls; Android mic busy when switching call/voice note.",
+    ],
     "0.6.0": [
         "Live voice calls over RNS — duplex audio on an active LAN or USB serial link (no WebRTC).",
         "Tap 📞 in the chat header when connected; accept or decline incoming calls; hang up anytime.",

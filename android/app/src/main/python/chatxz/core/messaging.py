@@ -5391,7 +5391,9 @@ class MessagingBackend:
         data = msg.to_json().encode("utf-8")
         mtu = max(400, int(getattr(link, "mtu", 500) or 500) - 48)
         if len(data) > mtu:
-            if msg_type != CALL_AUDIO:
+            if msg_type == CALL_AUDIO:
+                print(f"[call] Audio packet too large ({len(data)} > {mtu}), dropped")
+            else:
                 print(f"[call] Packet too large ({len(data)} > {mtu})")
             return False
         try:

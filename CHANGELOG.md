@@ -2,6 +2,13 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.6.1] — 2026-06-27
+
+### Fixed
+- **Contact delete** — removes related LAN and USB JSON files together; deleted peers are blocklisted so discovery no longer resurrects serial-only `835…` ghosts.
+- **Contact names** — saved labels persist when peers are disconnected; discovery sync no longer overwrites custom names.
+- **Voice calls** — PCM frames (8 kHz) replace WebM chunks that were dropped or unplayable; mic is released between calls and voice notes (Android “microphone busy”).
+
 ## [0.6.0] — 2026-06-27
 
 ### Added

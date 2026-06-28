@@ -3941,7 +3941,9 @@ function actionClearPeerHistory() {
 function actionDelete() {
   if (ctxHash) {
     const deletedKey = peerKey(ctxHash);
-    fetch('/api/contacts/' + ctxHash.replace(/:/g, ''), { method: 'DELETE' })
+    const contact = allContacts.find(c => contactSavedHashes(c).some(h => peersMatch(h, ctxHash)));
+    const deleteHash = contactLanHash(contact) || contact?.hash || ctxHash;
+    fetch('/api/contacts/' + deleteHash.replace(/:/g, ''), { method: 'DELETE' })
       .then(r => r.json())
       .then(d => {
         if (d.status !== 'ok') {
@@ -5406,17 +5408,24 @@ function linkKey(hash, via) {
   return `${h}:${normalizeVia(via)}`;
 }
 
+function contactNameLooksLikeHash(name, hashes) {
+  const raw = (name || '').trim();
+  if (!raw) return true;
+  const key = peerKey(raw);
+  if (key && hashes.has(key)) return true;
+  if (/^[0-9a-f]{8,}$/i.test(raw)) return true;
+  return false;
+}
+
 function contactDisplayName(c) {
   const raw = (c?.name || '').trim();
   const hashes = new Set(
     [c?.hash, c?.lan_hash, c?.serial_hash, contactLanHash(c), contactSerialHash(c)]
       .map(peerKey).filter(Boolean)
   );
-  if (c?.custom_name && raw) return raw;
-  if (raw && !hashes.has(peerKey(raw)) && raw.length <= 24) return raw;
+  if (raw && (c?.custom_name || !contactNameLooksLikeHash(raw, hashes))) return raw;
   const disc = bestPeerForContact(window._discoveredPeers || [], c);
-  if (!c?.custom_name && disc?.name && !hashes.has(peerKey(disc.name))) return disc.name;
-  if (raw && raw.length <= 16) return raw;
+  if (disc?.name && !contactNameLooksLikeHash(disc.name, hashes)) return disc.name;
   return truncateHash(c?.lan_hash || c?.serial_hash || c?.hash || raw);
 }
 
@@ -5741,6 +5750,11 @@ let callVia = null;
 let callRecorder = null;
 let callStream = null;
 let callMime = '';
+let callCaptureNode = null;
+let callAudioCtx = null;
+let callNextPlayTime = 0;
+const CALL_PCM_RATE = 8000;
+const CALL_PCM_FRAME_SAMPLES = 128;
 let callPlayQueue = [];
 let callPlaying = false;
 let callTimerId = null;
@@ -5807,46 +5821,130 @@ function showActiveCall(peer, label) {
   updatePeerHeader();
 }
 
-async function startCallCapture() {
-  if (callRecorder) return;
-  try {
-    callStream = await navigator.mediaDevices.getUserMedia({audio: true, video: false});
-  } catch (err) {
-    toast(micAccessHint(err));
-    return false;
+function ensureCallAudioCtx() {
+  if (!callAudioCtx) {
+    callAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
   }
-  callMime = pickVoiceRecorderMime();
-  const opts = callMime ? {mimeType: callMime, audioBitsPerSecond: 24000} : {audioBitsPerSecond: 24000};
-  try {
-    callRecorder = callMime ? new MediaRecorder(callStream, opts) : new MediaRecorder(callStream, {audioBitsPerSecond: 24000});
-  } catch (_) {
-    callRecorder = new MediaRecorder(callStream);
-  }
-  const blobType = callRecorder.mimeType || callMime || 'audio/webm';
-  callRecorder.ondataavailable = async e => {
-    if (!e.data || !e.data.size || callState !== 'active') return;
-    const buf = await e.data.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-    let bin = '';
-    for (let i = 0; i < bytes.length; i += 0x8000) {
-      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  if (callAudioCtx.state === 'suspended') callAudioCtx.resume();
+  return callAudioCtx;
+}
+
+function downsampleToPcm(input, inputRate, outputRate) {
+  if (!input || !input.length) return new Int16Array(0);
+  if (inputRate === outputRate) {
+    const pcm = new Int16Array(input.length);
+    for (let i = 0; i < input.length; i++) {
+      const s = Math.max(-1, Math.min(1, input[i]));
+      pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
     }
-    const b64 = btoa(bin);
-    if (b64.length > 900) return;
-    callApi({
-      action: 'audio',
-      peer: callPeer,
-      via: callVia || viewingVia,
-      call_id: callId,
-      audio: b64,
-      codec: blobType,
-    }).catch(() => {});
+    return pcm;
+  }
+  const ratio = inputRate / outputRate;
+  const outLen = Math.max(1, Math.floor(input.length / ratio));
+  const pcm = new Int16Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const idx = Math.min(input.length - 1, Math.floor(i * ratio));
+    const s = Math.max(-1, Math.min(1, input[idx]));
+    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return pcm;
+}
+
+function pcmToB64(pcm) {
+  const bytes = new Uint8Array(pcm.buffer);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+}
+
+function b64ToPcm(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Int16Array(bytes.buffer);
+}
+
+function callPcmCodec(rate) {
+  return `audio/pcm;rate=${rate || CALL_PCM_RATE}`;
+}
+
+function parseCallPcmRate(codec) {
+  const raw = codec || '';
+  const m = raw.match(/rate=(\d+)/i);
+  return m ? parseInt(m[1], 10) : CALL_PCM_RATE;
+}
+
+async function releaseMicForCall() {
+  if (recording) stopVoice();
+  stopCallCapture();
+  await new Promise(r => setTimeout(r, isAndroidShell() ? 450 : 180));
+}
+
+async function startCallCapture() {
+  if (callCaptureNode) return true;
+  await releaseMicForCall();
+  const richAudio = {
+    audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true},
+    video: false,
   };
-  callRecorder.start(200);
+  try {
+    callStream = await navigator.mediaDevices.getUserMedia(richAudio);
+  } catch (_) {
+    try {
+      callStream = await navigator.mediaDevices.getUserMedia({audio: true, video: false});
+    } catch (err) {
+      toast(micAccessHint(err));
+      return false;
+    }
+  }
+  const ctx = ensureCallAudioCtx();
+  const src = ctx.createMediaStreamSource(callStream);
+  const processor = ctx.createScriptProcessor(2048, 1, 1);
+  const silent = ctx.createGain();
+  silent.gain.value = 0;
+  let accum = new Float32Array(0);
+  const inputRate = ctx.sampleRate;
+  const frameInputSamples = Math.max(
+    CALL_PCM_FRAME_SAMPLES,
+    Math.ceil(CALL_PCM_FRAME_SAMPLES * inputRate / CALL_PCM_RATE),
+  );
+  processor.onaudioprocess = e => {
+    if (callState !== 'active') return;
+    const input = e.inputBuffer.getChannelData(0);
+    const merged = new Float32Array(accum.length + input.length);
+    merged.set(accum, 0);
+    merged.set(input, accum.length);
+    accum = merged;
+    while (accum.length >= frameInputSamples) {
+      const chunk = accum.slice(0, frameInputSamples);
+      accum = accum.slice(frameInputSamples);
+      const pcm = downsampleToPcm(chunk, inputRate, CALL_PCM_RATE);
+      const b64 = pcmToB64(pcm);
+      if (b64.length > 480) continue;
+      callApi({
+        action: 'audio',
+        peer: callPeer,
+        via: callVia || viewingVia,
+        call_id: callId,
+        audio: b64,
+        codec: callPcmCodec(CALL_PCM_RATE),
+      }).catch(() => {});
+    }
+  };
+  src.connect(processor);
+  processor.connect(silent);
+  silent.connect(ctx.destination);
+  callCaptureNode = processor;
   return true;
 }
 
 function stopCallCapture() {
+  if (callCaptureNode) {
+    try { callCaptureNode.disconnect(); } catch (_) {}
+    callCaptureNode = null;
+  }
   if (callRecorder && callRecorder.state !== 'inactive') {
     try { callRecorder.stop(); } catch (_) {}
   }
@@ -5855,11 +5953,16 @@ function stopCallCapture() {
     callStream.getTracks().forEach(t => t.stop());
     callStream = null;
   }
+  callNextPlayTime = 0;
 }
 
 function enqueueCallAudio(b64, codec) {
   if (!b64) return;
-  callPlayQueue.push({b64, codec: codec || 'audio/webm'});
+  callPlayQueue.push({
+    b64,
+    codec: codec || callPcmCodec(CALL_PCM_RATE),
+    rate: parseCallPcmRate(codec),
+  });
   if (!callPlaying) drainCallAudioQueue();
 }
 
@@ -5868,10 +5971,28 @@ async function drainCallAudioQueue() {
   callPlaying = true;
   const chunk = callPlayQueue.shift();
   try {
+    if ((chunk.codec || '').startsWith('audio/pcm')) {
+      const ctx = ensureCallAudioCtx();
+      const pcm = b64ToPcm(chunk.b64);
+      const floats = new Float32Array(pcm.length);
+      for (let i = 0; i < pcm.length; i++) floats[i] = pcm[i] / 32768;
+      const rate = chunk.rate || CALL_PCM_RATE;
+      const buf = ctx.createBuffer(1, floats.length, rate);
+      buf.copyToChannel(floats, 0);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      const now = ctx.currentTime;
+      const startAt = Math.max(now + 0.02, callNextPlayTime);
+      src.start(startAt);
+      callNextPlayTime = startAt + buf.duration;
+      src.onended = () => drainCallAudioQueue();
+      return;
+    }
     const bin = atob(chunk.b64);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    const blob = new Blob([bytes], {type: chunk.codec});
+    const blob = new Blob([bytes], {type: chunk.codec || 'audio/webm'});
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     audio.onended = () => { URL.revokeObjectURL(url); drainCallAudioQueue(); };
@@ -6083,6 +6204,10 @@ async function queryMicPermissionState() {
 }
 
 async function startVoice(skipPermissionCheck) {
+  if (callState !== 'idle') {
+    toast('End the call before recording a voice note');
+    return;
+  }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     toast('Voice recording not supported in this browser');
     return;
