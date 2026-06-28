@@ -3297,8 +3297,11 @@ function handleWSMessage(msg) {
       || isPeerLinked(viewingPeer, 'lan')
       || isPeerLinked(viewingPeer, 'serial')
     );
-    if (callState !== 'idle' && callPeer && !isPeerLinked(callPeer, callVia || viewingVia)) {
-      resetCallUi();
+    if (callState !== 'idle' && callPeer) {
+      const stillLinked = ['lan', 'serial'].some(v =>
+        isPeerLinked(callPeer, v) || (viewingPeer && peersMatch(viewingPeer, callPeer) && isPeerLinked(viewingPeer, v))
+      );
+      if (!stillLinked) resetCallUi();
     }
     updatePeerHeader();
     if (!viewingStillLinked && !linkedPeers.size) {
@@ -5947,6 +5950,9 @@ let callOpusEncodeTs = 0;
 let callOpusPending = null;
 let callBrowserOpusOk = null;
 let callOpusRecvPrimed = false;
+let callNativeWatchId = null;
+let callSendPaceTimer = null;
+let callPendingSend = null;
 let ringtoneTimer = null;
 let sharedMicStream = null;
 let sharedMicRefs = 0;
@@ -5961,8 +5967,25 @@ function callApi(body) {
   }).then(r => r.json());
 }
 
+function clearCallNativeWatchdog() {
+  if (callNativeWatchId) {
+    clearTimeout(callNativeWatchId);
+    callNativeWatchId = null;
+  }
+}
+
+function clearCallSendPacer() {
+  if (callSendPaceTimer) {
+    clearInterval(callSendPaceTimer);
+    callSendPaceTimer = null;
+  }
+  callPendingSend = null;
+}
+
 function resetCallUi() {
   stopCallRingtone();
+  clearCallNativeWatchdog();
+  clearCallSendPacer();
   callState = 'idle';
   callPeer = null;
   callId = null;
@@ -6262,13 +6285,13 @@ function callAudioConfig() {
   }
   if (via === 'serial') {
     return {
-      rate: 8000, frameSamples: 160, jitterTarget: 320, jitterMax: 640,
+      rate: 8000, frameSamples: 160, frameMs: 20, jitterTarget: 1600, jitterMax: 3200,
       useOpus: false, useMulaw: true, recvOpus: false,
     };
   }
   // Browser LAN: μ-law send (reliable on all platforms); Opus decode for native peers.
   return {
-    rate: 16000, frameSamples: 480, jitterTarget: 960, jitterMax: 1920,
+    rate: 16000, frameSamples: 320, frameMs: 20, jitterTarget: 4800, jitterMax: 9600,
     useOpus: false, useMulaw: true, recvOpus: browserOpusSupported(),
   };
 }
@@ -6682,7 +6705,35 @@ function primeCallPlayback() {
   ensureCallPlaybackNode();
 }
 
-async function startCallCapture() {
+function scheduleCallNativeFallbackWatchdog() {
+  clearCallNativeWatchdog();
+  callNativeWatchId = setTimeout(async () => {
+    if (callState !== 'active' || callCaptureNode) return;
+    try {
+      const st = await callApi({action: 'status'});
+      if (st && !st.error) callServerStats = st;
+    } catch (_) {}
+    const sent = Number(callServerStats.frames_sent || callServerStats.audio_out || 0);
+    if (useNativeCallAudio() && sent === 0) {
+      toast('Native mic silent — switching to browser microphone');
+      await startCallCapture({forceBrowser: true});
+    }
+  }, 4000);
+}
+
+function startCallSendPacer(cfg) {
+  clearCallSendPacer();
+  const intervalMs = cfg.frameMs || 20;
+  callSendPaceTimer = setInterval(() => {
+    if (callState !== 'active' || !callPendingSend) return;
+    const frame = callPendingSend;
+    callPendingSend = null;
+    sendCallAudioFrame(frame.b64, frame.codec);
+  }, intervalMs);
+}
+
+async function startCallCapture(opts) {
+  const forceBrowser = !!(opts && opts.forceBrowser);
   if (callCaptureNode) return true;
   stopCallRingtone();
   if (!isAndroidShell() && !window.isSecureContext) {
@@ -6695,8 +6746,9 @@ async function startCallCapture() {
       const st = await callApi({action: 'status'});
       if (st && !st.error) callServerStats = st;
     } catch (_) {}
-    if (useNativeCallAudio()) {
+    if (useNativeCallAudio() && !forceBrowser) {
       primeCallPlayback();
+      scheduleCallNativeFallbackWatchdog();
       updateCallDashboard();
       return true;
     }
@@ -6744,7 +6796,7 @@ async function startCallCapture() {
           encodeCallFrameOpus(floats, cfg);
         } else {
           const frame = encodeCallFrame(slice, {useMulaw: cfg.useMulaw !== false, rate: cfg.rate});
-          sendCallAudioFrame(frame.b64, frame.codec);
+          callPendingSend = frame;
         }
       }
     };
@@ -6752,6 +6804,8 @@ async function startCallCapture() {
     processor.connect(silent);
     silent.connect(ctx.destination);
     callCaptureNode = processor;
+    startCallSendPacer(cfg);
+    clearCallNativeWatchdog();
     return true;
   } catch (err) {
     toast(micAccessHint(err));
@@ -6760,6 +6814,7 @@ async function startCallCapture() {
 }
 
 function stopCallCapturePipeline() {
+  clearCallSendPacer();
   if (callCaptureNode) {
     try { callCaptureNode.disconnect(); } catch (_) {}
     callCaptureNode = null;
@@ -6813,6 +6868,10 @@ function enqueueCallAudio(b64, codec, opts) {
 function handleCallWS(event, data) {
   const peer = peerKey(data.peer) || data.peer || '';
   if (event === 'incoming') {
+    if (callState === 'outgoing' && peersMatch(callPeer, peer)) {
+      showIncomingCall(peer, data);
+      return;
+    }
     if (callState !== 'idle') return;
     showIncomingCall(peer, data);
     return;
@@ -6826,10 +6885,15 @@ function handleCallWS(event, data) {
   if (event === 'accepted') {
     if (callState === 'outgoing' || callState === 'incoming') {
       callId = data.call_id || callId;
+      callVia = normalizeVia(data.transport || data.via || callVia || viewingVia);
+      if (peer) {
+        callPeer = peer;
+        if (viewingPeer) registerPeerAliases(peer, viewingPeer);
+      }
       stopCallRingtone();
       showActiveCall(callPeer || peer, 'Connected');
       primeCallPlayback();
-      startCallCapture().then(ok => {
+      startCallCapture(data.glare ? {forceBrowser: false} : undefined).then(ok => {
         if (!ok && callState === 'active') {
           toast('Microphone unavailable — call is connected but you are muted');
         }
@@ -6838,11 +6902,15 @@ function handleCallWS(event, data) {
     return;
   }
   if (event === 'rejected') {
-    toast(data.reason === 'busy' ? 'Peer is busy' : 'Call declined');
+    if (callId && data.call_id && data.call_id !== callId) return;
+    if (data.reason === 'busy') toast('Peer is busy');
+    else if (data.reason === 'glare') toast('Call collision — try again');
+    else toast('Call declined');
     resetCallUi();
     return;
   }
   if (event === 'ended') {
+    if (callId && data.call_id && data.call_id !== callId) return;
     if (callState !== 'idle') toast('Call ended');
     resetCallUi();
     return;

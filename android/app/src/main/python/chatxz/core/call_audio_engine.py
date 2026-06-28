@@ -178,12 +178,14 @@ class CallAudioEngine:
         self.frames_sent = 0
         self.frames_recv = 0
         self._pa = pyaudio.PyAudio()
+        in_dev, in_name = self._pick_input_device(self._pa)
         fmt = pyaudio.paInt16
         channels = 1
         rate = OPUS_SAMPLE_RATE
         frame_count = OPUS_FRAME_SAMPLES
 
-        self._mic_diag = 8
+        self._mic_diag = 12
+        self._silent_frames = 0
 
         def input_cb(in_data, frame_count, time_info, status):
             if not self._running or not self._send_enabled:
@@ -192,8 +194,10 @@ class CallAudioEngine:
             if self._mic_diag > 0:
                 self._mic_diag -= 1
                 print(f"[call-audio] mic peak {peak}")
-            if peak < 48:
+            if peak < 32:
+                self._silent_frames += 1
                 return (None, pyaudio.paContinue)
+            self._silent_frames = 0
             opus = self._codec.encode_pcm(in_data)
             if opus:
                 self._seq_out += 1
@@ -215,7 +219,7 @@ class CallAudioEngine:
         self._send_enabled = False
         try:
             try:
-                self._in_stream = self._pa.open(
+                open_kw = dict(
                     format=fmt,
                     channels=channels,
                     rate=rate,
@@ -223,7 +227,12 @@ class CallAudioEngine:
                     frames_per_buffer=frame_count,
                     stream_callback=input_cb,
                 )
+                if in_dev is not None:
+                    open_kw["input_device_index"] = in_dev
+                self._in_stream = self._pa.open(**open_kw)
                 self._send_enabled = True
+                if in_name:
+                    print(f"[call-audio] Mic device: {in_name}")
             except Exception as mic_err:
                 print(f"[call-audio] No capture device ({mic_err}) — receive-only playback")
                 self._in_stream = None
@@ -303,6 +312,29 @@ class CallAudioEngine:
         if len(out) < OPUS_FRAME_SAMPLES:
             pcm += SILENCE_PCM[: (OPUS_FRAME_SAMPLES - len(out)) * 2]
         return pcm[: OPUS_FRAME_SAMPLES * 2]
+
+    @staticmethod
+    def _pick_input_device(pa):
+        try:
+            info = pa.get_default_input_device_info()
+            name = str(info.get("name") or "")
+            low = name.lower()
+            if "monitor" not in low and "loopback" not in low and "null" not in low:
+                return int(info["index"]), name or "default"
+        except Exception:
+            pass
+        try:
+            for i in range(pa.get_device_count()):
+                info = pa.get_device_info_by_index(i)
+                if int(info.get("maxInputChannels", 0) or 0) < 1:
+                    continue
+                name = str(info.get("name") or "").lower()
+                if "monitor" in name or "loopback" in name or "null" in name:
+                    continue
+                return i, str(info.get("name") or f"device {i}")
+        except Exception:
+            pass
+        return None, None
 
     @staticmethod
     def _pcm_peak(pcm_s16: bytes) -> int:

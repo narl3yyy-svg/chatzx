@@ -2,6 +2,16 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.7.7] — 2026-06-28
+
+### Fixed
+- **Call window closes instantly** — simultaneous invites (glare) resolve by call-id tie-break; loser auto-accepts, winner keeps outgoing.
+- **“Peer is busy” after failed calls** — stale call state times out and clears; empty `call_id` on end/reject no longer kills unrelated calls.
+- **Post-call disconnect** — link-closed handler checks all transports/aliases before resetting call UI.
+- **Stuttery browser audio** — 20 ms μ-law frames with paced send and larger jitter buffer.
+- **Arch native mic silent** — skip monitor/loopback default devices; browser mic fallback when native sends zero frames after 4 s.
+- **Server audio fallback** — WebSocket `call_audio` accepted when native engine is running but not transmitting.
+
 ## [0.7.6] — 2026-06-28
 
 ### Fixed

@@ -5404,6 +5404,35 @@ class MessagingBackend:
             print(f"[call] Send failed: {e}")
             return False
 
+    def _call_id_matches(self, call_id):
+        cid = (call_id or "").strip()
+        active = (self.voice_call.call_id or "").strip()
+        if not active:
+            return True
+        if not cid:
+            return False
+        return cid == active
+
+    def _call_glare_we_win(self, their_call_id):
+        """True if our outgoing call_id wins simultaneous-invite glare."""
+        ours = (self.voice_call.call_id or "").strip()
+        theirs = (their_call_id or "").strip()
+        if not ours or not theirs:
+            return False
+        return ours < theirs
+
+    def _call_peer_matches(self, peer_hash):
+        peer = self.dest_hash_for(peer_hash) or peer_hash
+        active = self.voice_call.peer_hash
+        if not active or not peer:
+            return True
+        return self.hashes_equivalent(peer, active)
+
+    def _call_reset_if_stale(self):
+        if self.voice_call.is_stale():
+            print(f"[call] Clearing stale call state ({self.voice_call.state})")
+            self.voice_call.reset()
+
     def _handle_call_packet(self, chat_msg, remote_hash, link):
         payload = parse_call_payload(chat_msg.content)
         peer = self.dest_hash_for(remote_hash) or remote_hash
@@ -5411,14 +5440,56 @@ class MessagingBackend:
         call_id = (payload.get("call_id") or "").strip()
 
         if msg_type == CALL_INVITE:
+            self._call_reset_if_stale()
             if self.voice_call.is_busy():
-                self._send_call_packet(
-                    peer,
-                    CALL_REJECT,
-                    {"call_id": call_id, "reason": "busy"},
-                    payload.get("transport"),
-                )
-                return
+                if (
+                    self.voice_call.state == STATE_OUTGOING
+                    and self._call_peer_matches(peer)
+                ):
+                    if self._call_glare_we_win(call_id):
+                        self._send_call_packet(
+                            peer,
+                            CALL_REJECT,
+                            {"call_id": call_id, "reason": "glare"},
+                            payload.get("transport"),
+                        )
+                        print(f"[call] Glare won — kept outgoing, rejected {peer[:16]}...")
+                        return
+                    print(f"[call] Glare lost — auto-accepting invite from {peer[:16]}...")
+                    self.voice_call.reset()
+                    transport = (payload.get("transport") or "lan").strip().lower()
+                    self.voice_call.begin_incoming(call_id, peer, transport)
+                    self.voice_call.activate(call_id)
+                    self._reset_call_audio_counters()
+                    self._send_call_packet(
+                        peer,
+                        CALL_ACCEPT,
+                        {"call_id": call_id},
+                        transport,
+                    )
+                    self._emit_call_event("accepted", peer, {
+                        "call_id": call_id,
+                        "transport": transport,
+                        "caller_name": payload.get("caller_name") or "",
+                        "glare": True,
+                    })
+                    print(f"[call] Glare auto-accepted {peer[:16]}... ({call_id})")
+                    return
+                elif (
+                    self.voice_call.state == STATE_ACTIVE
+                    and self._call_peer_matches(peer)
+                ):
+                    print(f"[call] Ignoring duplicate invite during active call")
+                    return
+                else:
+                    self._send_call_packet(
+                        peer,
+                        CALL_REJECT,
+                        {"call_id": call_id, "reason": "busy"},
+                        payload.get("transport"),
+                    )
+                    print(f"[call] Busy — rejected invite from {peer[:16]}...")
+                    return
             transport = (payload.get("transport") or "lan").strip().lower()
             self.voice_call.begin_incoming(call_id, peer, transport)
             self._emit_call_event("incoming", peer, {
@@ -5440,20 +5511,29 @@ class MessagingBackend:
             return
 
         if msg_type == CALL_REJECT:
-            if not call_id or call_id == self.voice_call.call_id:
-                self.voice_call.reset()
-                self._emit_call_event("rejected", peer, {
-                    "call_id": call_id,
-                    "reason": payload.get("reason") or "",
-                })
-                print(f"[call] Rejected by {peer[:16]}...")
+            if self.voice_call.state == STATE_IDLE:
+                return
+            if not self._call_id_matches(call_id):
+                return
+            reason = payload.get("reason") or ""
+            active_cid = self.voice_call.call_id
+            self.voice_call.reset()
+            self._emit_call_event("rejected", peer, {
+                "call_id": call_id or active_cid,
+                "reason": reason,
+            })
+            print(f"[call] Rejected by {peer[:16]}... ({reason or 'declined'})")
             return
 
         if msg_type == CALL_END:
-            if not call_id or call_id == self.voice_call.call_id:
-                self.voice_call.reset()
-                self._emit_call_event("ended", peer, {"call_id": call_id})
-                print(f"[call] Ended with {peer[:16]}...")
+            if self.voice_call.state == STATE_IDLE:
+                return
+            if not self._call_id_matches(call_id):
+                return
+            active_cid = self.voice_call.call_id
+            self.voice_call.reset()
+            self._emit_call_event("ended", peer, {"call_id": call_id or active_cid})
+            print(f"[call] Ended with {peer[:16]}...")
             return
 
         if msg_type == CALL_AUDIO:
@@ -5477,7 +5557,13 @@ class MessagingBackend:
         peer = self.dest_hash_for(peer_hash)
         if not peer or peer == "unknown":
             return None
+        self._call_reset_if_stale()
         if self.voice_call.is_busy():
+            if (
+                self.voice_call.state == STATE_OUTGOING
+                and self._call_peer_matches(peer)
+            ):
+                return self.voice_call.call_id
             return None
         if not self._call_link_for_peer(peer, transport):
             return None

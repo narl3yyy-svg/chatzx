@@ -1,4 +1,5 @@
 import json
+import time
 
 from chatxz.core.voice_call import (
     CALL_ACCEPT,
@@ -103,3 +104,39 @@ def test_voice_call_audio_seq_increments():
     vc.activate()
     assert vc.next_audio_seq() == 1
     assert vc.next_audio_seq() == 2
+
+
+def test_voice_call_stale_outgoing():
+    vc = VoiceCallSession()
+    vc.begin_outgoing("dd" * 16)
+    vc.state_since = time.time() - (VoiceCallSession.STALE_OUTGOING_SEC + 1)
+    assert vc.is_stale()
+    assert vc.is_busy()
+
+
+def test_voice_call_not_stale_when_active_recent():
+    vc = VoiceCallSession()
+    vc.begin_outgoing("ee" * 16)
+    vc.activate()
+    assert not vc.is_stale()
+
+
+def test_call_id_matches_requires_nonempty_id():
+    from chatxz.core.messaging import MessagingBackend
+
+    mb = MessagingBackend.__new__(MessagingBackend)
+    mb.voice_call = VoiceCallSession()
+    mb.voice_call.begin_outgoing("ff" * 16)
+    assert mb._call_id_matches("") is False
+    assert mb._call_id_matches(mb.voice_call.call_id) is True
+    assert mb._call_id_matches("other-id") is False
+
+
+def test_call_glare_we_win_lexicographic():
+    from chatxz.core.messaging import MessagingBackend
+
+    mb = MessagingBackend.__new__(MessagingBackend)
+    mb.voice_call = VoiceCallSession()
+    mb.voice_call.begin_outgoing("gg" * 16)
+    assert mb._call_glare_we_win("zzzzzzzz-zzz") is True
+    assert mb._call_glare_we_win("00000000-000") is False

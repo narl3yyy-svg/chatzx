@@ -157,12 +157,17 @@ def parse_call_payload(content):
 class VoiceCallSession:
     """Tracks one duplex call per messaging backend."""
 
+    STALE_OUTGOING_SEC = 45.0
+    STALE_INCOMING_SEC = 90.0
+    STALE_ACTIVE_SEC = 7200.0
+
     def __init__(self):
         self.state = STATE_IDLE
         self.call_id = ""
         self.peer_hash = ""
         self.transport = ""
         self.started_at = 0.0
+        self.state_since = 0.0
         self._audio_seq_out = 0
 
     def reset(self):
@@ -171,10 +176,24 @@ class VoiceCallSession:
         self.peer_hash = ""
         self.transport = ""
         self.started_at = 0.0
+        self.state_since = time.time()
         self._audio_seq_out = 0
 
     def is_busy(self):
         return self.state in (STATE_OUTGOING, STATE_INCOMING, STATE_ACTIVE)
+
+    def is_stale(self):
+        if self.state == STATE_IDLE:
+            return False
+        now = time.time()
+        since = self.state_since or now
+        if self.state == STATE_ACTIVE:
+            return (now - (self.started_at or since)) > self.STALE_ACTIVE_SEC
+        if self.state == STATE_INCOMING:
+            return (now - since) > self.STALE_INCOMING_SEC
+        if self.state == STATE_OUTGOING:
+            return (now - since) > self.STALE_OUTGOING_SEC
+        return False
 
     def begin_outgoing(self, peer_hash, transport="lan"):
         self.reset()
@@ -182,6 +201,7 @@ class VoiceCallSession:
         self.call_id = new_call_id()
         self.peer_hash = (peer_hash or "").replace(":", "")
         self.transport = (transport or "lan").strip().lower() or "lan"
+        self.state_since = time.time()
         return self.call_id
 
     def begin_incoming(self, call_id, peer_hash, transport="lan"):
@@ -190,6 +210,7 @@ class VoiceCallSession:
         self.call_id = (call_id or new_call_id()).strip()
         self.peer_hash = (peer_hash or "").replace(":", "")
         self.transport = (transport or "lan").strip().lower() or "lan"
+        self.state_since = time.time()
 
     def activate(self, call_id=None):
         if call_id and self.call_id and call_id != self.call_id:

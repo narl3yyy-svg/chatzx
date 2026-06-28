@@ -3,6 +3,13 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.7.7": [
+        "Fixed instant call hang-up: glare (both sides calling) resolves automatically — no more mutual busy/reject.",
+        "Stale call state clears after timeout — Arch no longer stays busy and rejects every invite.",
+        "Smoother browser audio: 20 ms frames, send pacing, larger jitter buffer.",
+        "Arch/Linux: better mic device selection; falls back to browser mic if native capture is silent.",
+        "Chat stays connected after calls when the RNS link is still up.",
+    ],
     "0.7.6": [
         "Fixed silent calls: browser sends proven μ-law frames again (WebCodecs Opus encode was producing zero packets on desktop/Android).",
         "Opus receive still works — native Arch/Android peers are heard via WebCodecs decoder.",

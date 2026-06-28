@@ -5509,19 +5509,24 @@ class ChatWebServer:
         elif msg_type == "call_audio":
             if self.messaging:
                 audio_b64 = data.get("audio") or data.get("data") or ""
-                if audio_b64:
-                    codec = (data.get("codec") or "audio/pcm;rate=8000").strip()
-                    call_id = (data.get("call_id") or "").strip() or None
-                    sent = int(getattr(self, "_ws_call_audio_sent", 0) or 0) + 1
-                    self._ws_call_audio_sent = sent
-                    if sent <= 2 or sent % 40 == 0:
-                        print(f"[call] Browser audio out #{sent} ({len(audio_b64)} b64, {codec})")
-                    await asyncio.to_thread(
-                        self.messaging.call_send_audio,
-                        audio_b64,
-                        codec,
-                        call_id,
-                    )
+                if not audio_b64:
+                    return
+                engine = self.call_audio_engine
+                if engine and getattr(engine, "frames_sent", 0) > 0:
+                    return
+                codec = (data.get("codec") or "audio/pcm;rate=8000").strip()
+                call_id = (data.get("call_id") or "").strip() or None
+                sent = int(getattr(self, "_ws_call_audio_sent", 0) or 0) + 1
+                self._ws_call_audio_sent = sent
+                if sent <= 2 or sent % 40 == 0:
+                    mode = "fallback" if engine else "browser"
+                    print(f"[call] Browser audio out #{sent} ({len(audio_b64)} b64, {codec}, {mode})")
+                await asyncio.to_thread(
+                    self.messaging.call_send_audio,
+                    audio_b64,
+                    codec,
+                    call_id,
+                )
 
     async def _init_rns_background(self):
         try:
