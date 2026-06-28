@@ -3,6 +3,13 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.5.9": [
+        "Serial USB enables without restart — identity and RNS hot-add on first connect.",
+        "USB unplug/replug recovers automatically while the server stays running.",
+        "Contact save respects custom names; disconnect is reliable and moved to the bottom dock.",
+        "Chat header shows one RTT badge using live link latency when connected.",
+        "LAN RTT uses fixed minimum probe size; serial ping interval minimum is 3 seconds.",
+    ],
     "0.5.8": [
         "Chat header shows the full peer hash and LAN/USB interface type.",
         "RTT clears when a peer disconnects — no more stale 2ms after unplugging.",

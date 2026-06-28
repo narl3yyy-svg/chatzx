@@ -839,9 +839,10 @@ class MessagingBackend:
             hub_port=hub_port,
         )
 
-    def disconnect_peer(self, peer_hash, user_initiated=False):
+    def disconnect_peer(self, peer_hash, user_initiated=False, transport=None):
         peer = self.dest_hash_for(peer_hash)
-        if user_initiated and peer:
+        transport = self._normalize_transport(transport) if transport else None
+        if user_initiated and peer and not transport:
             self.mark_user_disconnected(peer)
             self.clear_session_peer()
             self._transport_reconnect_pending = False
@@ -856,21 +857,39 @@ class MessagingBackend:
                 continue
             if peer and not resolved:
                 continue
+            if transport and not self._link_transport_matches(link, transport):
+                continue
             try:
                 link.teardown()
                 closed += 1
             except Exception:
                 pass
+        if peer:
+            self._unlink_peer(peer, transport=transport)
         if user_initiated and peer:
-            if self.active_peer_hash and self.hashes_equivalent(
+            active_matches = (
+                self.active_link
+                and (
+                    not transport
+                    or self._link_transport_matches(self.active_link, transport)
+                )
+            )
+            if active_matches and self.active_peer_hash and self.hashes_equivalent(
                 self.active_peer_hash, peer
             ):
                 self.active_link = None
                 self.active_peer_hash = None
                 self._send_link = None
-            self.clear_session_peer()
-            self._transport_reconnect_pending = False
-            self._last_link_lost_at = 0
+            if not transport:
+                self.clear_session_peer()
+                self._transport_reconnect_pending = False
+                self._last_link_lost_at = 0
+                self.mark_user_disconnected(peer)
+            elif not self._other_active_links_for_peer(peer):
+                self.clear_session_peer()
+                self._transport_reconnect_pending = False
+                self._last_link_lost_at = 0
+                self.mark_user_disconnected(peer)
         return closed > 0
 
     def mark_user_disconnected(self, peer_hash):

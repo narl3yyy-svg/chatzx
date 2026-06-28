@@ -9,7 +9,13 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from chatxz.core.peer_identity import peer_record_from_beacon
-from chatxz.core.peer_probe import clamp_probe_interval, link_rtt_ms
+from chatxz.core.peer_probe import (
+    PROBE_PACKET_MIN_BYTES,
+    clamp_probe_interval,
+    clamp_serial_probe_interval,
+    link_rtt_ms,
+    probe_packet_bytes,
+)
 
 
 class ProbeIntervalTests(unittest.TestCase):
@@ -19,6 +25,15 @@ class ProbeIntervalTests(unittest.TestCase):
         self.assertEqual(clamp_probe_interval(30), 30)
         self.assertEqual(clamp_probe_interval(99999), 18000)
         self.assertEqual(clamp_probe_interval("bad"), 30)
+
+    def test_clamp_serial_probe_interval_minimum(self):
+        self.assertEqual(clamp_serial_probe_interval(0), 0)
+        self.assertEqual(clamp_serial_probe_interval(1), 3)
+        self.assertEqual(clamp_serial_probe_interval(3), 3)
+        self.assertEqual(clamp_serial_probe_interval(30), 30)
+
+    def test_probe_packet_bytes_fixed_minimum(self):
+        self.assertEqual(probe_packet_bytes(), PROBE_PACKET_MIN_BYTES)
 
     def test_peer_record_from_beacon_without_identity_registration(self):
         data = {
@@ -77,7 +92,7 @@ class ProbeIntervalTests(unittest.TestCase):
         args, kwargs = udp_probe.call_args
         self.assertEqual(args[0], "10.0.30.10")
         self.assertEqual(kwargs.get("timeout_s"), 1.5)
-        self.assertIn("packet_bytes", kwargs)
+        self.assertEqual(kwargs.get("packet_bytes"), PROBE_PACKET_MIN_BYTES)
         server.discovery.update_peer_probe.assert_called_once()
 
 

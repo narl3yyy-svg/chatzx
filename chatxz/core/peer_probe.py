@@ -11,6 +11,7 @@ from chatxz.core.lan_rns import peer_path_on_family, request_paths_for_hash
 
 PROBE_INTERVAL_S = 30
 PROBE_INTERVAL_MIN_S = 0
+PROBE_INTERVAL_SERIAL_MIN_S = 3
 PROBE_INTERVAL_MAX_S = 18000
 ANNOUNCE_INTERVAL_MAX_S = 18000
 PROBE_TIMEOUT_S = 3.0
@@ -23,7 +24,7 @@ PROBE_PACKET_DEFAULT_BYTES = 64
 
 
 def clamp_probe_interval(seconds):
-    """User-configurable ping interval for LAN and serial liveness checks (0 = off)."""
+    """User-configurable ping interval for LAN liveness checks (0 = off)."""
     try:
         value = int(seconds)
     except (TypeError, ValueError):
@@ -31,13 +32,20 @@ def clamp_probe_interval(seconds):
     return max(PROBE_INTERVAL_MIN_S, min(PROBE_INTERVAL_MAX_S, value))
 
 
-def clamp_probe_packet_bytes(value):
-    """UDP probe payload size for LAN RTT measurement (32–1472 bytes)."""
+def clamp_serial_probe_interval(seconds):
+    """Serial probe interval — minimum 3s between USB path checks (0 = off)."""
     try:
-        size = int(value)
+        value = int(seconds)
     except (TypeError, ValueError):
-        size = PROBE_PACKET_DEFAULT_BYTES
-    return max(PROBE_PACKET_MIN_BYTES, min(PROBE_PACKET_MAX_BYTES, size))
+        value = PROBE_INTERVAL_S
+    if value <= 0:
+        return 0
+    return max(PROBE_INTERVAL_SERIAL_MIN_S, min(PROBE_INTERVAL_MAX_S, value))
+
+
+def probe_packet_bytes():
+    """Fixed minimum UDP probe size for LAN RTT (not user-adjustable)."""
+    return PROBE_PACKET_MIN_BYTES
 
 
 def clamp_announce_interval(seconds):
@@ -91,7 +99,9 @@ def register_probe_ack(probe_id, rtt_ms, source_ip=""):
     return True
 
 
-def _send_udp_probe(sock, host, probe_id, ts, packet_bytes=PROBE_PACKET_DEFAULT_BYTES):
+def _send_udp_probe(sock, host, probe_id, ts, packet_bytes=None):
+    if packet_bytes is None:
+        packet_bytes = probe_packet_bytes()
     payload = {
         "app": "chatxz",
         "type": "probe",
@@ -99,13 +109,15 @@ def _send_udp_probe(sock, host, probe_id, ts, packet_bytes=PROBE_PACKET_DEFAULT_
         "ts": ts,
     }
     packet = MAGIC + json.dumps(payload).encode("utf-8")
-    target = clamp_probe_packet_bytes(packet_bytes)
+    target = max(PROBE_PACKET_MIN_BYTES, int(packet_bytes or PROBE_PACKET_MIN_BYTES))
     if len(packet) < target:
         packet += b"\x00" * (target - len(packet))
     sock.sendto(packet, (host, BEACON_PORT))
 
 
-def probe_udp_peer(host, timeout_s=PROBE_TIMEOUT_S, packet_bytes=PROBE_PACKET_DEFAULT_BYTES):
+def probe_udp_peer(host, timeout_s=PROBE_TIMEOUT_S, packet_bytes=None):
+    if packet_bytes is None:
+        packet_bytes = probe_packet_bytes()
     host = (host or "").strip()
     if not host:
         return None

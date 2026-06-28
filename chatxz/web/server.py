@@ -805,10 +805,16 @@ class ChatWebServer:
         return os.path.join(self.config_dir, "brand_logo.png")
 
     def _probe_interval_s(self, transport="lan", settings=None):
-        from chatxz.core.peer_probe import PROBE_INTERVAL_S, clamp_probe_interval
+        from chatxz.core.peer_probe import (
+            PROBE_INTERVAL_S,
+            clamp_probe_interval,
+            clamp_serial_probe_interval,
+        )
         settings = settings or self.load_settings()
         if transport == "serial":
-            return clamp_probe_interval(settings.get("serial_probe_interval_s", PROBE_INTERVAL_S))
+            return clamp_serial_probe_interval(
+                settings.get("serial_probe_interval_s", PROBE_INTERVAL_S),
+            )
         return clamp_probe_interval(
             settings.get("lan_probe_interval_s", settings.get("probe_interval_s", PROBE_INTERVAL_S)),
         )
@@ -846,9 +852,8 @@ class ChatWebServer:
         if self.messaging and self.messaging._has_active_transfer():
             return 0, False
         from chatxz.core.peer_probe import (
-            PROBE_PACKET_DEFAULT_BYTES,
-            clamp_probe_packet_bytes,
             link_rtt_ms,
+            probe_packet_bytes,
             probe_serial_path,
             probe_udp_peer,
         )
@@ -884,10 +889,7 @@ class ChatWebServer:
                     self.discovery.update_peer_probe(hash_hex, ok=False)
                 continue
             if ip:
-                packet_bytes = clamp_probe_packet_bytes(
-                    settings.get("lan_probe_packet_bytes", PROBE_PACKET_DEFAULT_BYTES)
-                )
-                rtt = probe_udp_peer(ip, timeout_s=1.5, packet_bytes=packet_bytes)
+                rtt = probe_udp_peer(ip, timeout_s=1.5, packet_bytes=probe_packet_bytes())
                 if rtt is not None:
                     self.discovery.update_peer_probe(hash_hex, rtt_ms=rtt, ok=True)
                     rtt_updated = True
@@ -1340,7 +1342,6 @@ class ChatWebServer:
             "serial_announce_interval_s": 0,
             "lan_probe_interval_s": 30,
             "serial_probe_interval_s": 30,
-            "lan_probe_packet_bytes": 64,
             "brand_title": "",
             "setup_complete": False,
             "last_release_notes_seen": "",
@@ -2623,7 +2624,7 @@ class ChatWebServer:
                 via=data.get("via"),
                 lan_hash=data.get("lan_hash"),
                 serial_hash=data.get("serial_hash"),
-                custom_name=bool(name and str(name).strip()),
+                custom_name=bool(data.get("custom_name")),
             )
             self._schedule_contacts_broadcast()
             return web.json_response({"status": "ok", "contact": entry})
@@ -3012,14 +3013,20 @@ class ChatWebServer:
             )
             self.save_settings(settings)
             self._write_rns_config(settings)
-            serial_hot = None
             serial_hot = await self._run_blocking(
                 ensure_runtime_serial, settings.get("rns_interfaces")
             )
+            if configured_serial_enabled(settings.get("rns_interfaces")):
+                await self._run_blocking(
+                    lambda: self.identity_mgr.load_or_create(serial_enabled=True),
+                )
             if serial_hot and self.messaging:
                 from chatxz.core.lan_rns import prune_stale_lan_paths
                 await self._run_blocking(prune_stale_lan_paths)
-                await self._run_blocking(self.messaging._silent_announce)
+                await self._run_blocking(self.messaging.ensure_serial_runtime)
+                await self._run_blocking(
+                    self.messaging.on_serial_transport_attached, serial_hot,
+                )
                 peer = (
                     self.messaging.active_peer_hash
                     or getattr(self.messaging, "_session_peer_hash", None)
@@ -3199,11 +3206,18 @@ class ChatWebServer:
                 serial_was_online = iface is not None
                 if serial_was_online and not was_online:
                     self._enable_discovery(clear=False)
+                    if configured_serial_enabled(interfaces):
+                        await self._run_blocking(
+                            lambda: self.identity_mgr.load_or_create(serial_enabled=True),
+                        )
                     if self.messaging:
+                        await self._run_blocking(self.messaging.ensure_serial_runtime)
                         await self._run_blocking(
                             self.messaging.on_serial_transport_attached, iface,
                         )
                         self._sync_discovery_local_hashes()
+                        if self.discovery:
+                            self.discovery.reset_probe_timers()
                     if self._loop and not self._shutting_down:
                         peers = self._scoped_peers()
                         asyncio.run_coroutine_threadsafe(
@@ -3709,19 +3723,25 @@ class ChatWebServer:
 
     async def handle_disconnect(self, request):
         peer = ""
+        via = ""
         if request.can_read_body:
             try:
                 data = await request.json()
                 peer = (data.get("peer") or "").strip()
+                via = (data.get("via") or "").strip().lower()
             except Exception:
                 pass
         if not peer:
             peer = request.query.get("peer", "").strip()
+        if not via:
+            via = request.query.get("via", "").strip().lower()
         if not peer:
             peer = self._ui_state.get("viewing_peer") or self.active_peer or ""
         peer = self._peer_dest_hash(peer)
+        if via not in ("serial", "lan"):
+            via = None
         if self.messaging and peer:
-            self.messaging.disconnect_peer(peer, user_initiated=True)
+            self.messaging.disconnect_peer(peer, user_initiated=True, transport=via)
         elif self.messaging:
             self.messaging.disconnect_all_peers(clear_session=True)
         if self.active_peer and peer and self._peers_equivalent(self.active_peer, peer):
@@ -3730,12 +3750,18 @@ class ChatWebServer:
             "type": "link_closed",
             "data": {
                 "peer": peer,
+                "via": via,
                 "linked_peers": (
                     self.messaging.linked_peers() if self.messaging else []
                 ),
             },
         })
-        return web.json_response({"status": "ok"})
+        return web.json_response({
+            "status": "ok",
+            "linked_peers": (
+                self.messaging.linked_peers() if self.messaging else []
+            ),
+        })
 
     def _settings_api_payload(self, settings):
         from chatxz.release_notes import release_notes_payload
@@ -3979,21 +4005,23 @@ class ChatWebServer:
             from chatxz.core.peer_probe import (
                 clamp_announce_interval,
                 clamp_probe_interval,
-                clamp_probe_packet_bytes,
+                clamp_serial_probe_interval,
             )
             for key in ("lan_probe_interval_s", "serial_probe_interval_s", "probe_interval_s"):
                 if key in data:
-                    val = clamp_probe_interval(data.get(key))
+                    if key == "serial_probe_interval_s":
+                        val = clamp_serial_probe_interval(data.get(key))
+                    elif key == "probe_interval_s":
+                        val = clamp_probe_interval(data.get(key))
+                    else:
+                        val = clamp_probe_interval(data.get(key))
                     if key == "probe_interval_s":
                         settings["probe_interval_s"] = val
                         settings["lan_probe_interval_s"] = val
-                        settings["serial_probe_interval_s"] = val
+                        settings["serial_probe_interval_s"] = clamp_serial_probe_interval(val)
                     else:
                         settings[key] = val
-            if "lan_probe_packet_bytes" in data:
-                settings["lan_probe_packet_bytes"] = clamp_probe_packet_bytes(
-                    data.get("lan_probe_packet_bytes")
-                )
+            settings.pop("lan_probe_packet_bytes", None)
             if "brand_title" in data:
                 settings["brand_title"] = str(data.get("brand_title") or "").strip()[:18]
             for key in ("lan_announce_interval_s", "serial_announce_interval_s"):
@@ -4042,7 +4070,6 @@ class ChatWebServer:
                         "probe_interval_s",
                         "lan_probe_interval_s",
                         "serial_probe_interval_s",
-                        "lan_probe_packet_bytes",
                     )
                 ):
                     self._apply_probe_interval_settings(settings)
@@ -4070,7 +4097,6 @@ class ChatWebServer:
                     "probe_interval_s",
                     "lan_probe_interval_s",
                     "serial_probe_interval_s",
-                    "lan_probe_packet_bytes",
                 )
             ):
                 self._apply_probe_interval_settings(settings)

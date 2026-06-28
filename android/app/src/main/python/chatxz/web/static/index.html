@@ -611,11 +611,13 @@ body::before {
 }
 #disconnect-btn {
   background: var(--danger-soft); border: 1px solid rgba(255,107,122,0.25);
-  color: var(--danger); padding: 8px 16px; border-radius: var(--radius-md);
-  cursor: pointer; font-size: 12px; font-weight: 500;
+  color: var(--danger); padding: 4px 10px; border-radius: var(--radius-md);
+  cursor: pointer; font-size: 10px; font-weight: 500;
   transition: all var(--transition); font-family: inherit;
+  flex-shrink: 0;
 }
 #disconnect-btn:hover { background: rgba(255,107,122,0.2); }
+.dock-status #disconnect-btn { margin-right: 4px; }
 
 #placeholder {
   flex: 1; display: flex; align-items: center; justify-content: center;
@@ -1545,9 +1547,6 @@ body.android-shell.sidebar-open #sidebar-backdrop {
           <div class="status" id="peer-status">Pick a contact or discovered peer</div>
         </div>
       </div>
-      <div class="header-actions">
-        <button id="disconnect-btn" style="display:none" onclick="disconnect()">Disconnect</button>
-      </div>
     </div>
 
     <div id="placeholder">
@@ -1599,6 +1598,7 @@ body.android-shell.sidebar-open #sidebar-backdrop {
 
   <footer id="bottom-dock">
     <div class="dock-status" id="debug-bar">
+      <button id="disconnect-btn" style="display:none" onclick="disconnect()">Disconnect</button>
       <span id="temp-display">🌡 --°C</span>
       <span id="cpu-display">⚡ --%</span>
       <span id="ws-status">
@@ -1744,12 +1744,6 @@ body.android-shell.sidebar-open #sidebar-backdrop {
             <p class="field-hint">How often to ping LAN discovered peers and refresh RTT. 0 = off, max 18000s.</p>
           </div>
           <div class="settings-section">
-            <label for="settings-lan-probe-packet-bytes">LAN ping packet size (bytes)</label>
-            <input type="number" id="settings-lan-probe-packet-bytes" min="32" max="1472" step="1" value="64"
-              onchange="saveLanProbePacketBytes()" onblur="saveLanProbePacketBytes()">
-            <p class="field-hint">UDP probe payload size for RTT measurement (32–1472 bytes).</p>
-          </div>
-          <div class="settings-section">
             <label for="settings-lan-announce-interval">LAN auto-announce interval (seconds)</label>
             <input type="number" id="settings-lan-announce-interval" min="0" max="18000" step="1" value="0"
               onchange="saveLanAnnounceInterval()" onblur="saveLanAnnounceInterval()">
@@ -1757,9 +1751,9 @@ body.android-shell.sidebar-open #sidebar-backdrop {
           </div>
           <div class="settings-section">
             <label for="settings-serial-probe-interval">Serial link ping interval (seconds)</label>
-            <input type="number" id="settings-serial-probe-interval" min="0" max="18000" step="1" value="30"
+            <input type="number" id="settings-serial-probe-interval" min="3" max="18000" step="1" value="30"
               onchange="saveSerialProbeInterval()" onblur="saveSerialProbeInterval()">
-            <p class="field-hint">How often to ping USB serial peers and refresh RTT. 0 = off, max 18000s.</p>
+            <p class="field-hint">How often to ping USB serial peers and refresh RTT. 0 = off, min 3s when enabled.</p>
           </div>
           <div class="settings-section">
             <label for="settings-serial-announce-interval">Serial auto-announce interval (seconds)</label>
@@ -2252,10 +2246,6 @@ function applySettingsToForm(s, ifaces) {
     const v = s.lan_probe_interval_s != null ? s.lan_probe_interval_s : s.probe_interval_s;
     lanProbeEl.value = String(v != null ? v : 30);
   }
-  const lanProbePktEl = document.getElementById('settings-lan-probe-packet-bytes');
-  if (lanProbePktEl) {
-    lanProbePktEl.value = String(s.lan_probe_packet_bytes != null ? s.lan_probe_packet_bytes : 64);
-  }
   const serialProbeEl = document.getElementById('settings-serial-probe-interval');
   if (serialProbeEl) {
     const v = s.serial_probe_interval_s != null ? s.serial_probe_interval_s : s.probe_interval_s;
@@ -2462,27 +2452,11 @@ function saveLanProbeInterval() {
   }).catch(() => toast('Save failed'));
 }
 
-function saveLanProbePacketBytes() {
-  const el = document.getElementById('settings-lan-probe-packet-bytes');
-  let bytes = parseInt(el?.value, 10);
-  if (!Number.isFinite(bytes)) bytes = 64;
-  bytes = Math.max(32, Math.min(1472, bytes));
-  if (el) el.value = String(bytes);
-  fetch('/api/settings', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({lan_probe_packet_bytes: bytes}),
-  }).then(r => r.json()).then(d => {
-    if (d.status === 'ok') {
-      window._appSettings = d.settings || {};
-      toast('LAN ping packet: ' + bytes + ' bytes');
-    } else toast('Save failed: ' + (d.error || ''));
-  }).catch(() => toast('Save failed'));
-}
-
 function saveSerialProbeInterval() {
   const el = document.getElementById('settings-serial-probe-interval');
-  const sec = clampIntervalInput(el, 30);
+  let sec = clampIntervalInput(el, 30);
+  if (sec > 0 && sec < 3) sec = 3;
+  if (el) el.value = String(sec);
   fetch('/api/settings', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -2669,10 +2643,18 @@ function showWelcome() {
   renderContacts(allContacts);
 }
 
-function applyLinkRttToDiscovered(hash, rttMs) {
+const linkRttByKey = {};
+
+function applyLinkRttToDiscovered(hash, rttMs, via) {
   if (!hash) return;
   const n = parseInt(rttMs, 10);
   const clear = !Number.isFinite(n) || n < 0;
+  const transport = normalizeVia(via || viewingVia);
+  const lk = linkKey(hash, transport);
+  if (lk) {
+    if (clear) delete linkRttByKey[lk];
+    else linkRttByKey[lk] = n;
+  }
   window._discoveredPeers = (window._discoveredPeers || []).map(p => {
     if (!peersMatch(p.hash, hash) && !peersMatch(p.identity_hash, hash)) return p;
     if (clear) {
@@ -2690,6 +2672,8 @@ function rttForViewingPeer() {
   if (!viewingPeer) return '';
   if (!isPeerLinked(viewingPeer, viewingVia)) return '';
   const via = normalizeVia(viewingVia) === 'serial' ? 'serial' : 'lan';
+  const lk = linkKey(viewingPeer, via);
+  if (lk && linkRttByKey[lk] != null) return formatRtt(linkRttByKey[lk]);
   const contact = allContacts.find(c =>
     peerKey(c.hash) === peerKey(viewingPeer)
     || peerKey(c.lan_hash) === peerKey(viewingPeer)
@@ -2719,8 +2703,8 @@ function updatePeerHeader() {
   const name = contactNameFor(viewingPeer) || truncateHash(viewingPeer);
   const linked = isPeerLinked(viewingPeer, viewingVia);
   const rtt = linked ? rttForViewingPeer() : '';
-  const rttBadge = rtt ? `<span class="peer-rtt">${escapeHtml(rtt)}</span>` : '';
-  document.getElementById('peer-name').innerHTML = `${escapeHtml(name)}${rttBadge}`;
+  const rttBadge = rtt ? ` · <span class="peer-rtt">${escapeHtml(rtt)}</span>` : '';
+  document.getElementById('peer-name').textContent = name;
   linkPeer = linked ? linkKey(viewingPeer, viewingVia) : null;
   const fullHash = peerKey(viewingPeer) || '';
   const iface = peerInterfaceLabel(viewingVia);
@@ -3067,7 +3051,7 @@ function handleWSMessage(msg) {
     if (msg.data?.hash) {
       const h = msg.data.hash;
       registerPeerAliases(h, ...(msg.data.aliases || []));
-      if (msg.data.rtt_ms != null) applyLinkRttToDiscovered(h, msg.data.rtt_ms);
+      if (msg.data.rtt_ms != null) applyLinkRttToDiscovered(h, msg.data.rtt_ms, viewingVia);
       const passive = msg.data.passive || msg.data.user_disconnected;
       if (!passive && msg.data.promote_active !== false) {
         setLinkPeer(h, true);
@@ -3091,11 +3075,13 @@ function handleWSMessage(msg) {
       pollQueue();
     }
   } else if (msg.type === 'link_closed') {
-    if (msg.data?.peer) {
-      setLinkPeer(msg.data.peer, false);
-      applyLinkRttToDiscovered(msg.data.peer, null);
+    if (msg.data?.linked_peers) {
+      syncLinkedPeers(msg.data.linked_peers);
+    } else if (msg.data?.peer) {
+      const closedVia = msg.data.via || viewingVia;
+      setLinkPeer(msg.data.peer, false, closedVia);
+      applyLinkRttToDiscovered(msg.data.peer, null, closedVia);
     }
-    if (msg.data?.linked_peers) syncLinkedPeers(msg.data.linked_peers);
     updatePeerHeader();
     if (!linkedPeers.size) {
       setLinkStatus('disconnected', 'Inactive');
@@ -3782,11 +3768,20 @@ function doSaveContact() {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(body)
-  }).then(() => {
+  }).then(r => r.json()).then(d => {
+    if (d.status !== 'ok') {
+      toast('Save failed: ' + (d.error || 'unknown'));
+      return;
+    }
     toast('Contact saved');
     closeSaveContact();
+    if (d.contact) {
+      allContacts = dedupeContacts([...(allContacts || []), d.contact]);
+      renderContacts(allContacts);
+      renderDiscovered(window._discoveredPeers || []);
+    }
     fetchIdentity();
-  });
+  }).catch(() => toast('Save failed'));
 }
 
 function actionClearPeerHistory() {
@@ -4262,12 +4257,12 @@ function saveSerialInterface(id) {
       if (saved && saved.port_status === 'permission_denied') {
         requestUsbPermission(port);
         toast('Saved ' + port + ' — grant USB access, then Apply again');
-      } else if (d.serial_hot_added) {
+      } else if (d.serial_hot_added || (saved && saved.serial_active)) {
         toast('Serial active in RNS — no restart needed');
-      } else if (saved && saved.serial_active) {
-        toast(appPlatform === 'android' ? 'Serial enabled — hot-add pending (check Network panel)' : 'Serial enabled — restart chatxz to apply');
+      } else if (saved && saved.port_status === 'ok') {
+        toast('Serial port ready — tap Announce Serial to discover peers');
       } else {
-        toast(appPlatform === 'android' ? 'Serial settings saved — pick port & grant USB access' : 'Serial settings saved — restart chatxz to apply');
+        toast(appPlatform === 'android' ? 'Serial settings saved — pick port & grant USB access' : 'Serial settings saved — connect USB device');
       }
       refreshNetworkStatus();
     } else {
@@ -4971,7 +4966,8 @@ function saveSettings() {
   const hub_host = document.getElementById('settings-hub-host')?.value.trim() || '';
   const hub_port = parseInt(document.getElementById('settings-hub-port')?.value, 10) || 4242;
   const lan_probe_interval_s = clampIntervalInput(document.getElementById('settings-lan-probe-interval'), 30);
-  const serial_probe_interval_s = clampIntervalInput(document.getElementById('settings-serial-probe-interval'), 30);
+  let serial_probe_interval_s = clampIntervalInput(document.getElementById('settings-serial-probe-interval'), 30);
+  if (serial_probe_interval_s > 0 && serial_probe_interval_s < 3) serial_probe_interval_s = 3;
   const lan_announce_interval_s = clampIntervalInput(document.getElementById('settings-lan-announce-interval'), 0);
   const serial_announce_interval_s = clampIntervalInput(document.getElementById('settings-serial-announce-interval'), 0);
   fetch('/api/settings', {
@@ -4980,11 +4976,6 @@ function saveSettings() {
     body: JSON.stringify({
       name, history_retention: retention, received_dir, hub_role, hub_host, hub_port,
       lan_probe_interval_s, serial_probe_interval_s,
-      lan_probe_packet_bytes: (() => {
-        let b = parseInt(document.getElementById('settings-lan-probe-packet-bytes')?.value, 10);
-        if (!Number.isFinite(b)) b = 64;
-        return Math.max(32, Math.min(1472, b));
-      })(),
       brand_title: (document.getElementById('settings-brand-title')?.value || '').trim().slice(0, 18),
       lan_announce_interval_s, serial_announce_interval_s,
     })
@@ -5108,16 +5099,19 @@ function openChat(hash, tryConnect, meta) {
 
 function disconnect() {
   const peer = viewingPeer || '';
+  const via = viewingVia ? normalizeVia(viewingVia) : null;
   fetch('/api/disconnect', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({peer}),
-  }).then(() => {
-    if (peer) setLinkPeer(peer, false);
-    updatePeerHeader();
+    body: JSON.stringify({peer, via}),
+  }).then(r => r.json()).then(d => {
+    if (peer) setLinkPeer(peer, false, via);
+    if (peer) applyLinkRttToDiscovered(peer, null, via);
+    if (d.linked_peers) syncLinkedPeers(d.linked_peers);
+    else updatePeerHeader();
     if (!linkedPeers.size) setLinkStatus('disconnected', 'Inactive');
     fetchIdentity();
-  });
+  }).catch(() => toast('Disconnect failed'));
 }
 
 function sendMessage() {
