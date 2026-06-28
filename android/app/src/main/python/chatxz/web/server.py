@@ -12,6 +12,11 @@ if getattr(sys, "frozen", False):
 from chatxz.core.identity import IdentityManager
 from chatxz.core.messaging import HUB_GROUP_PEER, MessagingBackend, is_hub_peer_hash
 from chatxz.core.voice import VoiceRecorder, VoicePlayer
+from chatxz.core.call_audio_engine import (
+    CallAudioEngine,
+    OPUS_CODEC,
+    call_audio_available,
+)
 from chatxz.core.discovery import PeerDiscovery
 from chatxz.core.lan_beacon import LanBeacon, BEACON_PORT
 from chatxz.core.contacts import (
@@ -470,6 +475,7 @@ class ChatWebServer:
         self.identity = None
         self.messaging = None
         self.voice_recorder = None
+        self.call_audio_engine = None
 
         self.websockets = set()
         self.message_history = self._load_history()
@@ -2484,10 +2490,47 @@ class ChatWebServer:
                 self._loop
             )
 
+    def _start_call_audio_engine(self):
+        if self.call_audio_engine or not call_audio_available():
+            return
+        if not self.messaging:
+            return
+
+        def send_audio(b64, codec):
+            try:
+                return bool(self.messaging.call_send_audio(b64, codec))
+            except Exception:
+                return False
+
+        engine = CallAudioEngine(send_audio)
+        if engine.start():
+            self.call_audio_engine = engine
+
+    def _stop_call_audio_engine(self):
+        if self.call_audio_engine:
+            try:
+                self.call_audio_engine.stop()
+            except Exception:
+                pass
+            self.call_audio_engine = None
+
     def _on_call_event(self, event, peer_hash, payload=None):
+        payload = payload or {}
+        if event == "accepted":
+            self._start_call_audio_engine()
+        elif event in ("ended", "rejected"):
+            self._stop_call_audio_engine()
+        elif event == "audio" and self.call_audio_engine:
+            seq = int(payload.get("seq") or 0)
+            data = payload.get("data") or ""
+            codec = (payload.get("codec") or OPUS_CODEC).strip()
+            self.call_audio_engine.receive_frame(seq, data, codec)
+
         if not (self.websockets and self._loop):
             return
-        data = {"peer": peer_hash or "", **(payload or {})}
+        data = {"peer": peer_hash or "", **payload}
+        if self.call_audio_engine and event == "audio":
+            data["native_playback"] = True
         asyncio.run_coroutine_threadsafe(
             self._broadcast({"type": f"call_{event}", "data": data}),
             self._loop,
@@ -2632,6 +2675,8 @@ class ChatWebServer:
             "serial_active": serial_active,
             "serial_configured": serial_configured,
             "serial_in_rns": serial_in_rns,
+            "native_call_audio": call_audio_available(),
+            "call_codec": OPUS_CODEC,
         })
 
     async def handle_add_contact(self, request):
@@ -4748,7 +4793,10 @@ class ChatWebServer:
         peer = self._peer_dest_hash(peer) if peer else ""
 
         if action == "status":
-            return web.json_response(self.messaging.call_status())
+            st = self.messaging.call_status()
+            if self.call_audio_engine:
+                st.update(self.call_audio_engine.stats())
+            return web.json_response(st)
 
         if action == "invite":
             if not peer:

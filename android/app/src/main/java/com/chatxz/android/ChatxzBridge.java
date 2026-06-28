@@ -75,6 +75,17 @@ public class ChatxzBridge {
     }
 
     @JavascriptInterface
+    public void showIncomingCallNotification(String callerName, String subtitle, String peerHash) {
+        activity.runOnUiThread(() ->
+                ChatxzNotificationHelper.showIncomingCall(callerName, subtitle, peerHash));
+    }
+
+    @JavascriptInterface
+    public void cancelIncomingCallNotification() {
+        activity.runOnUiThread(ChatxzNotificationHelper::cancelIncomingCall);
+    }
+
+    @JavascriptInterface
     public void stopCallVibrate() {
         activity.runOnUiThread(activity::stopCallVibrate);
     }

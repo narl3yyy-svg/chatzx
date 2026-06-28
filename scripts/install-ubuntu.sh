@@ -15,9 +15,9 @@ sudo apt update
 sudo apt install -y python3 python3-pip python3-setuptools python3-dev build-essential
 
 # Optional: voice support
-read -p "Install voice support (pyaudio)? [y/N]: " voice_opt
+read -p "Install voice support (pyaudio + aiortc Opus)? [y/N]: " voice_opt
 if [[ "$voice_opt" =~ ^[Yy]$ ]]; then
-    sudo apt install -y portaudio19-dev python3-pyaudio
+    sudo apt install -y portaudio19-dev python3-pyaudio ffmpeg libavformat-dev libavdevice-dev
 fi
 
 # Optional: image display in terminal
@@ -28,7 +28,11 @@ fi
 
 # Install chatxz
 echo "Installing chatxz..."
-pip3 install --user .
+if [[ "$voice_opt" =~ ^[Yy]$ ]]; then
+    pip3 install --user ".[voice]"
+else
+    pip3 install --user .
+fi
 
 read -p "Install system-wide (requires sudo) instead of user? [y/N]: " sys_opt
 if [[ "$sys_opt" =~ ^[Yy]$ ]]; then

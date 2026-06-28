@@ -3,6 +3,10 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.7.0": [
+        "Voice calls use Opus (48 kHz, 20 ms frames) with aiortc on desktop — PyAudio handles mic/speaker with jitter buffer and packet-loss concealment.",
+        "Android shows an incoming-call notification (not just vibration). Browser uses WebCodecs Opus when native audio is unavailable.",
+    ],
     "0.6.7": [
         "Server auto-splits oversized call audio to fit RNS MTU — fixes silent calls when the browser cached old frame sizes.",
         "New live call dashboard: link RTT, audio frames in/out, jitter buffer, codec, and styled hang-up controls.",

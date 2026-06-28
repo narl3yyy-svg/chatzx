@@ -3058,6 +3058,8 @@ function fetchIdentity() {
         const hv = document.getElementById('header-version');
         if (hv) hv.textContent = 'v' + d.app_version;
       }
+      nativeCallAudioEnabled = !!d.native_call_audio;
+      window._callCodecPref = d.call_codec || 'audio/opus;rate=48000;frame=20';
       appPlatform = d.platform || (window.chatxzAndroid?.isAndroid?.() ? 'android' : 'desktop');
       updatePlatformHints();
       updateAndroidComposerMode();
@@ -5874,6 +5876,12 @@ let callDashMinimized = false;
 let callLocalFramesIn = 0;
 let callLocalFramesOut = 0;
 let callServerStats = {};
+let nativeCallAudioEnabled = false;
+let callOpusEncoder = null;
+let callOpusDecoder = null;
+let callOpusDecodeTs = 0;
+let callOpusEncodeTs = 0;
+let callOpusPending = null;
 let ringtoneTimer = null;
 let sharedMicStream = null;
 let sharedMicRefs = 0;
@@ -5926,6 +5934,9 @@ function showIncomingCall(peer, data) {
   if (sub) sub.textContent = `${name} · ${peerInterfaceLabel(callVia)}`;
   document.getElementById('call-incoming-overlay')?.classList.add('open');
   startCallRingtone();
+  if (window.chatxzAndroid?.showIncomingCallNotification) {
+    window.chatxzAndroid.showIncomingCallNotification(name, `${peerInterfaceLabel(callVia)} call`, callPeer);
+  }
   updatePeerHeader();
 }
 
@@ -5963,6 +5974,9 @@ function stopCallRingtone() {
   }
   if (window.chatxzAndroid?.stopCallVibrate) {
     window.chatxzAndroid.stopCallVibrate();
+  }
+  if (window.chatxzAndroid?.cancelIncomingCallNotification) {
+    window.chatxzAndroid.cancelIncomingCallNotification();
   }
 }
 
@@ -6008,14 +6022,16 @@ function updateCallDashboard() {
   }
   const tx = document.getElementById('call-stat-txout');
   const rx = document.getElementById('call-stat-rxin');
-  const outN = Math.max(callLocalFramesOut, callServerStats.audio_out || 0);
-  const inN = Math.max(callLocalFramesIn, callServerStats.audio_in || 0);
+  const outN = Math.max(callLocalFramesOut, callServerStats.audio_out || callServerStats.frames_sent || 0);
+  const inN = Math.max(callLocalFramesIn, callServerStats.audio_in || callServerStats.frames_recv || 0);
   if (tx) tx.textContent = String(outN);
   if (rx) rx.textContent = String(inN);
   const jitterEl = document.getElementById('call-stat-jitter');
   if (jitterEl) {
     const rate = (callAudioCtx && callAudioCtx.sampleRate) || cfg.rate;
-    const ms = Math.round((callRingCount / rate) * 1000);
+    const ms = callServerStats.jitter_ms != null
+      ? callServerStats.jitter_ms
+      : Math.round((callRingCount / rate) * 1000);
     jitterEl.textContent = `${ms} ms`;
     jitterEl.className = 'value' + (ms > 120 ? ' warn' : ms >= 40 ? ' good' : '');
   }
@@ -6027,8 +6043,19 @@ function updateCallDashboard() {
   }
   const codecEl = document.getElementById('call-stat-codec');
   if (codecEl) {
-    codecEl.textContent = cfg.useMulaw ? `μ-law ${cfg.rate / 1000}k` : `PCM ${cfg.rate / 1000}k`;
+    if (cfg.native) codecEl.textContent = 'Opus 48k · native';
+    else if (cfg.useOpus) codecEl.textContent = 'Opus 48k';
+    else if (cfg.useMulaw) codecEl.textContent = `μ-law ${cfg.rate / 1000}k`;
+    else codecEl.textContent = `PCM ${cfg.rate / 1000}k`;
   }
+}
+
+function useNativeCallAudio() {
+  return nativeCallAudioEnabled && !isAndroidShell();
+}
+
+function browserOpusSupported() {
+  return !!(window.AudioEncoder && window.AudioDecoder && window.AudioData);
 }
 
 function openCallDashboard(force) {
@@ -6101,8 +6128,10 @@ function showOutgoingCall(peer) {
 
 function ensureCallAudioCtx() {
   if (!callAudioCtx) {
+    const cfg = callAudioConfig();
+    const prefer = cfg.rate || 48000;
     try {
-      callAudioCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
+      callAudioCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate: prefer});
     } catch (_) {
       callAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }
@@ -6113,11 +6142,86 @@ function ensureCallAudioCtx() {
 
 function callAudioConfig() {
   const via = normalizeVia(callVia || viewingVia);
-  if (via === 'serial') {
-    return { rate: 8000, frameSamples: 160, jitterTarget: 320, jitterMax: 640, useMulaw: true };
+  if (useNativeCallAudio()) {
+    return {
+      rate: 48000, frameSamples: 960, jitterTarget: 2880, jitterMax: 5760,
+      useOpus: true, useMulaw: false, native: true,
+    };
   }
-  // 480 μ-law bytes ≈ 840 B JSON packet (RNS link budget 1016 B at 1.06 KB MTU)
-  return { rate: 16000, frameSamples: 480, jitterTarget: 960, jitterMax: 1920, useMulaw: true };
+  if (via === 'serial') {
+    return { rate: 8000, frameSamples: 160, jitterTarget: 320, jitterMax: 640, useOpus: false, useMulaw: true };
+  }
+  const opus = browserOpusSupported();
+  return {
+    rate: opus ? 48000 : 16000,
+    frameSamples: opus ? 960 : 480,
+    jitterTarget: opus ? 2880 : 960,
+    jitterMax: opus ? 5760 : 1920,
+    useOpus: opus,
+    useMulaw: !opus,
+  };
+}
+
+async function ensureCallOpusDecoder(cfg) {
+  if (!cfg.useOpus || !browserOpusSupported()) return false;
+  if (callOpusDecoder && callOpusDecoder.state === 'configured') return true;
+  callOpusDecoder = new AudioDecoder({
+    output: frame => {
+      try {
+        const n = frame.numberOfFrames;
+        const buf = new Float32Array(n);
+        frame.copyTo(buf, {planeIndex: 0, format: 'f32'});
+        ensureCallPlaybackNode();
+        ringWriteSamples(buf);
+        const c = callAudioConfig();
+        if (callRingCount > c.jitterMax) ringDropSamples(callRingCount - c.jitterMax);
+        if (!callJitterPrimed && callRingCount >= c.jitterTarget) callJitterPrimed = true;
+        callLocalFramesIn++;
+        updateCallDashboard();
+      } finally {
+        frame.close();
+      }
+    },
+    error: () => {},
+  });
+  callOpusDecoder.configure({codec: 'opus', sampleRate: cfg.rate, numberOfChannels: 1});
+  return true;
+}
+
+async function ensureCallOpusEncoder(cfg) {
+  if (!cfg.useOpus || !browserOpusSupported()) return false;
+  if (callOpusEncoder && callOpusEncoder.state === 'configured') return true;
+  callOpusEncoder = new AudioEncoder({
+    output: (chunk) => {
+      if (callState !== 'active' || !chunk.data) return;
+      let bin = '';
+      const bytes = new Uint8Array(chunk.data);
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      sendCallAudioFrame(btoa(bin), `audio/opus;rate=${cfg.rate};frame=20`);
+    },
+    error: () => {},
+  });
+  callOpusEncoder.configure({
+    codec: 'opus',
+    sampleRate: cfg.rate,
+    numberOfChannels: 1,
+    bitrate: 32000,
+  });
+  return true;
+}
+
+function decodeOpusB64(b64, cfg) {
+  if (!callOpusDecoder || callOpusDecoder.state !== 'configured') return;
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const chunk = new EncodedAudioChunk({
+    type: 'key',
+    timestamp: callOpusDecodeTs,
+    data: bytes,
+  });
+  callOpusDecodeTs += 20000;
+  callOpusDecoder.decode(chunk);
 }
 
 const CALL_RING_CAPACITY = 32000;
@@ -6212,6 +6316,21 @@ function encodeCallFrame(pcm, cfg) {
   return { b64: pcmToB64(pcm), codec: callPcmCodec(cfg.rate) };
 }
 
+function encodeCallFrameOpus(floats, cfg) {
+  if (!callOpusEncoder || callOpusEncoder.state !== 'configured') return;
+  const data = new AudioData({
+    format: 'f32',
+    sampleRate: cfg.rate,
+    numberOfFrames: floats.length,
+    numberOfChannels: 1,
+    timestamp: callOpusEncodeTs,
+    data: floats,
+  });
+  callOpusEncodeTs += 20000;
+  callOpusEncoder.encode(data);
+  data.close();
+}
+
 function floatToPcm(samples) {
   const pcm = new Int16Array(samples.length);
   for (let i = 0; i < samples.length; i++) {
@@ -6290,6 +6409,9 @@ function resampleFloats(input, inputRate, outputRate) {
 function decodeCallAudio(b64, codec) {
   const rate = parseCallAudioRate(codec);
   const raw = codec || '';
+  if (raw.includes('opus')) {
+    return { opus: true, b64, rate };
+  }
   if (raw.includes('pcmulaw')) {
     return { samples: mulawB64ToFloats(b64), rate };
   }
@@ -6425,6 +6547,10 @@ function primeCallPlayback() {
 }
 
 async function startCallCapture() {
+  if (useNativeCallAudio()) {
+    primeCallPlayback();
+    return true;
+  }
   if (callCaptureNode) return true;
   stopCallRingtone();
   try {
@@ -6435,6 +6561,8 @@ async function startCallCapture() {
     stopCallCapturePipeline();
     callCaptureSource = ctx.createMediaStreamSource(stream);
     const cfg = callAudioConfig();
+    if (cfg.useOpus) await ensureCallOpusEncoder(cfg);
+    if (cfg.useOpus) await ensureCallOpusDecoder(cfg);
     const processor = ctx.createScriptProcessor(2048, 1, 1);
     const silent = ctx.createGain();
     silent.gain.value = 0;
@@ -6451,10 +6579,19 @@ async function startCallCapture() {
       if (accum.length >= frameInputSamples) {
         const chunk = accum.subarray(0, frameInputSamples);
         accum = accum.subarray(frameInputSamples);
-        const pcm = resampleLinearToPcm(chunk, inputRate, cfg.rate);
-        if (pcm.length >= cfg.frameSamples) {
-          const frame = encodeCallFrame(pcm.subarray(0, cfg.frameSamples), cfg);
-          sendCallAudioFrame(frame.b64, frame.codec);
+        if (cfg.useOpus && callOpusEncoder) {
+          const floats = new Float32Array(cfg.frameSamples);
+          for (let i = 0; i < cfg.frameSamples; i++) {
+            const src = Math.min(i * inputRate / cfg.rate, chunk.length - 1);
+            floats[i] = chunk[Math.floor(src)] || 0;
+          }
+          encodeCallFrameOpus(floats, cfg);
+        } else {
+          const pcm = resampleLinearToPcm(chunk, inputRate, cfg.rate);
+          if (pcm.length >= cfg.frameSamples) {
+            const frame = encodeCallFrame(pcm.subarray(0, cfg.frameSamples), cfg);
+            sendCallAudioFrame(frame.b64, frame.codec);
+          }
         }
       }
     };
@@ -6480,11 +6617,18 @@ function stopCallCapturePipeline() {
   }
 }
 
-function enqueueCallAudio(b64, codec) {
+function enqueueCallAudio(b64, codec, opts) {
   if (!b64 || callState !== 'active') return;
-  callLocalFramesIn++;
+  if (useNativeCallAudio() || (opts && opts.native_playback)) return;
   const decoded = decodeCallAudio(b64, codec);
-  if (!decoded || !decoded.samples.length) return;
+  if (!decoded) return;
+  if (decoded.opus) {
+    const cfg = callAudioConfig();
+    decodeOpusB64(decoded.b64, cfg);
+    return;
+  }
+  if (!decoded.samples.length) return;
+  callLocalFramesIn++;
   const ctx = ensureCallAudioCtx();
   let samples = decoded.samples;
   if (decoded.rate !== ctx.sampleRate) {
@@ -6542,7 +6686,7 @@ function handleCallWS(event, data) {
   if (event === 'audio') {
     if (callState !== 'active') return;
     if (callId && data.call_id && data.call_id !== callId) return;
-    enqueueCallAudio(data.data, data.codec);
+    enqueueCallAudio(data.data, data.codec, data);
   }
 }
 

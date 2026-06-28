@@ -2,6 +2,16 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.7.0] — 2026-06-28
+
+### Added
+- **Opus call audio (aiortc + PyAudio)** — native 48 kHz / 20 ms Opus frames on desktop with jitter buffer, PLC, and system mic/speaker via PyAudio callbacks.
+- **WebCodecs Opus** in the browser when native audio is unavailable (Android / fallback).
+- **Android incoming-call notification** — high-priority notification channel in addition to vibration.
+
+### Changed
+- LAN voice codec default is Opus (`audio/opus;rate=48000;frame=20`); μ-law remains for USB serial and legacy peers.
+
 ## [0.6.7] — 2026-06-28
 
 ### Fixed
