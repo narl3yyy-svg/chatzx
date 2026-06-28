@@ -3,6 +3,10 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.6.3": [
+        "Call audio uses proper linear resampling (16 kHz on LAN, 8 kHz on USB) — fixes garbled “fan blade” sound.",
+        "Playback batches frames and caps queue depth so voice stays in sync instead of lagging behind.",
+    ],
     "0.6.2": [
         "Incoming calls ring with a built-in tone and vibration on Android.",
         "Shared microphone pool fixes Android “microphone busy” when switching call ↔ voice note.",

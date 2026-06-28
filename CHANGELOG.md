@@ -2,6 +2,12 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.6.3] — 2026-06-27
+
+### Fixed
+- **Garbled / laggy call audio** — linear interpolation resampling replaces aliased nearest-neighbor downsampling; LAN calls use 16 kHz PCM, USB serial stays 8 kHz.
+- **Playback lag** — batches 2 frames per play cycle, caps queue at 3–4 frames, and recovers from buffer underruns; explicit little-endian PCM encode/decode.
+
 ## [0.6.2] — 2026-06-27
 
 ### Added

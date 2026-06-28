@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — each transport uses its own RNS identity, and messages travel over encrypted links on your LAN (Wi‑Fi, Ethernet, USB serial).
 
-**Current version:** 0.6.2
+**Current version:** 0.6.3
 
 ## How chatxz works (v0.5+)
 
@@ -287,6 +287,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.6.3** — **Call audio quality:** linear resampling (16 kHz LAN), batched playback, low-latency queue cap
 - **v0.6.2** — **Calls polish:** incoming ringtone + Android vibration; shared mic fixes “busy”; WS audio frames
 - **v0.6.1** — **Call + contact fixes:** PCM call audio (audible duplex); contact delete blocklist; names persist offline
 - **v0.6.0** — **Live voice calls:** duplex audio over RNS on active links; 📞 in chat header, incoming-call UI, `/api/call` + WebSocket events

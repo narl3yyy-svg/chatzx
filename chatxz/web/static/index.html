@@ -5753,7 +5753,6 @@ let callCaptureSource = null;
 let callAudioCtx = null;
 let callNextPlayTime = 0;
 let callPlaybackPrimed = false;
-const CALL_PCM_RATE = 8000;
 let callPlayQueue = [];
 let callPlaying = false;
 let callTimerId = null;
@@ -5875,29 +5874,43 @@ function ensureCallAudioCtx() {
   return callAudioCtx;
 }
 
-function downsampleToPcm(input, inputRate, outputRate) {
-  if (!input || !input.length) return new Int16Array(0);
-  if (inputRate === outputRate) {
-    const pcm = new Int16Array(input.length);
-    for (let i = 0; i < input.length; i++) {
-      const s = Math.max(-1, Math.min(1, input[i]));
-      pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-    }
-    return pcm;
+function callAudioConfig() {
+  const via = normalizeVia(callVia || viewingVia);
+  if (via === 'serial') {
+    return { rate: 8000, frameSamples: 120, maxQueue: 3, primeSec: 0.05, batchPlayback: 2 };
   }
-  const ratio = inputRate / outputRate;
-  const outLen = Math.max(1, Math.floor(input.length / ratio));
-  const pcm = new Int16Array(outLen);
-  for (let i = 0; i < outLen; i++) {
-    const idx = Math.min(input.length - 1, Math.floor(i * ratio));
-    const s = Math.max(-1, Math.min(1, input[idx]));
-    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  return { rate: 16000, frameSamples: 320, maxQueue: 4, primeSec: 0.04, batchPlayback: 2 };
+}
+
+function floatToPcm(samples) {
+  const pcm = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    pcm[i] = s < 0 ? Math.round(s * 0x8000) : Math.round(s * 0x7fff);
   }
   return pcm;
 }
 
+function resampleLinearToPcm(input, inputRate, outputRate) {
+  if (!input || !input.length) return new Int16Array(0);
+  if (inputRate === outputRate) return floatToPcm(input);
+  const outLen = Math.max(1, Math.round(input.length * outputRate / inputRate));
+  const floats = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const src = i * inputRate / outputRate;
+    const idx = Math.floor(src);
+    const frac = src - idx;
+    const s0 = input[Math.min(idx, input.length - 1)] || 0;
+    const s1 = input[Math.min(idx + 1, input.length - 1)] || s0;
+    floats[i] = s0 + (s1 - s0) * frac;
+  }
+  return floatToPcm(floats);
+}
+
 function pcmToB64(pcm) {
-  const bytes = new Uint8Array(pcm.buffer);
+  const bytes = new Uint8Array(pcm.length * 2);
+  const view = new DataView(bytes.buffer);
+  for (let i = 0; i < pcm.length; i++) view.setInt16(i * 2, pcm[i], true);
   let bin = '';
   for (let i = 0; i < bytes.length; i += 0x8000) {
     bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
@@ -5907,19 +5920,26 @@ function pcmToB64(pcm) {
 
 function b64ToPcm(b64) {
   const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new Int16Array(bytes.buffer);
+  const samples = Math.floor(bin.length / 2);
+  const pcm = new Int16Array(samples);
+  for (let i = 0; i < samples; i++) {
+    const lo = bin.charCodeAt(i * 2);
+    const hi = bin.charCodeAt(i * 2 + 1);
+    let v = (hi << 8) | lo;
+    if (v >= 0x8000) v -= 0x10000;
+    pcm[i] = v;
+  }
+  return pcm;
 }
 
 function callPcmCodec(rate) {
-  return `audio/pcm;rate=${rate || CALL_PCM_RATE}`;
+  return `audio/pcm;rate=${rate || callAudioConfig().rate}`;
 }
 
 function parseCallPcmRate(codec) {
   const raw = codec || '';
   const m = raw.match(/rate=(\d+)/i);
-  return m ? parseInt(m[1], 10) : CALL_PCM_RATE;
+  return m ? parseInt(m[1], 10) : callAudioConfig().rate;
 }
 
 function sharedMicActive() {
@@ -5937,10 +5957,9 @@ async function acquireSharedMic(opts) {
   await releaseSharedMic(true);
   if (recording) stopVoice();
   await new Promise(r => setTimeout(r, isAndroidShell() ? 300 : 120));
-  const richAudio = {
-    audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true},
-    video: false,
-  };
+  const richAudio = forCall
+    ? { audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true}, video: false }
+    : { audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true}, video: false };
   const tries = isAndroidShell() ? 5 : 2;
   let lastErr = null;
   for (let i = 0; i < tries; i++) {
@@ -5984,11 +6003,6 @@ async function releaseSharedMic(force) {
   sharedMicForCall = false;
 }
 
-function callFrameSamples() {
-  const via = normalizeVia(callVia || viewingVia);
-  return via === 'serial' ? 64 : 128;
-}
-
 function sendCallAudioFrame(b64, codec) {
   const payload = {
     type: 'call_audio',
@@ -5996,7 +6010,7 @@ function sendCallAudioFrame(b64, codec) {
     via: callVia || viewingVia,
     call_id: callId,
     audio: b64,
-    codec: codec || callPcmCodec(CALL_PCM_RATE),
+    codec: codec || callPcmCodec(callAudioConfig().rate),
   };
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(payload));
@@ -6008,7 +6022,7 @@ function sendCallAudioFrame(b64, codec) {
     via: callVia || viewingVia,
     call_id: callId,
     audio: b64,
-    codec: codec || callPcmCodec(CALL_PCM_RATE),
+    codec: codec || callPcmCodec(callAudioConfig().rate),
   }).catch(() => {});
 }
 
@@ -6021,16 +6035,13 @@ async function startCallCapture() {
     await ctx.resume();
     stopCallCapturePipeline();
     callCaptureSource = ctx.createMediaStreamSource(stream);
-    const processor = ctx.createScriptProcessor(2048, 1, 1);
+    const cfg = callAudioConfig();
+    const processor = ctx.createScriptProcessor(4096, 1, 1);
     const silent = ctx.createGain();
     silent.gain.value = 0;
     let accum = new Float32Array(0);
     const inputRate = ctx.sampleRate;
-    const pcmFrame = callFrameSamples();
-    const frameInputSamples = Math.max(
-      pcmFrame,
-      Math.ceil(pcmFrame * inputRate / CALL_PCM_RATE),
-    );
+    const frameInputSamples = Math.ceil(cfg.frameSamples * inputRate / cfg.rate);
     processor.onaudioprocess = e => {
       if (callState !== 'active') return;
       const input = e.inputBuffer.getChannelData(0);
@@ -6038,14 +6049,14 @@ async function startCallCapture() {
       merged.set(accum, 0);
       merged.set(input, accum.length);
       accum = merged;
-      while (accum.length >= frameInputSamples) {
-        const chunk = accum.slice(0, frameInputSamples);
-        accum = accum.slice(frameInputSamples);
-        const pcm = downsampleToPcm(chunk, inputRate, CALL_PCM_RATE);
-        const b64 = pcmToB64(pcm);
-        if (b64.length > 480) continue;
-        sendCallAudioFrame(b64, callPcmCodec(CALL_PCM_RATE));
-      }
+      if (accum.length < frameInputSamples) return;
+      const chunk = accum.subarray(0, frameInputSamples);
+      accum = accum.subarray(frameInputSamples);
+      const pcm = resampleLinearToPcm(chunk, inputRate, cfg.rate);
+      const b64 = pcmToB64(pcm);
+      const maxB64 = cfg.rate >= 16000 ? 720 : 360;
+      if (b64.length > maxB64) return;
+      sendCallAudioFrame(b64, callPcmCodec(cfg.rate));
     };
     callCaptureSource.connect(processor);
     processor.connect(silent);
@@ -6071,25 +6082,48 @@ function stopCallCapturePipeline() {
 
 function enqueueCallAudio(b64, codec) {
   if (!b64) return;
+  const cfg = callAudioConfig();
+  while (callPlayQueue.length >= cfg.maxQueue) callPlayQueue.shift();
   callPlayQueue.push({
     b64,
-    codec: codec || callPcmCodec(CALL_PCM_RATE),
+    codec: codec || callPcmCodec(cfg.rate),
     rate: parseCallPcmRate(codec),
   });
   if (!callPlaying) drainCallAudioQueue();
 }
 
+function mergePcmChunks(chunks) {
+  let total = 0;
+  chunks.forEach(c => { total += c.length; });
+  const merged = new Int16Array(total);
+  let off = 0;
+  chunks.forEach(c => {
+    merged.set(c, off);
+    off += c.length;
+  });
+  return merged;
+}
+
 async function drainCallAudioQueue() {
-  if (!callPlayQueue.length) { callPlaying = false; return; }
+  if (!callPlayQueue.length || callPlaying) {
+    if (!callPlayQueue.length) callPlaying = false;
+    return;
+  }
   callPlaying = true;
-  const chunk = callPlayQueue.shift();
+  const cfg = callAudioConfig();
   try {
+    const batch = [];
+    const take = Math.min(cfg.batchPlayback || 2, callPlayQueue.length);
+    for (let i = 0; i < take; i++) batch.push(callPlayQueue.shift());
+    const chunk = batch[0];
     if ((chunk.codec || '').startsWith('audio/pcm')) {
       const ctx = ensureCallAudioCtx();
-      const pcm = b64ToPcm(chunk.b64);
+      await ctx.resume();
+      const rate = chunk.rate || cfg.rate;
+      const pcmChunks = batch.map(c => b64ToPcm(c.b64));
+      const pcm = mergePcmChunks(pcmChunks);
       const floats = new Float32Array(pcm.length);
       for (let i = 0; i < pcm.length; i++) floats[i] = pcm[i] / 32768;
-      const rate = chunk.rate || CALL_PCM_RATE;
       const buf = ctx.createBuffer(1, floats.length, rate);
       buf.copyToChannel(floats, 0);
       const src = ctx.createBufferSource();
@@ -6098,12 +6132,18 @@ async function drainCallAudioQueue() {
       const now = ctx.currentTime;
       if (!callPlaybackPrimed) {
         callPlaybackPrimed = true;
-        callNextPlayTime = now + 0.1;
+        callNextPlayTime = now + cfg.primeSec;
       }
-      const startAt = Math.max(now + 0.02, callNextPlayTime);
+      if (callNextPlayTime < now - 0.05) {
+        callNextPlayTime = now + 0.02;
+      }
+      const startAt = Math.max(now + 0.01, callNextPlayTime);
       src.start(startAt);
       callNextPlayTime = startAt + buf.duration;
-      src.onended = () => drainCallAudioQueue();
+      src.onended = () => {
+        callPlaying = false;
+        if (callPlayQueue.length) drainCallAudioQueue();
+      };
       return;
     }
     const bin = atob(chunk.b64);
@@ -6112,11 +6152,20 @@ async function drainCallAudioQueue() {
     const blob = new Blob([bytes], {type: chunk.codec || 'audio/webm'});
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
-    audio.onended = () => { URL.revokeObjectURL(url); drainCallAudioQueue(); };
-    audio.onerror = () => { URL.revokeObjectURL(url); drainCallAudioQueue(); };
+    audio.onended = () => {
+      URL.revokeObjectURL(url);
+      callPlaying = false;
+      drainCallAudioQueue();
+    };
+    audio.onerror = () => {
+      URL.revokeObjectURL(url);
+      callPlaying = false;
+      drainCallAudioQueue();
+    };
     await audio.play();
   } catch (_) {
-    drainCallAudioQueue();
+    callPlaying = false;
+    if (callPlayQueue.length) drainCallAudioQueue();
   }
 }
 

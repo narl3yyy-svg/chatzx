@@ -3,6 +3,15 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.6.3": [
+        "Call audio uses proper linear resampling (16 kHz on LAN, 8 kHz on USB) — fixes garbled “fan blade” sound.",
+        "Playback batches frames and caps queue depth so voice stays in sync instead of lagging behind.",
+    ],
+    "0.6.2": [
+        "Incoming calls ring with a built-in tone and vibration on Android.",
+        "Shared microphone pool fixes Android “microphone busy” when switching call ↔ voice note.",
+        "Call audio streams over WebSocket with smaller USB serial frames and a playback buffer.",
+    ],
     "0.6.1": [
         "Contact delete removes split LAN/USB files and blocks discovery from recreating the peer (fixes 835… serial ghost contacts).",
         "Saved contact names stay visible when peers are offline.",
