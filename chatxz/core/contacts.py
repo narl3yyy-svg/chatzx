@@ -22,6 +22,12 @@ def normalize_contact(entry):
     h = (entry.get("hash") or "").replace(":", "")
     lan = (entry.get("lan_hash") or "").replace(":", "")
     serial = (entry.get("serial_hash") or "").replace(":", "")
+    if serial and lan and lan == serial:
+        entry.pop("lan_hash", None)
+        lan = ""
+    if serial and h == serial and not lan:
+        entry.pop("hash", None)
+        h = ""
     if h and not lan and not serial:
         entry["lan_hash"] = h
         lan = h
@@ -367,6 +373,13 @@ def save_contact(
             existing["serial_identity_hash"] = str(
                 serial_identity_hash or identity_hash
             ).strip().replace(":", "")
+        lan = (existing.get("lan_hash") or "").replace(":", "")
+        if lan and lan != clean:
+            existing["hash"] = lan
+        else:
+            existing.pop("hash", None)
+            if (existing.get("lan_hash") or "").replace(":", "") == clean:
+                existing.pop("lan_hash", None)
     else:
         existing["lan_hash"] = lan_hash or clean
         existing["hash"] = existing["lan_hash"]

@@ -3,6 +3,10 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.5.12": [
+        "Saving a USB/serial contact no longer copies the serial hash into the LAN row — both transports merge in one save when discovered.",
+        "Voice message bubbles are wider so the audio scrubber is easier to use.",
+    ],
     "0.5.11": [
         "Serial inbound links no longer rejected as outside LAN scope when RNS has not set attached_interface yet.",
         "Announce Serial button stays visible when USB serial is configured, even before RNS hot-add completes.",

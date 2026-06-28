@@ -989,9 +989,13 @@ body.settings-open { overflow: hidden; }
 .msg.video-msg { max-width: 88%; min-width: 260px; }
 .msg .file-info { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
 .msg .file-info .file-icon { font-size: 22px; }
-.msg.voice-msg { max-width: 88%; min-width: 260px; overflow: visible; }
-.voice-wrap { width: min(100%, 300px); margin-top: 8px; pointer-events: auto; }
-.msg .voice-player { width: 100%; min-width: 240px; height: 42px; border-radius: var(--radius-sm); pointer-events: auto; cursor: pointer; }
+.msg.voice-msg { max-width: min(92%, 520px); min-width: min(92vw, 360px); overflow: visible; }
+.msg.voice-msg.other { max-width: min(92%, 520px); }
+.voice-wrap { width: 100%; max-width: 480px; min-width: min(88vw, 320px); margin-top: 8px; pointer-events: auto; }
+.msg .voice-player {
+  display: block; width: 100%; min-width: min(88vw, 300px); max-width: 480px;
+  height: 48px; border-radius: var(--radius-sm); pointer-events: auto; cursor: pointer;
+}
 .msg-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 .msg.self .msg-link { color: #d4f0ff; }
 
@@ -3370,7 +3374,12 @@ function rttForContact(contact) {
 }
 
 function contactLanHash(c) {
-  return (c.lan_hash || c.hash || '').replace(/:/g, '');
+  const lan = (c.lan_hash || '').replace(/:/g, '');
+  if (lan) return lan;
+  const serial = (c.serial_hash || '').replace(/:/g, '');
+  const legacy = (c.hash || '').replace(/:/g, '');
+  if (legacy && legacy !== serial) return legacy;
+  return '';
 }
 
 function contactSerialHash(c) {
@@ -3771,22 +3780,42 @@ function doSaveContact() {
     toast('Cannot save your own device hash as a contact');
     return;
   }
-  const disc = discoveredPeerForHash(hash);
+  const disc = discoveredPeerExact(hash) || discoveredPeerForHash(hash);
+  const related = relatedDiscoveredPeers(hash);
+  const lanPeer = related.find(p => (p.via || p.transport || '') !== 'serial');
+  const serialPeer = related.find(p => (p.via || p.transport || '') === 'serial');
   const meta = peerMetaForHash(hash) || {};
-  const via = (disc?.via || meta.via || '').toLowerCase() === 'serial' ? 'serial' : (
-    (disc?.via || meta.via) ? 'lan' : undefined
-  );
+  const discVia = (disc?.via || disc?.transport || meta.via || '').toLowerCase();
+  const via = discVia === 'serial' ? 'serial' : (discVia ? 'lan' : undefined);
+  const clean = hash.replace(/:/g, '');
   const body = {
-    hash,
-    name: name || disc?.name || meta.name || hash.substring(0, 12),
-    ip: via === 'serial' ? undefined : (disc?.ip || meta.ip || undefined),
-    port: disc?.port || meta.port || undefined,
-    identity_hash: disc?.identity_hash || meta.identity_hash || undefined,
+    hash: clean,
+    name: name || disc?.name || serialPeer?.name || lanPeer?.name || meta.name || clean.substring(0, 12),
+    port: disc?.port || lanPeer?.port || serialPeer?.port || meta.port || undefined,
     via,
     custom_name: !!name,
   };
-  if (via === 'serial') body.serial_hash = hash.replace(/:/g, '');
-  else if (via === 'lan') body.lan_hash = hash.replace(/:/g, '');
+  if (serialPeer) {
+    body.serial_hash = peerKey(serialPeer.hash);
+    if (serialPeer.identity_hash) body.identity_hash = peerKey(serialPeer.identity_hash);
+    body.via = 'serial';
+  } else if (via === 'serial') {
+    body.serial_hash = clean;
+  }
+  if (lanPeer) {
+    body.lan_hash = peerKey(lanPeer.hash);
+    body.hash = body.lan_hash;
+    body.ip = lanPeer.ip || undefined;
+    if (lanPeer.identity_hash) body.identity_hash = peerKey(lanPeer.identity_hash);
+    if (!body.via) body.via = 'lan';
+  } else if (via === 'lan') {
+    body.lan_hash = clean;
+    body.hash = clean;
+    body.ip = disc?.ip || meta.ip || undefined;
+    if (disc?.identity_hash || meta.identity_hash) {
+      body.identity_hash = peerKey(disc?.identity_hash || meta.identity_hash);
+    }
+  }
   fetch('/api/contacts', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -5284,12 +5313,41 @@ function isLocalPeerHash(hash) {
   return [myHash, mySerialHash].map(peerKey).filter(Boolean).some(h => h === key || peersMatch(h, key));
 }
 
+function discoveredPeerExact(hash) {
+  const key = peerKey(hash);
+  if (!key) return null;
+  return (window._discoveredPeers || []).find(p => peerKey(p.hash) === key) || null;
+}
+
+function relatedDiscoveredPeers(hash) {
+  const seed = discoveredPeerExact(hash) || discoveredPeerForHash(hash);
+  if (!seed) return [];
+  const peers = window._discoveredPeers || [];
+  const out = [];
+  const seen = new Set();
+  const add = (p) => {
+    const k = peerMergeKey(p);
+    if (!k || seen.has(k)) return;
+    seen.add(k);
+    out.push(p);
+  };
+  add(seed);
+  const name = (seed.name || '').trim().toLowerCase();
+  const ident = peerKey(seed.identity_hash);
+  peers.forEach(p => {
+    if (ident && peerKey(p.identity_hash) === ident) add(p);
+    else if (name && namesRelated(p.name, seed.name)) add(p);
+  });
+  return out;
+}
+
 function discoveredPeerForHash(hash) {
   const key = peerKey(hash);
   if (!key) return null;
+  const exact = discoveredPeerExact(hash);
+  if (exact) return exact;
   return (window._discoveredPeers || []).find(p =>
-    peerKey(p.hash) === key
-    || peerKey(p.identity_hash) === key
+    peerKey(p.identity_hash) === key
     || peersMatch(p.hash, hash)
     || peersMatch(p.identity_hash, hash)
   );

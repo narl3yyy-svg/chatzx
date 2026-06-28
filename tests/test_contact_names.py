@@ -37,6 +37,19 @@ class ContactNamePersistenceTests(unittest.TestCase):
         self.assertEqual(contact.get("name"), "My Ubuntu Box")
         self.assertTrue(contact.get("custom_name"))
 
+    def test_serial_only_save_does_not_alias_lan_hash(self):
+        serial = "178560472b3d6332e27aafb2fef8fe7a"
+        contact = save_contact(
+            self.tmp,
+            serial,
+            name="arch",
+            via="serial",
+            custom_name=True,
+        )
+        self.assertEqual(contact.get("serial_hash"), serial)
+        self.assertNotEqual((contact.get("hash") or "").replace(":", ""), serial)
+        self.assertNotEqual((contact.get("lan_hash") or "").replace(":", ""), serial)
+
     def test_save_serial_then_lan_keeps_distinct_hashes(self):
         save_contact(
             self.tmp,
