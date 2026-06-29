@@ -15,6 +15,7 @@ from pathlib import Path
 
 NUGET_OPUS_URL = "https://www.nuget.org/api/v2/package/DSharpPlus.VoiceNext.Natives/1.0.0"
 WINDOWS_DLL_NAMES = ("libopus.dll", "opus.dll", "libopus-0.dll")
+MACOS_DYLIB_NAMES = ("libopus.0.dylib", "libopus.dylib")
 
 
 def repo_root() -> Path:
@@ -141,13 +142,74 @@ def _mirror_windows_dll(primary: Path, py: str) -> None:
             pass
 
 
-def install_macos_libopus() -> bool:
+def _brew_prefix(formula: str) -> Path | None:
     if not shutil.which("brew"):
-        return False
-    if subprocess.run(["brew", "list", "opus"], capture_output=True).returncode == 0:
-        return True
-    print("[setup] Installing libopus via Homebrew (opus portaudio)...")
-    return subprocess.run(["brew", "install", "opus", "portaudio"]).returncode == 0
+        return None
+    try:
+        proc = subprocess.run(
+            ["brew", "--prefix", formula],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return None
+        prefix = (proc.stdout or "").strip()
+        return Path(prefix) if prefix else None
+    except Exception:
+        return None
+
+
+def _find_brew_opus_dylib() -> Path | None:
+    prefix = _brew_prefix("opus")
+    if not prefix:
+        return None
+    lib_dir = prefix / "lib"
+    for name in MACOS_DYLIB_NAMES:
+        path = lib_dir / name
+        if path.is_file() and path.stat().st_size > 1024:
+            return path
+    return None
+
+
+def _bundle_macos_dylib(root: Path, src: Path) -> bool:
+    dest_dir = native_dir(root)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    copied = False
+    for name in MACOS_DYLIB_NAMES:
+        dest = dest_dir / name
+        try:
+            shutil.copy2(src, dest)
+            copied = True
+        except OSError:
+            continue
+    if copied:
+        print(f"[setup] Installed libopus -> {dest_dir}")
+    return copied
+
+
+def install_macos_libopus(root: Path) -> bool:
+    dest_dir = native_dir(root)
+    for name in MACOS_DYLIB_NAMES:
+        bundled = dest_dir / name
+        if bundled.is_file() and bundled.stat().st_size > 1024:
+            return True
+
+    if shutil.which("brew"):
+        if subprocess.run(["brew", "list", "opus"], capture_output=True).returncode != 0:
+            print("[setup] Installing libopus via Homebrew (opus portaudio)...")
+            subprocess.run(["brew", "install", "opus", "portaudio"], check=False)
+        src = _find_brew_opus_dylib()
+        if src and _bundle_macos_dylib(root, src):
+            return True
+
+    for lib_dir in (Path("/opt/homebrew/lib"), Path("/usr/local/lib")):
+        for name in MACOS_DYLIB_NAMES:
+            path = lib_dir / name
+            if path.is_file() and _bundle_macos_dylib(root, path):
+                return True
+    return False
 
 
 def linux_libopus_hint() -> None:
@@ -156,7 +218,7 @@ def linux_libopus_hint() -> None:
     elif shutil.which("pacman"):
         print("  Arch: sudo pacman -S opus portaudio python-pyaudio")
     elif sys.platform == "darwin":
-        print("  macOS: brew install opus portaudio")
+        print("  macOS: brew install opus portaudio  (or install Homebrew from https://brew.sh)")
 
 
 def main() -> int:
@@ -181,7 +243,7 @@ def main() -> int:
     if sys.platform == "win32":
         install_windows_libopus(root, py)
     elif sys.platform == "darwin":
-        install_macos_libopus()
+        install_macos_libopus(root)
 
     if voice_ready(py, root):
         marker = Path(os.environ.get("VIRTUAL_ENV", root / ".venv")) / ".voice-ready"
@@ -196,6 +258,9 @@ def main() -> int:
     print("[setup] Native call audio still unavailable; browser Opus works at http://127.0.0.1:8742")
     if sys.platform == "win32":
         print("  Windows: re-run run.bat web (auto-downloads libopus) or place libopus.dll in the repo folder.")
+    elif sys.platform == "darwin":
+        print("  macOS: install Homebrew then re-run ./run.sh web — it runs: brew install opus portaudio")
+        print("  Or open http://localhost:8742 for browser microphone.")
     else:
         linux_libopus_hint()
         print("  Then re-run: ./run.sh web")

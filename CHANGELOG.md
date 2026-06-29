@@ -2,6 +2,11 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.9.9] — 2026-06-29
+
+### Fixed
+- **macOS libopus** — `./run.sh web` now runs `brew install opus portaudio` when needed and copies the Homebrew dylib into `chatxz/core/native/macos/`; loader also resolves `brew --prefix opus` and ignores stale `find_library` paths under `/usr/local/lib`.
+
 ## [0.9.8] — 2026-06-29
 
 ### Fixed

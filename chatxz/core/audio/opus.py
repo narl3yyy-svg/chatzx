@@ -6,6 +6,7 @@ import ctypes
 import ctypes.util
 import os
 import struct
+import subprocess
 import sys
 from typing import List, Optional
 
@@ -22,34 +23,37 @@ _lib: Optional[ctypes.CDLL] = None
 _lib_error: Optional[str] = None
 
 
+def _macos_brew_opus_paths() -> List[str]:
+    paths: List[str] = []
+    try:
+        proc = subprocess.run(
+            ["brew", "--prefix", "opus"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if proc.returncode == 0:
+            prefix = (proc.stdout or "").strip()
+            if prefix:
+                lib_dir = os.path.join(prefix, "lib")
+                for name in ("libopus.0.dylib", "libopus.dylib"):
+                    paths.append(os.path.join(lib_dir, name))
+    except Exception:
+        pass
+    return paths
+
+
 def _opus_library_candidates() -> List[str]:
     """Platform-specific libopus paths (Windows .dll, macOS .dylib, Linux .so)."""
     candidates: List[str] = []
-    found = ctypes.util.find_library("opus")
-    if found:
-        candidates.append(found)
-
-    if sys.platform == "win32":
-        candidates.extend(("opus", "opus.dll", "libopus-0.dll", "libopus.dll"))
-    elif sys.platform == "darwin":
-        candidates.extend((
-            "libopus.0.dylib",
-            "libopus.dylib",
-            "opus",
-            "/opt/homebrew/lib/libopus.0.dylib",
-            "/opt/homebrew/lib/libopus.dylib",
-            "/usr/local/lib/libopus.0.dylib",
-            "/usr/local/lib/libopus.dylib",
-        ))
-    else:
-        candidates.extend(("libopus.so.0", "libopus.so", "opus"))
 
     roots = [
-        os.path.dirname(__file__),
-        os.path.join(os.path.dirname(__file__), "..", "native"),
         os.path.join(os.path.dirname(__file__), "..", "native", "windows"),
         os.path.join(os.path.dirname(__file__), "..", "native", "macos"),
         os.path.join(os.path.dirname(__file__), "..", "native", "linux"),
+        os.path.join(os.path.dirname(__file__), "..", "native"),
+        os.path.dirname(__file__),
     ]
     if hasattr(sys, "prefix"):
         roots.append(os.path.join(sys.prefix, "DLLs"))
@@ -63,12 +67,28 @@ def _opus_library_candidates() -> List[str]:
             else:
                 roots.append(os.path.join(root, "lib"))
 
+    if sys.platform == "win32":
+        candidates.extend(("opus.dll", "libopus-0.dll", "libopus.dll", "opus"))
+    elif sys.platform == "darwin":
+        candidates.extend(_macos_brew_opus_paths())
+        candidates.extend((
+            "/opt/homebrew/lib/libopus.0.dylib",
+            "/opt/homebrew/lib/libopus.dylib",
+            "/usr/local/lib/libopus.0.dylib",
+            "/usr/local/lib/libopus.dylib",
+            "libopus.0.dylib",
+            "libopus.dylib",
+            "opus",
+        ))
+    else:
+        candidates.extend(("libopus.so.0", "libopus.so", "opus"))
+
+    found = ctypes.util.find_library("opus")
+    if found and os.path.isfile(found):
+        candidates.append(found)
+
     seen = set()
     ordered: List[str] = []
-    for item in candidates:
-        if item and item not in seen:
-            seen.add(item)
-            ordered.append(item)
     for root in roots:
         if not root:
             continue
@@ -80,6 +100,14 @@ def _opus_library_candidates() -> List[str]:
             if path not in seen and os.path.isfile(path):
                 seen.add(path)
                 ordered.append(path)
+    for item in candidates:
+        if not item or item in seen:
+            continue
+        if os.path.isabs(item) or item.startswith((".", "/")):
+            if not os.path.isfile(item):
+                continue
+        seen.add(item)
+        ordered.append(item)
     return ordered
 
 

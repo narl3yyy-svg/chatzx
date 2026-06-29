@@ -2532,8 +2532,9 @@ class ChatWebServer:
         reason = (opus_unavailable_reason() or "libopus or pyaudio not installed").strip()
         if _sys.platform == "darwin":
             return (
-                f"Native voice off ({reason}). Run: brew install opus portaudio, "
-                "then restart. Or open http://localhost:8742 for browser mic."
+                f"Native voice off ({reason}). Re-run: ./run.sh web "
+                "(auto-installs via Homebrew). Or: brew install opus portaudio. "
+                "Browser mic: http://localhost:8742"
             )
         if _sys.platform == "win32":
             return (
