@@ -17,6 +17,7 @@ from typing import Callable, List, Optional, Tuple
 
 from chatxz.core.audio.devices import (
     _open_stream_with_timeout,
+    create_pyaudio,
     log_audio_devices,
     pcm_peak,
     pick_output_device,
@@ -126,12 +127,14 @@ class CallAudioEngine:
             return False
         import pyaudio
 
+        print("[call-audio] Preparing Linux audio...")
         prepare_linux_audio()
         if self._aborted():
             print("[call-audio] Start aborted before Opus init")
             return False
 
         try:
+            print("[call-audio] Initializing Opus...")
             self._encoder = OpusEncoder()
             self._decoder = OpusDecoder()
         except Exception as e:
@@ -152,7 +155,8 @@ class CallAudioEngine:
         self._send_enabled = False
 
         try:
-            self._pa = pyaudio.PyAudio()
+            print("[call-audio] Opening PyAudio...")
+            self._pa = create_pyaudio(timeout=5.0)
         except Exception as e:
             print(f"[call-audio] PyAudio init failed: {e}")
             return False

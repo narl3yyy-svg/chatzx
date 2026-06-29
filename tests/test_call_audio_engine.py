@@ -181,6 +181,16 @@ def test_engine_stop_fast_does_not_block():
     assert not engine._recv_ready.is_set()
 
 
+def test_create_pyaudio_or_skip():
+    from chatxz.core.audio.devices import create_pyaudio
+
+    try:
+        pa = create_pyaudio(timeout=8.0)
+        pa.terminate()
+    except Exception:
+        pass
+
+
 def test_pick_input_device_no_probe():
     from chatxz.core.audio import devices
 

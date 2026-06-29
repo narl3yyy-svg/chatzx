@@ -6052,6 +6052,7 @@ let callRingCount = 0;
 let callJitterPrimed = false;
 let callTimerId = null;
 let callStatsTimerId = null;
+let callOutgoingTimerId = null;
 let callStartedAt = 0;
 let callDashMinimized = false;
 let callLocalFramesIn = 0;
@@ -6130,6 +6131,7 @@ function resetCallUi(opts) {
   callJitterPrimed = false;
   if (callTimerId) { clearInterval(callTimerId); callTimerId = null; }
   if (callStatsTimerId) { clearInterval(callStatsTimerId); callStatsTimerId = null; }
+  if (callOutgoingTimerId) { clearTimeout(callOutgoingTimerId); callOutgoingTimerId = null; }
   callStartedAt = 0;
   callDashMinimized = false;
   callLocalFramesIn = 0;
@@ -6442,6 +6444,7 @@ function startCallStatsPolling() {
 }
 
 function showActiveCall(peer, label) {
+  if (callOutgoingTimerId) { clearTimeout(callOutgoingTimerId); callOutgoingTimerId = null; }
   callState = 'active';
   callPeer = peerKey(peer) || peer;
   void primeCallOpusReceive();
@@ -6472,6 +6475,12 @@ function showActiveCall(peer, label) {
 function showOutgoingCall(peer) {
   callState = 'outgoing';
   callPeer = peerKey(peer) || peer;
+  if (callOutgoingTimerId) clearTimeout(callOutgoingTimerId);
+  callOutgoingTimerId = setTimeout(() => {
+    if (callState !== 'outgoing') return;
+    toast('No answer — ending call');
+    endVoiceCall();
+  }, 45000);
   document.getElementById('call-incoming-overlay')?.classList.remove('open');
   if (!callTimerId) {
     callStartedAt = Date.now();
@@ -7109,7 +7118,11 @@ async function toggleVoiceCall() {
     via: callVia,
   });
   if (res.error) {
-    toast(res.error === 'invite failed' ? 'Could not start call — check link' : res.error);
+    const msg = res.error === 'not linked'
+      ? 'Connect to this peer first'
+      : (res.error === 'invite failed' ? 'Could not start call — check link' : res.error);
+    toast(msg);
+    resetCallUi();
     return;
   }
   callId = res.call_id;
@@ -7151,14 +7164,15 @@ async function endVoiceCall() {
     window.chatxzAndroid?.setCallActive?.(false);
     window.chatxzAndroid?.setSpeakerphone?.(false);
   }
-  closeCallAudioResources();
-  stopCallRingtone();
-  clearCallNativeWatchdog();
-  if (callStatsTimerId) { clearInterval(callStatsTimerId); callStatsTimerId = null; }
-  if (callTimerId) { clearInterval(callTimerId); callTimerId = null; }
-  callState = 'idle';
-  await callApi({action: 'end', peer, via, call_id: id}).catch(() => {});
   resetCallUi();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 2500);
+  fetch('/api/call', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({action: 'end', peer, via, call_id: id}),
+    signal: ctrl.signal,
+  }).catch(() => {}).finally(() => clearTimeout(timer));
 }
 
 function beaconEndVoiceCall() {

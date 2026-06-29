@@ -5573,6 +5573,9 @@ class MessagingBackend:
         if not peer or peer == "unknown":
             return None
         self._call_reset_if_stale()
+        if not self._peer_link_active(peer):
+            print(f"[call] Invite blocked — no active link to {peer[:16]}...")
+            return None
         if self.voice_call.is_busy():
             if (
                 self.voice_call.state == STATE_OUTGOING

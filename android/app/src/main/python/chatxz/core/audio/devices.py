@@ -402,6 +402,29 @@ def pick_input_device(pa) -> Tuple[Optional[int], Optional[str], List[Tuple[int,
     return idx, name, ranked
 
 
+def create_pyaudio(timeout: float = 5.0):
+    """Construct PyAudio in a helper thread — constructor can block on ALSA scan."""
+    result: List[object] = [None, None]
+
+    def _init():
+        try:
+            import pyaudio
+            result[0] = pyaudio.PyAudio()
+        except Exception as exc:
+            result[1] = exc
+
+    thread = threading.Thread(target=_init, name="call-audio-pa-init", daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        raise TimeoutError(f"PyAudio init timed out after {timeout}s")
+    if result[1]:
+        raise result[1]
+    if not result[0]:
+        raise RuntimeError("PyAudio init returned None")
+    return result[0]
+
+
 def _open_stream_with_timeout(pa, timeout: float = 3.0, **kwargs):
     """Open a PyAudio stream in a helper thread so ALSA cannot block forever."""
     result: List[object] = [None, None]

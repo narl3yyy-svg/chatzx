@@ -2,6 +2,14 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.9.4] — 2026-06-29
+
+### Fixed
+- **UI freeze on hang-up** — audio engine start no longer holds the global gate during `PyAudio()` / `pa.open()`; hang-up cannot deadlock behind a stuck ALSA init.
+- **Call unlinked peer** — server rejects invite when RNS link is down (`not linked`); UI resets instead of entering broken outgoing state.
+- **Outgoing ring** — audio engine starts only after `accepted` (not while ringing); 45s no-answer timeout auto-ends call.
+- **Hang-up responsiveness** — UI resets immediately; end API uses 2.5s abort timeout instead of blocking the page.
+
 ## [0.9.3] — 2026-06-29
 
 ### Fixed
