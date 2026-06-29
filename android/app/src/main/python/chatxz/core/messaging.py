@@ -5541,6 +5541,8 @@ class MessagingBackend:
             return
 
         if msg_type == CALL_AUDIO:
+            if getattr(self, "shutdown_requested", False):
+                return
             if self.voice_call.state != STATE_ACTIVE:
                 return
             if call_id and call_id != self.voice_call.call_id:

@@ -788,6 +788,24 @@ body::before {
   cursor: pointer; font-size: 14px; line-height: 1;
 }
 .sidebar-call-hangup:hover { background: rgba(255,107,122,0.3); color: #ffb3bb; }
+.sidebar-call-strip.incoming {
+  background: linear-gradient(135deg, rgba(99,179,237,0.16), rgba(124,106,239,0.1));
+  border-color: rgba(99,179,237,0.45);
+  cursor: default;
+}
+.sidebar-call-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.sidebar-call-accept, .sidebar-call-reject {
+  padding: 6px 10px; border-radius: var(--radius-sm); font-size: 11px;
+  font-weight: 600; cursor: pointer; border: 1px solid transparent;
+}
+.sidebar-call-accept {
+  background: rgba(61,214,140,0.22); color: var(--primary);
+  border-color: rgba(61,214,140,0.45);
+}
+.sidebar-call-reject {
+  background: rgba(255,107,122,0.15); color: #ff8f9a;
+  border-color: rgba(255,107,122,0.35);
+}
 body.android-shell .sidebar-call-strip { display: none !important; }
 .dock-status #disconnect-btn { margin-right: 4px; }
 #call-bar {
@@ -1621,6 +1639,17 @@ body.android-shell.sidebar-open #sidebar-backdrop {
       <button id="settings-btn" onclick="toggleSettings()" title="Settings">⚙</button>
     </div>
 
+    <div id="sidebar-incoming-strip" class="sidebar-call-strip incoming" style="display:none">
+      <span class="sidebar-call-icon" aria-hidden="true">📲</span>
+      <div class="sidebar-call-info">
+        <span class="sidebar-call-peer" id="sidebar-incoming-peer">—</span>
+        <span class="sidebar-call-meta" id="sidebar-incoming-meta">Incoming call</span>
+      </div>
+      <div class="sidebar-call-actions">
+        <button type="button" class="sidebar-call-reject" onclick="rejectVoiceCall()">Decline</button>
+        <button type="button" class="sidebar-call-accept" onclick="acceptVoiceCall()">Accept</button>
+      </div>
+    </div>
     <div id="sidebar-call-strip" class="sidebar-call-strip" style="display:none" onclick="openCallDashboard(true)" title="Open call panel">
       <span class="sidebar-call-icon" aria-hidden="true">📞</span>
       <div class="sidebar-call-info">
@@ -6095,6 +6124,8 @@ function resetCallUi(opts) {
   }
   document.getElementById('call-incoming-overlay')?.classList.remove('open');
   document.getElementById('call-active-overlay')?.classList.remove('open');
+  const incomingStrip = document.getElementById('sidebar-incoming-strip');
+  if (incomingStrip) incomingStrip.style.display = 'none';
   const timer = document.getElementById('call-timer');
   if (timer) timer.textContent = '00:00';
   updatePeerHeader();
@@ -6115,12 +6146,28 @@ function showIncomingCall(peer, data) {
   const sub = document.getElementById('call-incoming-sub');
   if (title) title.textContent = 'Incoming call';
   if (sub) sub.textContent = `${name} · ${peerInterfaceLabel(callVia)}`;
-  document.getElementById('call-incoming-overlay')?.classList.add('open');
+  document.getElementById('call-active-overlay')?.classList.remove('open');
+  if (isDesktopCallUi()) {
+    document.getElementById('call-incoming-overlay')?.classList.remove('open');
+    const strip = document.getElementById('sidebar-incoming-strip');
+    if (strip) {
+      strip.style.display = 'flex';
+      const peerEl = document.getElementById('sidebar-incoming-peer');
+      const metaEl = document.getElementById('sidebar-incoming-meta');
+      if (peerEl) peerEl.textContent = name;
+      if (metaEl) metaEl.textContent = `${peerInterfaceLabel(callVia)} · Ringing`;
+    }
+  } else {
+    const inc = document.getElementById('sidebar-incoming-strip');
+    if (inc) inc.style.display = 'none';
+    document.getElementById('call-incoming-overlay')?.classList.add('open');
+  }
   startCallRingtone();
   if (window.chatxzAndroid?.showIncomingCallNotification) {
     window.chatxzAndroid.showIncomingCallNotification(name, `${peerInterfaceLabel(callVia)} call`, callPeer);
   }
   updatePeerHeader();
+  updateSidebarCallStrip();
 }
 
 function startCallRingtone() {
@@ -6174,10 +6221,14 @@ function formatCallRtt(ms) {
 }
 
 function isDesktopCallUi() {
-  return !isAndroidShell() && !isMobileLayout();
+  return !isAndroidShell();
 }
 
 function updateSidebarCallStrip() {
+  const incomingStrip = document.getElementById('sidebar-incoming-strip');
+  if (incomingStrip) {
+    incomingStrip.style.display = (callState === 'incoming' && isDesktopCallUi()) ? 'flex' : 'none';
+  }
   const onCall = callState === 'active' || callState === 'outgoing';
   const timer = document.getElementById('call-timer')?.textContent || '00:00';
   const stateLabel = callState === 'outgoing' ? 'Calling' : 'Live';

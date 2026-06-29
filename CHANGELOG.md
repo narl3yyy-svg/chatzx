@@ -2,6 +2,17 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.9.1] — 2026-06-28
+
+### Fixed
+- **Ctrl+C on Arch** — schedule `os._exit` before ALSA cleanup; non-blocking `stop_fast()` so PortAudio teardown cannot hang shutdown.
+- **Incoming audio** — playback/decoding starts before mic probe; pending frame buffer; engine starts in background thread.
+- **Post-hangup audio spam** — clear pending frames; ignore `CALL_AUDIO` during shutdown; hang up when last WebSocket disconnects.
+- **Arch ALSA mic** — `amixer` unmute; prefer `default` device when PulseAudio unavailable; limit hot-swap to 2 attempts.
+
+### Changed
+- **Desktop call UI** — incoming calls show in sidebar strip (accept/decline), not fullscreen overlay; active calls stay in sidebar.
+
 ## [0.9.0] — 2026-06-28
 
 ### Changed

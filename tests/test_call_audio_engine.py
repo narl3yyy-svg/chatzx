@@ -91,15 +91,15 @@ def test_score_device_prefers_pulse_default_source():
     assert mic > hdmi
 
 
-def test_score_device_prefers_alt_analog_on_alsa():
+def test_score_device_prefers_default_on_alsa_without_pulse():
+    default = score_device("default", input_device=True, pulse_name=None)
     alt = score_device(
         "HDA Intel PCH: ALC897 Alt Analog (hw:0,2)", input_device=True, pulse_name=None
     )
-    sysdef = score_device("sysdefault", input_device=True, pulse_name=None)
     hw = score_device(
         "HDA Intel PCH: ALC897 Analog (hw:0,0)", input_device=True, pulse_name=None
     )
-    assert alt > sysdef > hw
+    assert default > alt > hw
 
 
 def test_score_device_prefers_default_input_over_raw_hw():
@@ -173,3 +173,14 @@ def test_opus_encode_send_receive_pipeline():
 def test_pcm_peak():
     assert pcm_peak(SILENCE_PCM) == 0
     assert pcm_peak(b"\xff\x7f" + b"\x00\x00" * 959) > 0
+
+
+def test_engine_stop_fast_does_not_block():
+    engine = CallAudioEngine(lambda *_: True)
+    engine.stop_fast()
+    assert not engine._recv_ready.is_set()
+
+
+def test_prepare_linux_audio_no_crash():
+    from chatxz.core.audio.devices import prepare_linux_audio
+    prepare_linux_audio()

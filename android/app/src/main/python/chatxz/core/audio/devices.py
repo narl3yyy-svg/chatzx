@@ -119,6 +119,34 @@ def ensure_pulse_capture_source() -> Optional[str]:
     return pulse_default_source()
 
 
+def alsa_prepare_capture() -> None:
+    """Unmute ALSA capture on bare-metal Linux (no PulseAudio)."""
+    if sys.platform not in ("linux", "linux2"):
+        return
+    cmds = [
+        ["amixer", "-c", "0", "sset", "Capture", "cap"],
+        ["amixer", "-c", "0", "sset", "Capture", "90%"],
+        ["amixer", "-c", "0", "sset", "Master", "90%"],
+        ["amixer", "-c", "0", "sset", "Headphone", "90%"],
+        ["amixer", "-c", "0", "sset", "Speaker", "90%"],
+    ]
+    for cmd in cmds:
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=2, check=False)
+        except Exception:
+            pass
+
+
+def prepare_linux_audio() -> None:
+    """Best-effort mic/speaker prep before opening PyAudio streams."""
+    if sys.platform not in ("linux", "linux2"):
+        return
+    pulse = ensure_pulse_capture_source()
+    if not pulse:
+        alsa_prepare_capture()
+        print("[call-audio] ALSA-only audio — unmuted capture, using default device")
+
+
 def score_device(name: str, *, input_device: bool, pulse_name: Optional[str]) -> int:
     low = (name or "").lower()
     if not low:
@@ -126,9 +154,10 @@ def score_device(name: str, *, input_device: bool, pulse_name: Optional[str]) ->
     if any(x in low for x in ("monitor", "loopback", "null", "dummy")):
         return -1000
     if input_device and "alt analog" in low:
-        return 95
+        return 94 if pulse_name else 90
     if low in ("default", "sysdefault"):
-        return 88 if input_device else 25
+        # Prefer ALSA plug default when PulseAudio is unavailable.
+        return 96 if input_device and not pulse_name else 88 if input_device else 25
     score = 20
     if input_device:
         if "pipewire" in low:
@@ -188,7 +217,9 @@ def probe_input_device(pa, fmt, rate: int, frame_count: int) -> Tuple[Optional[i
     ranked = rank_devices(pa, input_device=True)
     if not ranked:
         return None, None, []
-    best_silent = ranked[0]
+    # Prefer default/sysdefault first on ALSA-only systems (routes through plug).
+    default_pick = next((t for t in ranked if t[1].lower() in ("default", "sysdefault")), None)
+    best_silent = default_pick or ranked[0]
     for idx, name, score in ranked[:6]:
         stream = None
         try:
