@@ -116,11 +116,15 @@ ensure_venv() {
     if [ -d "$VENV" ]; then
         rm -rf "$VENV"
     fi
-    VENV_FLAGS=()
+    # macOS ships bash 3.2: empty "${array[@]}" with set -u triggers "unbound variable"
     if [ "$(uname -s 2>/dev/null || echo)" = "Linux" ]; then
-        VENV_FLAGS=(--system-site-packages)
+        if ! "$SYS_PY" -m venv --system-site-packages "$VENV"; then
+            VENV_CREATE_FAILED=1
+        fi
+    elif ! "$SYS_PY" -m venv "$VENV"; then
+        VENV_CREATE_FAILED=1
     fi
-    if ! "$SYS_PY" -m venv "${VENV_FLAGS[@]}" "$VENV"; then
+    if [ "${VENV_CREATE_FAILED:-}" = "1" ]; then
         echo "Failed to create .venv."
         echo "Ubuntu/Debian: sudo apt install python3-venv python3-pip"
         exit 1
