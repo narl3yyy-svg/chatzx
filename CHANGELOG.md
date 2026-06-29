@@ -2,6 +2,12 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.9.8] — 2026-06-29
+
+### Fixed
+- **Windows ↔ Mac calls** — native receive-only no longer blocks browser mic send; watchdog switches to browser Opus when `send_enabled` is false; accept API waits for native engine startup.
+- **Garbled / high-pitch playback** — Opus PCM extract via `ctypes.string_at`; resample native playback when speaker opens below 48 kHz; browser decoder resamples to `AudioContext` rate; native WebSocket playback only after first decoded frame (avoids double-play).
+
 ## [0.9.7] — 2026-06-29
 
 ### Added

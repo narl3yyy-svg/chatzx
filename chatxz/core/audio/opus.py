@@ -226,7 +226,8 @@ class OpusDecoder:
         )
         if n <= 0:
             return None
-        return struct.pack(f"<{n * self._channels}h", *out_buf[: n * self._channels])
+        byte_len = n * self._channels * 2
+        return ctypes.string_at(ctypes.addressof(out_buf), byte_len)
 
     def close(self) -> None:
         if self._dec:

@@ -24,6 +24,8 @@ from chatxz.core.audio.devices import (
     prepare_linux_audio,
     probe_input_device,
     pulse_capture_bypass,
+    resample_pcm_s16,
+    stream_sample_rate,
 )
 from chatxz.core.audio.jitter import SILENCE_PCM, VoiceJitterBuffer
 from chatxz.core.audio.opus import (
@@ -83,7 +85,12 @@ class CallAudioEngine:
         self._input_rank_pos = 0
         self._in_dev: Optional[int] = None
         self._in_name: Optional[str] = None
+        self._out_rate = OPUS_SAMPLE_RATE
         self._lifecycle_lock = threading.Lock()
+
+    @property
+    def send_enabled(self) -> bool:
+        return self._send_enabled
 
     @staticmethod
     def available() -> bool:
@@ -189,6 +196,12 @@ class CallAudioEngine:
             if out_name:
                 print(f"[call-audio] Speaker: {out_name}")
             self._out_stream.start_stream()
+            self._out_rate = stream_sample_rate(self._out_stream, OPUS_SAMPLE_RATE)
+            if self._out_rate != OPUS_SAMPLE_RATE:
+                print(
+                    f"[call-audio] Speaker opened at {self._out_rate} Hz "
+                    f"(resampling from {OPUS_SAMPLE_RATE} Hz)"
+                )
 
             if self._aborted():
                 self._stop_unlocked(blocking=False)
@@ -234,7 +247,7 @@ class CallAudioEngine:
                 )
                 self._capture_thread.start()
             else:
-                print("[call-audio] No capture device — receive-only")
+                print("[call-audio] No capture device — receive-only (browser mic can send)")
 
             mode = "duplex" if self._send_enabled else "receive-only"
             print(f"[call-audio] Engine started ({mode}, Opus 48 kHz, 20 ms)")
@@ -360,9 +373,11 @@ class CallAudioEngine:
             stream = self._out_stream
             if not stream:
                 break
-            pcm = self._jitter.read()
+            pcm = self._jitter.read() or SILENCE_PCM
+            if self._out_rate != OPUS_SAMPLE_RATE:
+                pcm = resample_pcm_s16(pcm, OPUS_SAMPLE_RATE, self._out_rate)
             try:
-                stream.write(pcm or SILENCE_PCM, exception_on_underflow=False)
+                stream.write(pcm, exception_on_underflow=False)
             except Exception as exc:
                 if self._recv_log > 0:
                     print(f"[call-audio] Playback write failed: {exc}")
@@ -452,6 +467,8 @@ class CallAudioEngine:
             "engine": "native-opus",
             "codec": OPUS_CODEC,
             "mode": "duplex" if self._send_enabled else "receive-only",
+            "send_enabled": self._send_enabled,
+            "output_rate_hz": self._out_rate,
             "frames_sent": self.frames_sent,
             "frames_recv": self.frames_recv,
             "mic_peak_max": self._peak_max,

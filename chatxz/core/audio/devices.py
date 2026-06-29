@@ -16,6 +16,37 @@ from typing import List, Optional, Tuple
 _PULSE_CAPTURE_BYPASS = False
 
 
+def resample_pcm_s16(pcm_s16: bytes, from_rate: int, to_rate: int) -> bytes:
+    """Linear resample mono s16le PCM between sample rates."""
+    if not pcm_s16 or from_rate <= 0 or to_rate <= 0 or from_rate == to_rate:
+        return pcm_s16
+    count = len(pcm_s16) // 2
+    if count < 1:
+        return pcm_s16
+    samples = struct.unpack(f"<{count}h", pcm_s16[: count * 2])
+    out_len = max(1, int(round(count * to_rate / from_rate)))
+    out = []
+    for i in range(out_len):
+        src = i * from_rate / to_rate
+        idx = int(src)
+        frac = src - idx
+        s0 = samples[min(idx, count - 1)]
+        s1 = samples[min(idx + 1, count - 1)]
+        val = int(round(s0 + (s1 - s0) * frac))
+        out.append(max(-32768, min(32767, val)))
+    return struct.pack(f"<{len(out)}h", *out)
+
+
+def stream_sample_rate(stream, fallback: int = 48000) -> int:
+    try:
+        rate = int(getattr(stream, "_rate", 0) or 0)
+        if rate > 0:
+            return rate
+    except Exception:
+        pass
+    return fallback
+
+
 def pcm_peak(pcm_s16: bytes) -> int:
     if len(pcm_s16) < 2:
         return 0

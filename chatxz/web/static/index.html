@@ -6174,6 +6174,7 @@ let callBrowserOpusOk = null;
 let callOpusRecvPrimed = false;
 let callNativeWatchId = null;
 let callForceBrowserPlayback = false;
+let callForceBrowserCapture = false;
 let callDecodeSeqByTs = new Map();
 let callSeqJitter = new Map();
 let callSeqNext = null;
@@ -6248,6 +6249,7 @@ function resetCallUi(opts) {
   callOpusRecvPrimed = false;
   callServerStats = {};
   callForceBrowserPlayback = false;
+  callForceBrowserCapture = false;
   if (isAndroidShell()) {
     window.chatxzAndroid?.setCallActive?.(false);
     window.chatxzAndroid?.setSpeakerphone?.(false);
@@ -6464,8 +6466,8 @@ function updateCallDashboard() {
   if (micEl) {
     let micLabel = '—';
     let micClass = '';
-    if (cfg.native || useNativeCallAudio()) {
-      micLabel = cfg.native ? 'Native' : 'Server';
+    if (cfg.native || useNativeCallCapture() || (nativeEngineRunning() && callCaptureNode)) {
+      micLabel = cfg.native ? 'Native' : (callCaptureNode ? 'Browser' : 'Server');
       micClass = ' good';
     } else if (callCaptureNode && sharedMicActive()) {
       micLabel = 'Active';
@@ -6481,19 +6483,23 @@ function updateCallDashboard() {
   if (hintEl) {
     const elapsed = callStartedAt ? Date.now() - callStartedAt : 0;
     if (callState === 'active' && elapsed > 2800) {
-      const serverActive = useNativeCallAudio() && (
+      const serverActive = nativeEngineRunning() && (
         (callServerStats.frames_sent || callServerStats.audio_out || 0) > 0
         || (callServerStats.frames_recv || callServerStats.audio_in || 0) > 0
       );
-      if (outN === 0 && inN === 0 && !serverActive) {
+      const browserSending = !!callCaptureNode && sharedMicActive();
+      if (outN === 0 && inN === 0 && !serverActive && !browserSending) {
         hintEl.style.display = 'block';
         hintEl.textContent = !callMicSecureContext() && !isAndroidShell()
           ? `No audio — open ${preferredLocalCallUrl()} (mic needs secure context on desktop)`
           : 'No audio detected — check microphone permission and speak into the mic';
-      } else if (outN === 0 && !cfg.native && !useNativeCallAudio()) {
+      } else if (outN === 0 && !cfg.native && !useNativeCallCapture() && !browserSending) {
         hintEl.style.display = 'block';
         hintEl.textContent = 'Not sending audio — allow microphone access for this site';
-      } else if (outN > 30 && (callServerStats.mic_peak_max || 0) === 0 && useNativeCallAudio()) {
+      } else if (callServerStats.mode === 'receive-only' && !browserSending) {
+        hintEl.style.display = 'block';
+        hintEl.textContent = 'Native mic unavailable — allowing browser microphone…';
+      } else if (outN > 30 && (callServerStats.mic_peak_max || 0) === 0 && useNativeCallCapture()) {
         hintEl.style.display = 'block';
         hintEl.textContent = 'Mic capturing silence — check system input device (browser fallback may help)';
       } else {
@@ -6508,19 +6514,27 @@ function updateCallDashboard() {
   updateSidebarCallStrip();
 }
 
-function useNativeCallAudio() {
+function nativeEngineRunning() {
+  return !!(callServerStats && callServerStats.running && callServerStats.engine === 'native-opus');
+}
+
+function useNativeCallCapture() {
+  if (callForceBrowserCapture) return false;
+  if (!nativeCallAudioEnabled || isAndroidShell()) return false;
+  if (!nativeEngineRunning()) return false;
+  if (callServerStats.send_enabled === false) return false;
+  return true;
+}
+
+function useNativeCallPlayback() {
   if (callForceBrowserPlayback) return false;
-  if (callServerStats && callServerStats.running && callServerStats.engine === 'native-opus') {
-    if (!isAndroidShell()) return true;
-    const outN = Number(callServerStats.frames_sent || callServerStats.audio_out || 0);
-    const inN = Number(callServerStats.frames_recv || callServerStats.audio_in || 0);
-    if (outN > 0 || inN > 0) return true;
-    if (callStartedAt && (Date.now() - callStartedAt) < 6000) return true;
-    return false;
-  }
-  return !!(isAndroidShell() && callServerStats && callServerStats.state === 'active'
-    && callServerStats.native_android
-    && callStartedAt && (Date.now() - callStartedAt) < 6000);
+  if (!nativeEngineRunning()) return false;
+  const inN = Number(callServerStats.frames_recv || callServerStats.audio_in || 0);
+  return inN > 0;
+}
+
+function useNativeCallAudio() {
+  return useNativeCallCapture() || useNativeCallPlayback();
 }
 
 function nativeCallAudioCapable() {
@@ -6639,7 +6653,7 @@ function callAudioConfig() {
     jitterTarget: 2880, jitterMax: 7200, jitterMin: 1920,
     useOpus: true,
   };
-  if (useNativeCallAudio()) return { ...opus, native: true };
+  if (useNativeCallCapture()) return { ...opus, native: true };
   return { ...opus, native: false };
 }
 
@@ -6669,8 +6683,13 @@ async function ensureCallOpusDecoder(cfg) {
     output: frame => {
       try {
         const n = frame.numberOfFrames;
-        const buf = new Float32Array(n);
+        let buf = new Float32Array(n);
         frame.copyTo(buf, {planeIndex: 0, format: 'f32'});
+        const ctx = ensureCallAudioCtx();
+        const inRate = frame.sampleRate || cfg.rate || 48000;
+        if (inRate !== ctx.sampleRate) {
+          buf = resampleFloats(buf, inRate, ctx.sampleRate);
+        }
         ensureCallPlaybackNode();
         const seq = callDecodeSeqByTs.get(frame.timestamp);
         callDecodeSeqByTs.delete(frame.timestamp);
@@ -6874,6 +6893,21 @@ function floatToPcm(samples) {
   return pcm;
 }
 
+function resampleFloats(input, inputRate, outputRate) {
+  if (!input || !input.length || inputRate === outputRate) return input;
+  const outLen = Math.max(1, Math.round(input.length * outputRate / inputRate));
+  const out = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const src = i * inputRate / outputRate;
+    const idx = Math.floor(src);
+    const frac = src - idx;
+    const s0 = input[Math.min(idx, input.length - 1)] || 0;
+    const s1 = input[Math.min(idx + 1, input.length - 1)] || s0;
+    out[i] = s0 + (s1 - s0) * frac;
+  }
+  return out;
+}
+
 function resampleLinearToPcm(input, inputRate, outputRate) {
   if (!input || !input.length) return new Int16Array(0);
   if (inputRate === outputRate) return floatToPcm(input);
@@ -7047,11 +7081,16 @@ function scheduleCallNativeFallbackWatchdog() {
       await startCallCapture({forceBrowser: true});
       return;
     }
+    if (nativeActive && (callServerStats.mode === 'receive-only' || callServerStats.send_enabled === false)) {
+      toast('Native mic unavailable — switching to browser Opus');
+      callForceBrowserCapture = true;
+      await startCallCapture({forceBrowser: true});
+      return;
+    }
     if (nativeActive && recv === 0 && sent > 0) {
-      callForceBrowserPlayback = true;
       primeCallPlayback();
     }
-  }, 4000);
+  }, 2000);
 }
 
 function updateCallSpeakerUi() {
@@ -7077,7 +7116,10 @@ function toggleCallSpeaker() {
 
 async function startCallCapture(opts) {
   const forceBrowser = !!(opts && opts.forceBrowser);
-  if (forceBrowser) callForceBrowserPlayback = true;
+  if (forceBrowser) {
+    callForceBrowserCapture = true;
+    callForceBrowserPlayback = true;
+  }
   if (callCaptureNode) return true;
   stopCallRingtone();
   if (!isAndroidShell() && !callMicSecureContext()) {
@@ -7095,11 +7137,16 @@ async function startCallCapture(opts) {
         if (st.native_call_audio === false) nativeCallAudioEnabled = false;
       }
     } catch (_) {}
-    if (useNativeCallAudio() && !forceBrowser && nativeCallAudioEnabled) {
+    if (useNativeCallCapture() && !forceBrowser && nativeCallAudioEnabled) {
       primeCallPlayback();
       scheduleCallNativeFallbackWatchdog();
       updateCallDashboard();
       return true;
+    }
+    if (nativeEngineRunning() && !forceBrowser && nativeCallAudioEnabled
+        && callServerStats.send_enabled === false) {
+      primeCallPlayback();
+      scheduleCallNativeFallbackWatchdog();
     }
     const stream = await acquireSharedMic({forCall: true});
     const ctx = ensureCallAudioCtx();
@@ -7169,7 +7216,7 @@ function stopCallCapturePipeline() {
 
 function enqueueCallAudio(b64, codec, opts) {
   if (!b64 || callState !== 'active') return;
-  if (useNativeCallAudio() || (opts && opts.native_playback)) return;
+  if (useNativeCallPlayback() || (opts && opts.native_playback)) return;
   if (!(codec || '').includes('opus') || b64.length <= 8) return;
   const rate = parseCallAudioRate(codec) || 48000;
   const decCfg = { useOpus: true, rate };

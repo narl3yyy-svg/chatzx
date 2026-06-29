@@ -2588,7 +2588,10 @@ class ChatWebServer:
         if getattr(self, "_android_call_audio", False):
             return True
         engine = self.call_audio_engine
-        return bool(engine and engine.is_running())
+        if not engine or not engine.is_running():
+            return False
+        # Hand off to browser playback until native decode is actually receiving.
+        return int(getattr(engine, "frames_recv", 0) or 0) > 0
 
     def _android_call_stats(self):
         stats = {
@@ -2686,6 +2689,21 @@ class ChatWebServer:
                 print("[call-audio] Native engine failed — browser Opus fallback")
                 return
         self._flush_pending_call_audio()
+
+    def _ensure_call_audio_engine_started(self, timeout: float = 8.0) -> None:
+        """Start native call audio and wait briefly (accept / active call setup)."""
+        if is_android():
+            self._start_call_audio_engine()
+            return
+        if not call_audio_available():
+            return
+        self._start_call_audio_engine()
+        deadline = time.monotonic() + max(0.5, timeout)
+        while time.monotonic() < deadline:
+            engine = self.call_audio_engine
+            if engine and engine.is_running():
+                return
+            time.sleep(0.05)
 
     def _stop_call_audio_engine(self, *, blocking: bool = False, timeout: float = 2.0):
         engine = None
@@ -5071,7 +5089,12 @@ class ChatWebServer:
             ok = await asyncio.to_thread(self.messaging.call_accept, call_id)
             if not ok:
                 return web.json_response({"error": "accept failed"}, status=400)
-            return web.json_response({"status": "ok", **self.messaging.call_status()})
+            await asyncio.to_thread(self._ensure_call_audio_engine_started)
+            st = self.messaging.call_status()
+            if self.call_audio_engine:
+                st.update(self.call_audio_engine.stats())
+            st["native_call_audio"] = self._native_call_audio_ready()
+            return web.json_response({"status": "ok", **st})
 
         if action == "reject":
             reason = (data.get("reason") or "").strip()
@@ -5820,7 +5843,7 @@ class ChatWebServer:
                 if getattr(self, "_android_call_audio", False):
                     return
                 engine = self.call_audio_engine
-                if engine and getattr(engine, "frames_sent", 0) > 0:
+                if engine and engine.is_running() and getattr(engine, "send_enabled", False):
                     return
                 codec = (data.get("codec") or OPUS_CODEC).strip()
                 if "opus" not in codec.lower():
