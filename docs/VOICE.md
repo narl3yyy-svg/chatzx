@@ -99,7 +99,9 @@ Rebuild/install the APK (API 29+). On call accept, `CallAudioEngine.java` captur
 | Symptom | Check |
 |---------|-------|
 | No audio either direction | Server logs for `[call] Opus out` / `[call] Audio in` |
-| `mic peak 0` on Linux | Check `[call-audio] Selected input` line; allow browser fallback or pick correct Pulse source |
+| `mic peak 0` on Linux | v0.8.4+ skips Pulse `.monitor` defaults; check `[call-audio] PulseAudio default source` is `alsa_input…` not `alsa_output…monitor` |
+| Ctrl+C ignored during call | Update to v0.8.4+; native audio engine now stops on first SIGINT |
+| Dashboard shows 0 audio sent/received | v0.8.4+ pushes `call_stats` over WebSocket; confirm WS connected |
 | `Native unavailable` on desktop | `libopus` installed? `./run.sh install` for PyAudio |
 | Garbled audio | Confirm logs show `Opus` not `pcmulaw` (old client); update both peers to v0.8.3+ |
 | Jitter stuck at 0–20 ms | Update to v0.8.0+; buffer should hold 40–120 ms |

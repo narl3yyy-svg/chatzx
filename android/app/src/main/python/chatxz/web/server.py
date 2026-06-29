@@ -495,6 +495,8 @@ class ChatWebServer:
         self._shutting_down = False
         self._failover_task = None
         self._background_tasks = []
+        self._shutdown_handler = None
+        self._call_stats_last_key = None
         self._progress_last = {}
         self._progress_throttle_ms = 250
         self._ui_state = {"viewing_peer": None, "hidden": False}
@@ -524,6 +526,17 @@ class ChatWebServer:
             task.cancel()
 
     def _teardown_network_stack(self):
+        try:
+            self._stop_call_audio_engine()
+        except Exception:
+            pass
+        if self.messaging:
+            try:
+                from chatxz.core.voice_call import STATE_IDLE
+                if getattr(self.messaging, "voice_call", None) and self.messaging.voice_call.state != STATE_IDLE:
+                    self.messaging.call_end()
+            except Exception:
+                pass
         if self.lan_beacon:
             try:
                 self.lan_beacon.stop()
@@ -2586,9 +2599,11 @@ class ChatWebServer:
         payload = payload or {}
         if event == "accepted":
             self._ws_call_audio_sent = 0
+            self._call_stats_last_key = None
             self._start_call_audio_engine()
         elif event in ("ended", "rejected"):
             self._ws_call_audio_sent = 0
+            self._call_stats_last_key = None
             self._stop_call_audio_engine()
         elif event == "audio":
             seq = int(payload.get("seq") or 0)
@@ -2608,6 +2623,11 @@ class ChatWebServer:
             self._broadcast({"type": f"call_{event}", "data": data}),
             self._loop,
         )
+        if event in ("accepted", "audio", "ended") and self._loop:
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast_call_stats(force=(event == "accepted")),
+                self._loop,
+            )
 
     def _on_transfer_progress(self, data):
         status = data.get("status", "active")
@@ -5603,10 +5623,81 @@ class ChatWebServer:
                     call_id,
                 )
 
+    def _install_shutdown_signals(self, handler):
+        """Re-apply after RNS startup — Reticulum overwrites SIGINT handlers."""
+        if sys.platform == "win32" or not handler:
+            return
+        try:
+            signal.signal(signal.SIGINT, handler)
+            signal.signal(signal.SIGTERM, handler)
+        except (ValueError, OSError, RuntimeError):
+            pass
+        loop = self._loop
+        if loop and not loop.is_closed():
+            try:
+                loop.add_signal_handler(signal.SIGINT, lambda: handler(signal.SIGINT))
+                loop.add_signal_handler(signal.SIGTERM, lambda: handler(signal.SIGTERM))
+            except (NotImplementedError, RuntimeError, ValueError, OSError):
+                pass
+
+    def _call_stats_snapshot(self):
+        if not self.messaging:
+            return None
+        st = self.messaging.call_status()
+        if self.call_audio_engine:
+            st.update(self.call_audio_engine.stats())
+        if getattr(self, "_android_call_audio", False):
+            st.update({
+                "engine": "native-opus",
+                "native_android": True,
+                "running": True,
+                "codec": OPUS_CODEC,
+            })
+        return st
+
+    async def _broadcast_call_stats(self, force=False):
+        from chatxz.core.voice_call import STATE_ACTIVE, STATE_OUTGOING
+        if not self.messaging:
+            return
+        state = self.messaging.voice_call.state
+        if state not in (STATE_ACTIVE, STATE_OUTGOING):
+            self._call_stats_last_key = None
+            return
+        st = self._call_stats_snapshot()
+        if not st:
+            return
+        key = (
+            st.get("audio_out"),
+            st.get("frames_sent"),
+            st.get("audio_in"),
+            st.get("frames_recv"),
+            st.get("jitter_ms"),
+            st.get("rtt_ms"),
+            state,
+        )
+        if not force and key == self._call_stats_last_key:
+            return
+        self._call_stats_last_key = key
+        if self.websockets and self._loop:
+            await self._broadcast({"type": "call_stats", "data": st})
+
+    async def _call_stats_broadcaster(self):
+        while not self._shutting_down:
+            try:
+                await asyncio.sleep(1.0)
+            except asyncio.CancelledError:
+                break
+            try:
+                await self._broadcast_call_stats()
+            except Exception:
+                pass
+
     async def _init_rns_background(self):
         try:
             my_hash = await asyncio.to_thread(self.start_rns)
             print(f"[startup] RNS ready, identity: {my_hash}")
+            if self._shutdown_handler:
+                self._install_shutdown_signals(self._shutdown_handler)
             await self._broadcast({"type": "rns_ready", "data": {"hash": my_hash}})
         except (SystemExit, RuntimeError) as e:
             self.rns_init_error = str(e) or "RNS startup failed"
@@ -5631,6 +5722,7 @@ class ChatWebServer:
             self._history_maintenance_loop(),
             self._serial_watchdog_loop(),
             self._queue_retry_loop(),
+            self._call_stats_broadcaster(),
         ):
             task = asyncio.create_task(coro)
             self._background_tasks.append(task)
@@ -5828,6 +5920,10 @@ class ChatWebServer:
 
         def _stop_loop(signum=None, frame=None):
             nonlocal stopping
+            try:
+                self._stop_call_audio_engine()
+            except Exception:
+                pass
             if stopping:
                 try:
                     self._teardown_network_stack()
@@ -5844,13 +5940,10 @@ class ChatWebServer:
                 pass
             loop.call_soon_threadsafe(loop.stop)
 
+        self._shutdown_handler = _stop_loop
+        self._install_shutdown_signals(_stop_loop)
+
         if sys.platform != "win32":
-            try:
-                loop.add_signal_handler(signal.SIGINT, lambda: _stop_loop(signal.SIGINT))
-                loop.add_signal_handler(signal.SIGTERM, lambda: _stop_loop(signal.SIGTERM))
-            except (NotImplementedError, RuntimeError, ValueError):
-                signal.signal(signal.SIGINT, _stop_loop)
-                signal.signal(signal.SIGTERM, _stop_loop)
             try:
                 signal.signal(signal.SIGTSTP, lambda s, f: print(
                     "\n[shutdown] Ctrl+Z suspends the server — use Ctrl+C to stop",

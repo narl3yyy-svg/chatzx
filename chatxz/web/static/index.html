@@ -754,8 +754,56 @@ body::before {
   color: var(--text2); cursor: pointer; font-family: inherit; font-size: 16px;
 }
 .call-speaker-btn.active { color: var(--primary); border-color: rgba(99,179,237,0.5); background: rgba(99,179,237,0.12); }
-#call-bar { display: none !important; }
+.sidebar-call-strip {
+  display: none; align-items: center; gap: 10px;
+  margin: 0 14px 12px; padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, rgba(61,214,140,0.14), rgba(124,106,239,0.1));
+  border: 1px solid rgba(61,214,140,0.35);
+  cursor: pointer; transition: all var(--transition);
+}
+.sidebar-call-strip:hover {
+  border-color: rgba(61,214,140,0.55);
+  background: linear-gradient(135deg, rgba(61,214,140,0.2), rgba(124,106,239,0.14));
+}
+.sidebar-call-strip.outgoing {
+  background: linear-gradient(135deg, rgba(124,106,239,0.16), rgba(99,179,237,0.08));
+  border-color: rgba(124,106,239,0.4);
+}
+.sidebar-call-icon { font-size: 18px; flex-shrink: 0; }
+.sidebar-call-info {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+}
+.sidebar-call-peer {
+  font-size: 13px; font-weight: 600; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sidebar-call-meta {
+  font-size: 11px; color: var(--text2); font-variant-numeric: tabular-nums;
+}
+.sidebar-call-hangup {
+  flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%;
+  border: 1px solid rgba(255,107,122,0.45);
+  background: rgba(255,107,122,0.18); color: #ff8f9a;
+  cursor: pointer; font-size: 14px; line-height: 1;
+}
+.sidebar-call-hangup:hover { background: rgba(255,107,122,0.3); color: #ffb3bb; }
+body.android-shell .sidebar-call-strip { display: none !important; }
 .dock-status #disconnect-btn { margin-right: 4px; }
+#call-bar {
+  display: none; align-items: center; gap: 10px;
+  padding: 8px 14px; margin: 0;
+  background: linear-gradient(90deg, rgba(61,214,140,0.12), rgba(124,106,239,0.08));
+  border-bottom: 1px solid rgba(61,214,140,0.3);
+  font-size: 12px; color: var(--text2);
+}
+#call-bar.active { display: flex; }
+#call-bar .call-bar-peer { font-weight: 600; color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#call-bar .call-bar-meta { font-variant-numeric: tabular-nums; color: var(--success); }
+#call-bar .call-bar-expand {
+  border: 1px solid var(--border); background: rgba(255,255,255,0.04);
+  color: var(--text2); border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 11px;
+}
 
 #placeholder {
   flex: 1; display: flex; align-items: center; justify-content: center;
@@ -1573,6 +1621,15 @@ body.android-shell.sidebar-open #sidebar-backdrop {
       <button id="settings-btn" onclick="toggleSettings()" title="Settings">⚙</button>
     </div>
 
+    <div id="sidebar-call-strip" class="sidebar-call-strip" style="display:none" onclick="openCallDashboard(true)" title="Open call panel">
+      <span class="sidebar-call-icon" aria-hidden="true">📞</span>
+      <div class="sidebar-call-info">
+        <span class="sidebar-call-peer" id="sidebar-call-peer">—</span>
+        <span class="sidebar-call-meta" id="sidebar-call-meta">00:00 · Live</span>
+      </div>
+      <button type="button" class="sidebar-call-hangup" onclick="event.stopPropagation();endVoiceCall()" title="Hang up" aria-label="Hang up">✕</button>
+    </div>
+
     <div id="sidebar-body">
     <div id="contacts-section">
       <div class="search-box">
@@ -1695,7 +1752,11 @@ body.android-shell.sidebar-open #sidebar-backdrop {
         </button>
       </div>
     </div>
-    <div id="call-bar" aria-hidden="true"></div>
+    <div id="call-bar" aria-hidden="true">
+      <span class="call-bar-peer" id="call-bar-peer">—</span>
+      <span class="call-bar-meta" id="call-bar-meta">00:00 · Live</span>
+      <button type="button" class="call-bar-expand" onclick="openCallDashboard(true)">Details</button>
+    </div>
 
     <div id="placeholder">
       <div class="welcome-card">
@@ -3357,6 +3418,11 @@ function handleWSMessage(msg) {
     const text = msg.data || '';
     if (text.toLowerCase().includes('network stack failed')) showRnsErrorBanner(text);
     toast(text);
+  } else if (msg.type === 'call_stats') {
+    if (callState === 'active' || callState === 'outgoing') {
+      callServerStats = Object.assign({}, callServerStats, msg.data || {});
+      updateCallDashboard();
+    }
   } else if (msg.type && msg.type.startsWith('call_')) {
     handleCallWS(msg.type.replace(/^call_/, ''), msg.data || {});
   }
@@ -6034,6 +6100,7 @@ function resetCallUi(opts) {
   if (timer) timer.textContent = '00:00';
   updatePeerHeader();
   updateCallDashboard();
+  updateSidebarCallStrip();
   if (notifyServer && prevState !== 'idle' && prevPeer) {
     callApi({action: 'end', peer: prevPeer, via: prevVia, call_id: prevId}).catch(() => {});
   }
@@ -6105,6 +6172,43 @@ function formatCallRtt(ms) {
   if (ms == null || ms === '' || Number.isNaN(Number(ms))) return '—';
   const n = Number(ms);
   return n < 1 ? '<1 ms' : `${Math.round(n)} ms`;
+}
+
+function isDesktopCallUi() {
+  return !isAndroidShell() && !isMobileLayout();
+}
+
+function updateSidebarCallStrip() {
+  const onCall = callState === 'active' || callState === 'outgoing';
+  const timer = document.getElementById('call-timer')?.textContent || '00:00';
+  const stateLabel = callState === 'outgoing' ? 'Calling' : 'Live';
+  const tx = Math.max(callLocalFramesOut, callServerStats.audio_out || callServerStats.frames_sent || 0);
+  const rx = Math.max(callLocalFramesIn, callServerStats.audio_in || callServerStats.frames_recv || 0);
+  const meta = `${timer} · ${stateLabel} · ↑${tx} ↓${rx}`;
+  const peerName = callPeerDisplayName(callPeer || viewingPeer);
+
+  const strip = document.getElementById('sidebar-call-strip');
+  if (strip) {
+    strip.style.display = onCall && isDesktopCallUi() ? 'flex' : 'none';
+    if (onCall && isDesktopCallUi()) {
+      strip.classList.toggle('outgoing', callState === 'outgoing');
+      const peerEl = document.getElementById('sidebar-call-peer');
+      const metaEl = document.getElementById('sidebar-call-meta');
+      if (peerEl) peerEl.textContent = peerName;
+      if (metaEl) metaEl.textContent = meta;
+    }
+  }
+
+  const bar = document.getElementById('call-bar');
+  if (bar) {
+    bar.classList.toggle('active', onCall && isAndroidShell());
+    if (onCall && isAndroidShell()) {
+      const peerEl = document.getElementById('call-bar-peer');
+      const metaEl = document.getElementById('call-bar-meta');
+      if (peerEl) peerEl.textContent = `📞 ${peerName}`;
+      if (metaEl) metaEl.textContent = meta;
+    }
+  }
 }
 
 function updateCallDashboard() {
@@ -6208,6 +6312,7 @@ function updateCallDashboard() {
       hintEl.textContent = '';
     }
   }
+  updateSidebarCallStrip();
 }
 
 function useNativeCallAudio() {
@@ -6237,6 +6342,7 @@ function openCallDashboard(force) {
 function minimizeCallDashboard() {
   callDashMinimized = true;
   document.getElementById('call-active-overlay')?.classList.remove('open');
+  updateSidebarCallStrip();
 }
 
 function startCallStatsPolling() {
@@ -6245,7 +6351,7 @@ function startCallStatsPolling() {
     if (callState !== 'active' && callState !== 'outgoing') return;
     callApi({action: 'status'}).then(d => {
       if (!d || d.error) return;
-      callServerStats = d;
+      callServerStats = Object.assign({}, callServerStats, d);
       updateCallDashboard();
     }).catch(() => {});
     updateCallDashboard();
@@ -6272,7 +6378,12 @@ function showActiveCall(peer, label) {
       updateCallDashboard();
     }, 1000);
   }
-  openCallDashboard(true);
+  if (isDesktopCallUi() || isAndroidShell()) {
+    callDashMinimized = true;
+    updateSidebarCallStrip();
+  } else {
+    openCallDashboard(true);
+  }
   startCallStatsPolling();
   updatePeerHeader();
 }
@@ -6291,7 +6402,12 @@ function showOutgoingCall(peer) {
       updateCallDashboard();
     }, 1000);
   }
-  openCallDashboard(true);
+  if (isDesktopCallUi() || isAndroidShell()) {
+    callDashMinimized = true;
+    updateSidebarCallStrip();
+  } else {
+    openCallDashboard(true);
+  }
   startCallStatsPolling();
   updatePeerHeader();
 }

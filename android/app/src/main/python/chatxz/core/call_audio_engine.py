@@ -157,6 +157,7 @@ class VoiceCallAudio:
 
     def stop(self) -> None:
         self._running = False
+        self._send_enabled = False
         for stream in (self._in_stream, self._out_stream):
             if stream:
                 try:
@@ -204,6 +205,55 @@ class VoiceCallAudio:
                 )
 
     @staticmethod
+    def _pulse_list_sources() -> List[str]:
+        if sys.platform not in ("linux", "linux2"):
+            return []
+        try:
+            proc = subprocess.run(
+                ["pactl", "list", "short", "sources"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+            if proc.returncode != 0:
+                return []
+            names: List[str] = []
+            for line in (proc.stdout or "").splitlines():
+                parts = line.split("\t")
+                if len(parts) >= 2:
+                    name = parts[1].strip()
+                    if name:
+                        names.append(name)
+            return names
+        except Exception:
+            return []
+
+    @staticmethod
+    def _pulse_best_capture_source() -> Optional[str]:
+        sources = VoiceCallAudio._pulse_list_sources()
+        ranked: List[Tuple[int, str]] = []
+        for name in sources:
+            low = name.lower()
+            if ".monitor" in low or "monitor of" in low:
+                continue
+            score = 0
+            if low.startswith("alsa_input"):
+                score += 80
+            for kw in ("microphone", "mic", "headset", "webcam", "usb", "analog"):
+                if kw in low:
+                    score += 20
+            for kw in ("hdmi", "spdif", "output", "sink"):
+                if kw in low:
+                    score -= 40
+            if score > -20:
+                ranked.append((score, name))
+        if not ranked:
+            return None
+        ranked.sort(key=lambda t: t[0], reverse=True)
+        return ranked[0][1]
+
+    @staticmethod
     def _pulse_default_source() -> Optional[str]:
         if sys.platform not in ("linux", "linux2"):
             return None
@@ -217,10 +267,11 @@ class VoiceCallAudio:
             )
             if proc.returncode == 0:
                 name = (proc.stdout or "").strip()
-                return name or None
+                if name and ".monitor" not in name.lower():
+                    return name
         except Exception:
             pass
-        return None
+        return VoiceCallAudio._pulse_best_capture_source()
 
     @staticmethod
     def _score_device(name: str, *, input_device: bool, pulse_name: Optional[str]) -> int:
@@ -232,7 +283,7 @@ class VoiceCallAudio:
         if low in ("default", "sysdefault"):
             return 1
         score = 20
-        if pulse_name:
+        if pulse_name and ".monitor" not in pulse_name.lower():
             pulse_low = pulse_name.lower()
             if pulse_low in low or low in pulse_low:
                 score += 120

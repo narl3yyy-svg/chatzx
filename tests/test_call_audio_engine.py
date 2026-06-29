@@ -46,6 +46,28 @@ def test_voice_call_audio_class_exists():
     assert VoiceCallAudio.available() == call_audio_available()
 
 
+def test_pulse_best_capture_source_skips_monitor(monkeypatch):
+    def fake_list():
+        return [
+            "alsa_output.pci.hdmi-stereo.monitor",
+            "alsa_input.pci.analog-stereo",
+            "alsa_output.pci.analog-stereo.monitor",
+        ]
+    monkeypatch.setattr(VoiceCallAudio, "_pulse_list_sources", staticmethod(fake_list))
+    assert VoiceCallAudio._pulse_best_capture_source() == "alsa_input.pci.analog-stereo"
+
+
+def test_score_device_ignores_monitor_pulse_default():
+    pulse = "alsa_output.pci.hdmi-stereo.monitor"
+    mic = VoiceCallAudio._score_device(
+        "HDA Intel PCH: ALC897 Analog (hw:0,0)", input_device=True, pulse_name=pulse
+    )
+    hdmi = VoiceCallAudio._score_device(
+        "HDA Intel PCH: HDMI (hw:0,7)", input_device=True, pulse_name=pulse
+    )
+    assert mic > hdmi
+
+
 def test_score_device_rejects_monitor_loopback():
     score = VoiceCallAudio._score_device("alsa_output.monitor", input_device=True, pulse_name=None)
     assert score == -1000

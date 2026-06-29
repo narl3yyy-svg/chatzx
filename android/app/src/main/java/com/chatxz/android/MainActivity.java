@@ -17,6 +17,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.VibrationEffect;
+import android.os.PowerManager;
 import android.os.Vibrator;
 import android.os.VibratorManager;
 import android.provider.DocumentsContract;
@@ -88,6 +89,7 @@ public class MainActivity extends AppCompatActivity {
     private static boolean debugMode = false;
     private AudioManager audioManager;
     private AudioFocusRequest audioFocusRequest;
+    private PowerManager.WakeLock proximityWakeLock;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -343,7 +345,9 @@ public class MainActivity extends AppCompatActivity {
                         AudioManager.STREAM_VOICE_CALL,
                         AudioManager.AUDIOFOCUS_GAIN_TRANSIENT);
             }
+            acquireProximityWakeLock();
         } else {
+            releaseProximityWakeLock();
             stopCallVibrate();
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && audioFocusRequest != null) {
                 audioManager.abandonAudioFocusRequest(audioFocusRequest);
@@ -352,6 +356,37 @@ public class MainActivity extends AppCompatActivity {
                 audioManager.abandonAudioFocus(null);
             }
         }
+    }
+
+    private void acquireProximityWakeLock() {
+        if (proximityWakeLock != null && proximityWakeLock.isHeld()) {
+            return;
+        }
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        if (pm == null) {
+            return;
+        }
+        try {
+            proximityWakeLock = pm.newWakeLock(
+                    PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
+                    "chatxz:call_proximity");
+            proximityWakeLock.acquire();
+        } catch (Exception ignored) {
+            proximityWakeLock = null;
+        }
+    }
+
+    private void releaseProximityWakeLock() {
+        if (proximityWakeLock == null) {
+            return;
+        }
+        try {
+            if (proximityWakeLock.isHeld()) {
+                proximityWakeLock.release();
+            }
+        } catch (Exception ignored) {
+        }
+        proximityWakeLock = null;
     }
 
     public void vibrateIncomingCall() {
@@ -862,6 +897,7 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        releaseProximityWakeLock();
         closeWebSocketBeforeReload();
         if (usbPermissionReceiver != null) {
             try {

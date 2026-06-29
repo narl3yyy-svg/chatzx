@@ -2,6 +2,15 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.8.4] — 2026-06-28
+
+### Fixed
+- **Ctrl+C during calls** — stop native call audio before teardown; re-arm SIGINT after RNS startup (Reticulum overwrote handlers).
+- **Call dashboard stats** — WebSocket `call_stats` push every second during active calls; status poll merges server native counters.
+- **Linux mic selection** — reject PulseAudio `.monitor` default sources; pick real `alsa_input` capture device.
+- **Desktop call UX** — active call shown in sidebar strip instead of auto-opening fullscreen overlay.
+- **Android call UX** — in-chat call bar (stay in chat); proximity wake lock dims screen at ear, wakes when away.
+
 ## [0.8.3] — 2026-06-28
 
 ### Fixed
