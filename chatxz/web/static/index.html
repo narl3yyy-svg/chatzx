@@ -7364,15 +7364,20 @@ async function endVoiceCall() {
     window.chatxzAndroid?.setCallActive?.(false);
     window.chatxzAndroid?.setSpeakerphone?.(false);
   }
-  resetCallUi();
+  closeCallAudioResources();
+  stopCallCapturePipeline();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 2500);
-  fetch('/api/call', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({action: 'end', peer, via, call_id: id}),
-    signal: ctrl.signal,
-  }).catch(() => {}).finally(() => clearTimeout(timer));
+  try {
+    await fetch('/api/call', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: 'end', peer, via, call_id: id}),
+      signal: ctrl.signal,
+    });
+  } catch (_) {}
+  clearTimeout(timer);
+  resetCallUi();
 }
 
 function beaconEndVoiceCall() {

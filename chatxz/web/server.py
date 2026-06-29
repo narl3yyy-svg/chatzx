@@ -2373,6 +2373,21 @@ class ChatWebServer:
             return
         peer = self._peer_dest_hash(peer_hash)
         still_linked = bool(self.messaging and peer and self.messaging._peer_link_active(peer))
+        if self.messaging and peer and not still_linked:
+            vc = self.messaging.voice_call
+            if vc.state in (STATE_ACTIVE, STATE_OUTGOING, STATE_INCOMING):
+                if self.messaging._call_peer_matches(peer):
+                    try:
+                        self._hang_up_call(vc.call_id, peer, vc.transport)
+                    except Exception:
+                        try:
+                            self.messaging.call_end(
+                                call_id=vc.call_id,
+                                peer_hash=peer,
+                                transport=vc.transport,
+                            )
+                        except Exception:
+                            pass
         if still_linked:
             return
         removed = 0
@@ -2664,7 +2679,17 @@ class ChatWebServer:
 
         def send_audio(b64, codec):
             try:
-                return bool(self.messaging.call_send_audio(b64, codec))
+                if not self.messaging or self.messaging.voice_call.state != STATE_ACTIVE:
+                    return False
+                ok = bool(self.messaging.call_send_audio(b64, codec))
+                if self.messaging.voice_call.state == STATE_IDLE:
+                    threading.Thread(
+                        target=self._stop_call_audio_engine,
+                        kwargs={"blocking": False, "timeout": 0.5},
+                        name="call-audio-stop",
+                        daemon=True,
+                    ).start()
+                return ok
             except Exception:
                 return False
 
@@ -2775,7 +2800,12 @@ class ChatWebServer:
             self._ws_call_audio_sent = 0
             self._call_stats_last_key = None
             self._pending_call_audio.clear()
-            self._stop_call_audio_engine(blocking=False, timeout=0.8)
+            threading.Thread(
+                target=self._stop_call_audio_engine,
+                kwargs={"blocking": False, "timeout": 0.8},
+                name="call-audio-stop",
+                daemon=True,
+            ).start()
             self._post_call_audio = True
             self._shutdown_fast = False
         elif event == "audio":

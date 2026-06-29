@@ -187,7 +187,7 @@ def test_call_end_sends_end_while_active_then_resets():
     assert mb.voice_call.state == STATE_IDLE
     assert len(sent) == 1
     assert sent[0][0] == CALL_END
-    assert sent[0][1] == STATE_ACTIVE
+    assert sent[0][1] == STATE_IDLE
 
 
 def test_call_send_audio_auto_ends_without_link():
@@ -207,6 +207,43 @@ def test_call_send_audio_auto_ends_without_link():
     assert len(ended) == 0
     mb._call_link_fail_since = time.monotonic() - 5.0
     assert mb.call_send_audio("AAAA", "audio/opus;rate=48000") is False
+    assert len(ended) == 1
+
+
+def test_call_send_audio_ends_faster_without_healthy_link():
+    from chatxz.core.messaging import MessagingBackend
+
+    mb = MessagingBackend.__new__(MessagingBackend)
+    mb.voice_call = VoiceCallSession()
+    peer = "ll" * 16
+    mb.voice_call.begin_outgoing(peer, "lan")
+    mb.voice_call.activate()
+    mb.dest_hash_for = lambda h: h
+    mb._call_link_for_peer = lambda *a, **k: None
+    mb._peer_has_healthy_call_link = lambda *a, **k: False
+    ended = []
+    mb.call_end = lambda **k: ended.append(True) or True
+    mb._call_link_fail_since = time.monotonic() - 1.5
+    assert mb.call_send_audio("AAAA", "audio/opus;rate=48000") is False
+    assert len(ended) == 1
+
+
+def test_call_remote_silent_ends_when_links_unhealthy():
+    from chatxz.core.messaging import MessagingBackend
+
+    mb = MessagingBackend.__new__(MessagingBackend)
+    mb.voice_call = VoiceCallSession()
+    peer = "mm" * 16
+    mb.voice_call.begin_outgoing(peer, "lan")
+    mb.voice_call.activate()
+    mb.dest_hash_for = lambda h: h
+    mb._call_peer_matches = lambda h: True
+    mb._call_audio_recv = 120
+    mb._call_last_audio_in_at = time.monotonic() - 2.0
+    mb._peer_has_healthy_call_link = lambda *a, **k: False
+    ended = []
+    mb.call_end = lambda **k: ended.append(True) or True
+    assert mb._maybe_end_call_remote_gone(peer, "lan") is True
     assert len(ended) == 1
 
 
@@ -242,6 +279,8 @@ def test_call_link_prefers_healthy_but_allows_degraded_active():
     mb._link_for_peer = lambda *a, **k: None
     mb._find_active_link_for_peer = lambda *a, **k: degraded
     mb._link_interface_healthy = lambda link: False
+    picked = mb._call_link_for_peer(peer, "lan", prefer_healthy=True)
+    assert picked is None
     picked = mb._call_link_for_peer(peer, "lan")
     assert picked is degraded
 

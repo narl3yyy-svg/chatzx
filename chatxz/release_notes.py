@@ -3,6 +3,11 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.9.12": [
+        "Voice calls now end symmetrically — hanging up on either side stops audio on both; remote disconnect is detected within ~2s.",
+        "Fixed zombie call audio continuing after the UI showed the call ended.",
+        "CALL_END is sent on every active link so the peer always gets the hang-up signal.",
+    ],
     "0.9.11": [
         "Ctrl+C now stops the server after voice calls on Windows and Mac — PyAudio cleanup no longer hangs shutdown.",
         "Call UI: clearer mic hints (native vs browser vs localhost); faster switch to browser mic when native capture is unavailable.",

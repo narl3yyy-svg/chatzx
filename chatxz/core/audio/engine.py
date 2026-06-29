@@ -79,6 +79,7 @@ class CallAudioEngine:
         self._peak_max = 0
         self._silent_frames = 0
         self._hotswap_count = 0
+        self._send_fail_streak = 0
         self._recv_log = 5
         self._decode_fail_log = 5
         self._input_ranked: List[Tuple[int, str, int]] = []
@@ -376,12 +377,18 @@ class CallAudioEngine:
             if opus and self._send_fn and not self._stop.is_set():
                 b64 = base64.b64encode(opus).decode("ascii")
                 if self._send_fn(b64, OPUS_CODEC):
+                    self._send_fail_streak = 0
                     self.frames_sent += 1
                     if self.frames_sent <= 3 or self.frames_sent % 50 == 0:
                         print(
                             f"[call-audio] Opus out #{self.frames_sent} "
                             f"({len(b64)} b64, {len(opus)} B)"
                         )
+                else:
+                    self._send_fail_streak += 1
+                    if self._send_fail_streak >= 8:
+                        print("[call-audio] Capture stopping — call no longer active")
+                        break
             next_tick += FRAME_INTERVAL_SEC
             sleep_for = next_tick - time.monotonic()
             if sleep_for > 0:

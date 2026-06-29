@@ -2,6 +2,13 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.9.12] — 2026-06-29
+
+### Fixed
+- **Asymmetric hang-up** — `call_end` resets local state immediately (stops capture), then fans out `CALL_END` on every active link; remote hang-up detected when peer goes silent with no healthy link (~1.5s); link loss during active call ends the call on both sides.
+- **Zombie call audio** — native capture stops after consecutive send failures; audio engine stop is deferred off the capture/event path; hang-up API is awaited before UI reset so server teardown completes first.
+- **Stale link audio** — call audio prefers healthy links; degraded-only paths end the call quickly instead of sending into the void for 4+ seconds.
+
 ## [0.9.11] — 2026-06-29
 
 ### Fixed
