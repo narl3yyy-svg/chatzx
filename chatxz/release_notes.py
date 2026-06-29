@@ -3,6 +3,11 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "0.9.11": [
+        "Ctrl+C now stops the server after voice calls on Windows and Mac — PyAudio cleanup no longer hangs shutdown.",
+        "Call UI: clearer mic hints (native vs browser vs localhost); faster switch to browser mic when native capture is unavailable.",
+        "Voice calls: open http://localhost:8742 (Mac) or http://127.0.0.1:8742 (Windows) for browser microphone access.",
+    ],
     "0.9.6": [
         "Voice calls: open http://localhost:8742 (Mac) or http://127.0.0.1:8742 (Windows) — browser mic is blocked on LAN IPs.",
         "macOS native voice: brew install opus portaudio, then restart chatxz.",

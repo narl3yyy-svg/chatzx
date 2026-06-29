@@ -2,6 +2,13 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.9.11] — 2026-06-29
+
+### Fixed
+- **Ctrl+C after voice call** — Windows now registers SIGINT/SIGTERM; PyAudio `terminate()` runs in a daemon thread with timeout; `stop_abandon()` skips hung PortAudio cleanup; server fast-exits after call end or forced shutdown instead of hanging in `finally`.
+- **Hang-up blocking shutdown** — call end/hang-up uses non-blocking audio engine stop so RNS teardown and Ctrl+C are not blocked behind PyAudio.
+- **Mic hints** — call UI distinguishes native mic, browser mic, and localhost requirement; immediately falls back to browser capture when native `send_enabled` is false; faster native-audio watchdog (1.2s).
+
 ## [0.9.10] — 2026-06-29
 
 ### Fixed

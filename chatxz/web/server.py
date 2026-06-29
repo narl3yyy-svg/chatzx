@@ -509,6 +509,7 @@ class ChatWebServer:
         self._shutdown_pipe_w = None
         self._shutdown_forced = False
         self._shutdown_fast = False
+        self._post_call_audio = False
         self._shutdown_force_timer = None
         self._linux_signal_shutdown = None
         self._call_stats_last_key = None
@@ -2715,17 +2716,21 @@ class ChatWebServer:
             self.call_audio_engine = None
         if engine:
             try:
-                engine.stop_fast()
                 if blocking:
-                    engine.wait_stopped(timeout=timeout)
+                    engine.stop()
+                else:
+                    engine.stop_abandon(timeout=min(timeout, 1.0))
             except Exception:
-                pass
+                try:
+                    engine.stop_fast()
+                except Exception:
+                    pass
 
     def _hang_up_call(self, call_id=None, peer=None, via=None):
         """Stop native audio first, then signal hang-up over RNS."""
         self._pending_call_audio.clear()
         try:
-            self._stop_call_audio_engine(blocking=True, timeout=2.5)
+            self._stop_call_audio_engine(blocking=False, timeout=1.0)
         except Exception:
             pass
         if not self.messaging:
@@ -2770,7 +2775,9 @@ class ChatWebServer:
             self._ws_call_audio_sent = 0
             self._call_stats_last_key = None
             self._pending_call_audio.clear()
-            self._stop_call_audio_engine(blocking=False)
+            self._stop_call_audio_engine(blocking=False, timeout=0.8)
+            self._post_call_audio = True
+            self._shutdown_fast = False
         elif event == "audio":
             seq = int(payload.get("seq") or 0)
             data = payload.get("data") or ""
@@ -5961,7 +5968,14 @@ class ChatWebServer:
 
     def _install_shutdown_signals(self):
         """Self-pipe + signalfd — SIGINT during PortAudio calls (non-main-thread delivery)."""
+        handler = self._shutdown_handler
         if sys.platform == "win32":
+            if handler:
+                try:
+                    signal.signal(signal.SIGINT, handler)
+                    signal.signal(signal.SIGTERM, handler)
+                except (ValueError, OSError, RuntimeError):
+                    pass
             return
         self._start_linux_signalfd()
         loop = self._loop
@@ -6298,8 +6312,9 @@ class ChatWebServer:
             if stopping:
                 self._shutdown_forced = True
                 self._shutdown_fast = True
+                self._schedule_forced_exit(signum or signal.SIGINT, delay=0.05)
                 try:
-                    self._stop_call_audio_engine()
+                    self._stop_call_audio_engine(blocking=False)
                 except Exception:
                     pass
                 try:
@@ -6309,6 +6324,7 @@ class ChatWebServer:
                 os._exit(130 if signum == signal.SIGINT else 0)
             stopping = True
             self._shutdown_fast = True
+            self._schedule_forced_exit(signum or signal.SIGINT, delay=0.25)
             self._request_shutdown(signum or signal.SIGINT)
 
         self._shutdown_handler = _stop_loop
@@ -6346,8 +6362,12 @@ class ChatWebServer:
                 except Exception:
                     pass
             self._close_shutdown_pipe()
-            # PortAudio/RNS cleanup can hang during active calls — fast-exit instead.
-            if getattr(self, "_shutdown_fast", False) or self._shutdown_forced:
+            # PortAudio/RNS cleanup can hang after voice calls — fast-exit instead.
+            if (
+                getattr(self, "_shutdown_fast", False)
+                or self._shutdown_forced
+                or getattr(self, "_post_call_audio", False)
+            ):
                 try:
                     self._teardown_network_stack()
                 except Exception:

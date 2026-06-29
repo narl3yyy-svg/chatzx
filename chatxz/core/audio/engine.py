@@ -270,7 +270,8 @@ class CallAudioEngine:
         self._recv_ready.clear()
         self._send_enabled = False
         with self._lifecycle_lock:
-            if self._cleanup_thread and self._cleanup_thread.is_alive():
+            th = self._cleanup_thread
+            if th and th.is_alive():
                 return
             self._cleanup_thread = threading.Thread(
                 target=self._stop_unlocked,
@@ -279,6 +280,18 @@ class CallAudioEngine:
                 daemon=True,
             )
             self._cleanup_thread.start()
+
+    def stop_abandon(self, timeout: float = 0.8) -> None:
+        """Stop without blocking shutdown — abandon PyAudio if terminate hangs."""
+        self.stop_fast()
+        th = self._cleanup_thread
+        if th and th.is_alive():
+            th.join(timeout=max(0.1, timeout))
+        if th and th.is_alive():
+            self._in_stream = None
+            self._out_stream = None
+            self._pa = None
+            print("[call-audio] Engine abandoned (PyAudio cleanup timed out)")
 
     def _stop_unlocked(self, *, blocking: bool = True) -> None:
         self._stop.set()
@@ -304,11 +317,20 @@ class CallAudioEngine:
         self._in_stream = None
         self._out_stream = None
         if self._pa:
-            try:
-                self._pa.terminate()
-            except Exception:
-                pass
+            pa = self._pa
             self._pa = None
+
+            def _terminate() -> None:
+                try:
+                    pa.terminate()
+                except Exception:
+                    pass
+
+            term = threading.Thread(target=_terminate, name="call-audio-pa-term", daemon=True)
+            term.start()
+            term.join(timeout=1.0)
+            if term.is_alive():
+                print("[call-audio] PyAudio terminate timed out — continuing")
         for codec in (self._encoder, self._decoder):
             if codec:
                 try:

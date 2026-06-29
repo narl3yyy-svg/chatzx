@@ -299,6 +299,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v0.9.11** — **Post-call shutdown:** Ctrl+C works on Windows/Mac after voice calls; non-blocking PyAudio teardown; clearer mic hints and faster browser fallback when native capture is unavailable
 - **v0.9.10** — **Call stability:** voice calls survive TCP reconnect blips (~4s grace); auto-install libopus on Windows/Mac via `run.bat` / `./run.sh`
 - **v0.9.9** — **macOS libopus:** Homebrew auto-install + bundle into `chatxz/core/native/macos/`
 - **v0.9.8** — **Win↔Mac voice:** bidirectional Opus; browser mic when native receive-only; playback resampling

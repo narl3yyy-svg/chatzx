@@ -6493,9 +6493,19 @@ function updateCallDashboard() {
         hintEl.textContent = !callMicSecureContext() && !isAndroidShell()
           ? `No audio — open ${preferredLocalCallUrl()} (mic needs secure context on desktop)`
           : 'No audio detected — check microphone permission and speak into the mic';
+      } else if (outN === 0 && !browserSending && useNativeCallCapture()) {
+        hintEl.style.display = 'block';
+        hintEl.textContent = 'Using native microphone — speak into your system mic';
+      } else if (outN === 0 && !browserSending && nativeEngineRunning()) {
+        hintEl.style.display = 'block';
+        hintEl.textContent = callServerStats.mode === 'receive-only'
+          ? 'Native mic unavailable — switching to browser microphone…'
+          : 'Native audio starting…';
       } else if (outN === 0 && !cfg.native && !useNativeCallCapture() && !browserSending) {
         hintEl.style.display = 'block';
-        hintEl.textContent = 'Not sending audio — allow microphone access for this site';
+        hintEl.textContent = !callMicSecureContext()
+          ? `Allow microphone at ${preferredLocalCallUrl()} (not LAN IP)`
+          : 'Not sending audio — allow microphone access for this site';
       } else if (callServerStats.mode === 'receive-only' && !browserSending) {
         hintEl.style.display = 'block';
         hintEl.textContent = 'Native mic unavailable — allowing browser microphone…';
@@ -7082,15 +7092,17 @@ function scheduleCallNativeFallbackWatchdog() {
       return;
     }
     if (nativeActive && (callServerStats.mode === 'receive-only' || callServerStats.send_enabled === false)) {
-      toast('Native mic unavailable — switching to browser Opus');
-      callForceBrowserCapture = true;
-      await startCallCapture({forceBrowser: true});
+      if (!callCaptureNode) {
+        toast('Native mic unavailable — switching to browser Opus');
+        callForceBrowserCapture = true;
+        await startCallCapture({forceBrowser: true});
+      }
       return;
     }
     if (nativeActive && recv === 0 && sent > 0) {
       primeCallPlayback();
     }
-  }, 2000);
+  }, 1200);
 }
 
 function updateCallSpeakerUi() {
@@ -7145,8 +7157,7 @@ async function startCallCapture(opts) {
     }
     if (nativeEngineRunning() && !forceBrowser && nativeCallAudioEnabled
         && callServerStats.send_enabled === false) {
-      primeCallPlayback();
-      scheduleCallNativeFallbackWatchdog();
+      return startCallCapture({forceBrowser: true});
     }
     const stream = await acquireSharedMic({forCall: true});
     const ctx = ensureCallAudioCtx();
