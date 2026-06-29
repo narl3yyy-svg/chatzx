@@ -90,6 +90,22 @@ def test_score_device_prefers_pulse_default_source():
     assert monitor == -1000
 
 
+def test_score_device_prefers_default_input_over_raw_hw():
+    default = VoiceCallAudio._score_device("default", input_device=True, pulse_name=None)
+    hw = VoiceCallAudio._score_device(
+        "HDA Intel PCH: ALC897 Analog (hw:0,0)", input_device=True, pulse_name=None
+    )
+    assert default > hw
+
+
+def test_score_device_prefers_pipewire_input():
+    pipe = VoiceCallAudio._score_device("pipewire", input_device=True, pulse_name=None)
+    hw = VoiceCallAudio._score_device(
+        "HDA Intel PCH: ALC897 Analog (hw:0,0)", input_device=True, pulse_name=None
+    )
+    assert pipe > hw
+
+
 def test_score_device_output_penalizes_hdmi():
     speaker = VoiceCallAudio._score_device("Built-in Analog Output", input_device=False, pulse_name=None)
     hdmi = VoiceCallAudio._score_device("HDA Intel HDMI 7.1", input_device=False, pulse_name=None)

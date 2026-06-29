@@ -2,6 +2,12 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.8.5] — 2026-06-28
+
+### Fixed
+- **Ctrl+C during calls (Linux)** — self-pipe SIGINT delivery wakes the event loop reliably; forced `os._exit` after 0.8s if graceful stop hangs; handlers re-armed every second during active calls.
+- **Linux mic capture** — prefer PyAudio `default` / `pipewire` / `alt analog` over raw `hw:0,0` ALSA nodes (fixes `mic peak 0` on some Arch setups).
+
 ## [0.8.4] — 2026-06-28
 
 ### Fixed

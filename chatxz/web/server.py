@@ -1,4 +1,8 @@
 import os, json, time, base64, mimetypes, asyncio, socket, zipfile, shutil, subprocess, tempfile, signal, re, sys, threading, uuid
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 from urllib.parse import quote, unquote
 from pathlib import Path
 
@@ -496,6 +500,10 @@ class ChatWebServer:
         self._failover_task = None
         self._background_tasks = []
         self._shutdown_handler = None
+        self._shutdown_pipe_r = None
+        self._shutdown_pipe_w = None
+        self._shutdown_forced = False
+        self._shutdown_force_timer = None
         self._call_stats_last_key = None
         self._progress_last = {}
         self._progress_throttle_ms = 250
@@ -5623,22 +5631,124 @@ class ChatWebServer:
                     call_id,
                 )
 
-    def _install_shutdown_signals(self, handler):
-        """Re-apply after RNS startup — Reticulum overwrites SIGINT handlers."""
-        if sys.platform == "win32" or not handler:
+    def _close_shutdown_pipe(self):
+        for fd in (self._shutdown_pipe_r, self._shutdown_pipe_w):
+            if fd is None:
+                continue
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+        self._shutdown_pipe_r = None
+        self._shutdown_pipe_w = None
+
+    def _cancel_shutdown_force_timer(self):
+        timer = self._shutdown_force_timer
+        self._shutdown_force_timer = None
+        if timer:
+            try:
+                timer.cancel()
+            except Exception:
+                pass
+
+    def _schedule_forced_exit(self, signum, delay=0.8):
+        self._cancel_shutdown_force_timer()
+
+        def _force():
+            if not self._shutting_down:
+                return
+            print("[shutdown] Forcing exit", flush=True)
+            os._exit(130 if signum == signal.SIGINT else 0)
+
+        self._shutdown_force_timer = threading.Timer(delay, _force)
+        self._shutdown_force_timer.daemon = True
+        self._shutdown_force_timer.start()
+
+    def _request_shutdown(self, signum=signal.SIGINT):
+        """Run on the event-loop thread (woken by self-pipe SIGINT delivery)."""
+        if self._shutdown_forced:
             return
+        if self._shutting_down:
+            self._schedule_forced_exit(signum, delay=0.05)
+            return
+        self._shutting_down = True
+        print("\n[shutdown] Stopping...", flush=True)
         try:
-            signal.signal(signal.SIGINT, handler)
-            signal.signal(signal.SIGTERM, handler)
-        except (ValueError, OSError, RuntimeError):
+            self._stop_call_audio_engine()
+        except Exception:
+            pass
+        if self.messaging:
+            self.messaging.shutdown_requested = True
+        try:
+            self._teardown_network_stack()
+        except Exception:
             pass
         loop = self._loop
-        if loop and not loop.is_closed():
+        if loop and not loop.is_closed() and loop.is_running():
             try:
-                loop.add_signal_handler(signal.SIGINT, lambda: handler(signal.SIGINT))
-                loop.add_signal_handler(signal.SIGTERM, lambda: handler(signal.SIGTERM))
-            except (NotImplementedError, RuntimeError, ValueError, OSError):
+                loop.stop()
+            except Exception:
                 pass
+        self._schedule_forced_exit(signum)
+
+    def _install_shutdown_signals(self):
+        """Self-pipe SIGINT — works when asyncio add_signal_handler is starved."""
+        if sys.platform == "win32":
+            return
+        loop = self._loop
+        if not loop or loop.is_closed():
+            return
+
+        handler = self._shutdown_handler
+        if not handler:
+            return
+
+        if self._shutdown_pipe_r is None:
+            try:
+                r, w = os.pipe()
+                for fd in (r, w):
+                    if fcntl is not None:
+                        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+                        fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+                self._shutdown_pipe_r = r
+                self._shutdown_pipe_w = w
+
+                def _on_shutdown_pipe():
+                    try:
+                        while True:
+                            chunk = os.read(r, 64)
+                            if not chunk:
+                                break
+                    except BlockingIOError:
+                        pass
+                    except Exception:
+                        pass
+                    self._request_shutdown(signal.SIGINT)
+
+                loop.add_reader(r, _on_shutdown_pipe)
+            except Exception:
+                self._close_shutdown_pipe()
+
+        def _sig_notify(signum, frame=None):
+            if self._shutdown_forced:
+                os._exit(130 if signum == signal.SIGINT else 0)
+            w = self._shutdown_pipe_w
+            if w is not None:
+                try:
+                    os.write(w, b"S")
+                    return
+                except Exception:
+                    pass
+            try:
+                handler(signum, frame)
+            except Exception:
+                os._exit(130 if signum == signal.SIGINT else 0)
+
+        try:
+            signal.signal(signal.SIGINT, _sig_notify)
+            signal.signal(signal.SIGTERM, _sig_notify)
+        except (ValueError, OSError, RuntimeError):
+            pass
 
     def _call_stats_snapshot(self):
         if not self.messaging:
@@ -5691,13 +5801,15 @@ class ChatWebServer:
                 await self._broadcast_call_stats()
             except Exception:
                 pass
+            from chatxz.core.voice_call import STATE_ACTIVE
+            if self.messaging and self.messaging.voice_call.state == STATE_ACTIVE:
+                self._install_shutdown_signals()
 
     async def _init_rns_background(self):
         try:
             my_hash = await asyncio.to_thread(self.start_rns)
             print(f"[startup] RNS ready, identity: {my_hash}")
-            if self._shutdown_handler:
-                self._install_shutdown_signals(self._shutdown_handler)
+            self._install_shutdown_signals()
             await self._broadcast({"type": "rns_ready", "data": {"hash": my_hash}})
         except (SystemExit, RuntimeError) as e:
             self.rns_init_error = str(e) or "RNS startup failed"
@@ -5920,28 +6032,22 @@ class ChatWebServer:
 
         def _stop_loop(signum=None, frame=None):
             nonlocal stopping
-            try:
-                self._stop_call_audio_engine()
-            except Exception:
-                pass
             if stopping:
+                self._shutdown_forced = True
+                try:
+                    self._stop_call_audio_engine()
+                except Exception:
+                    pass
                 try:
                     self._teardown_network_stack()
                 except Exception:
                     pass
                 os._exit(130 if signum == signal.SIGINT else 0)
             stopping = True
-            self._shutting_down = True
-            if self.messaging:
-                self.messaging.shutdown_requested = True
-            try:
-                self._teardown_network_stack()
-            except Exception:
-                pass
-            loop.call_soon_threadsafe(loop.stop)
+            self._request_shutdown(signum or signal.SIGINT)
 
         self._shutdown_handler = _stop_loop
-        self._install_shutdown_signals(_stop_loop)
+        self._install_shutdown_signals()
 
         if sys.platform != "win32":
             try:
@@ -5964,6 +6070,13 @@ class ChatWebServer:
             if not stopping:
                 stopping = True
             self._shutting_down = True
+            self._cancel_shutdown_force_timer()
+            if self._shutdown_pipe_r is not None and loop and not loop.is_closed():
+                try:
+                    loop.remove_reader(self._shutdown_pipe_r)
+                except Exception:
+                    pass
+            self._close_shutdown_pipe()
             try:
                 loop.run_until_complete(runner.cleanup())
             except Exception:

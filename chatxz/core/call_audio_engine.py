@@ -281,8 +281,13 @@ class VoiceCallAudio:
         if any(x in low for x in ("monitor", "loopback", "null", "dummy")):
             return -1000
         if low in ("default", "sysdefault"):
-            return 1
+            return 85 if input_device else 25
         score = 20
+        if input_device:
+            if "pipewire" in low:
+                score += 75
+            if "alt analog" in low:
+                score += 35
         if pulse_name and ".monitor" not in pulse_name.lower():
             pulse_low = pulse_name.lower()
             if pulse_low in low or low in pulse_low:
