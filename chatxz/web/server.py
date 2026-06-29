@@ -537,14 +537,10 @@ class ChatWebServer:
 
     def _teardown_network_stack(self):
         try:
-            self._stop_call_audio_engine()
+            self._hang_up_call()
         except Exception:
-            pass
-        if self.messaging:
             try:
-                from chatxz.core.voice_call import STATE_IDLE
-                if getattr(self.messaging, "voice_call", None) and self.messaging.voice_call.state != STATE_IDLE:
-                    self.messaging.call_end()
+                self._stop_call_audio_engine()
             except Exception:
                 pass
         if self.lan_beacon:
@@ -2595,6 +2591,19 @@ class ChatWebServer:
             except Exception:
                 pass
             self.call_audio_engine = None
+
+    def _hang_up_call(self, call_id=None):
+        """Stop native audio first, then signal hang-up over RNS."""
+        try:
+            self._stop_call_audio_engine()
+        except Exception:
+            pass
+        if not self.messaging:
+            return False
+        from chatxz.core.voice_call import STATE_IDLE
+        if self.messaging.voice_call.state == STATE_IDLE:
+            return True
+        return self.messaging.call_end(call_id)
 
     def _deliver_call_audio_frame(self, seq, data, codec):
         codec = (codec or OPUS_CODEC).strip()
@@ -4935,7 +4944,7 @@ class ChatWebServer:
             return web.json_response({"status": "ok"})
 
         if action == "end":
-            ok = await asyncio.to_thread(self.messaging.call_end, call_id)
+            ok = await asyncio.to_thread(self._hang_up_call, call_id)
             if not ok:
                 return web.json_response({"error": "end failed"}, status=400)
             return web.json_response({"status": "ok"})
@@ -5653,12 +5662,10 @@ class ChatWebServer:
             except Exception:
                 pass
 
-    def _schedule_forced_exit(self, signum, delay=0.8):
+    def _schedule_forced_exit(self, signum, delay=0.35):
         self._cancel_shutdown_force_timer()
 
         def _force():
-            if not self._shutting_down:
-                return
             print("[shutdown] Forcing exit", flush=True)
             os._exit(130 if signum == signal.SIGINT else 0)
 
@@ -6100,7 +6107,6 @@ class ChatWebServer:
             if not stopping:
                 stopping = True
             self._shutting_down = True
-            self._cancel_shutdown_force_timer()
             if self._linux_signal_shutdown:
                 try:
                     self._linux_signal_shutdown.stop()

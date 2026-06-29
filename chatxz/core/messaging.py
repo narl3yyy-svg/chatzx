@@ -5387,7 +5387,8 @@ class MessagingBackend:
         peer = self.dest_hash_for(peer_hash)
         link = self._call_link_for_peer(peer, transport)
         if not link:
-            print(f"[call] No link to {peer[:16] if peer else '?'}...")
+            if msg_type != CALL_AUDIO:
+                print(f"[call] No link to {peer[:16] if peer else '?'}...")
             return False
         msg = ChatMessage(msg_type, json.dumps(payload))
         data = msg.to_json().encode("utf-8")
@@ -5533,8 +5534,10 @@ class MessagingBackend:
                 return
             active_cid = self.voice_call.call_id
             self.voice_call.reset()
+            self._reset_call_audio_counters()
+            self._call_send_link_fails = 0
             self._emit_call_event("ended", peer, {"call_id": call_id or active_cid})
-            print(f"[call] Ended with {peer[:16]}...")
+            print(f"[call] Remote hang-up from {peer[:16]}...")
             return
 
         if msg_type == CALL_AUDIO:
@@ -5616,15 +5619,23 @@ class MessagingBackend:
     def call_end(self, call_id=None):
         if self.voice_call.state == STATE_IDLE:
             return False
-        peer = self.voice_call.peer_hash
-        cid = call_id or self.voice_call.call_id
-        transport = self.voice_call.transport
-        self.voice_call.reset()
-        if peer:
-            self._send_call_packet(peer, CALL_END, {"call_id": cid}, transport)
-        self._emit_call_event("ended", peer, {"call_id": cid})
-        print(f"[call] Ended ({cid})")
-        return True
+        if getattr(self, "_call_ending", False):
+            return False
+        self._call_ending = True
+        try:
+            peer = self.voice_call.peer_hash
+            cid = call_id or self.voice_call.call_id
+            transport = self.voice_call.transport
+            if peer:
+                self._send_call_packet(peer, CALL_END, {"call_id": cid}, transport)
+            self.voice_call.reset()
+            self._reset_call_audio_counters()
+            self._call_send_link_fails = 0
+            self._emit_call_event("ended", peer, {"call_id": cid})
+            print(f"[call] Ended ({cid})")
+            return True
+        finally:
+            self._call_ending = False
 
     def call_send_audio(self, audio_b64, codec=OPUS_CODEC, call_id=None):
         if self.voice_call.state != STATE_ACTIVE:
@@ -5634,7 +5645,16 @@ class MessagingBackend:
         peer = self.voice_call.peer_hash
         cid = call_id or self.voice_call.call_id
         link = self._call_link_for_peer(peer, self.voice_call.transport)
-        link_mtu = int(getattr(link, "mtu", 1064) or 1064) if link else 1064
+        if not link:
+            fails = int(getattr(self, "_call_send_link_fails", 0) or 0) + 1
+            self._call_send_link_fails = fails
+            if fails == 1:
+                print(f"[call] No link to {peer[:16] if peer else '?'}... — ending call")
+            if fails >= 5 and not getattr(self, "_call_ending", False):
+                self.call_end()
+            return False
+        self._call_send_link_fails = 0
+        link_mtu = int(getattr(link, "mtu", 1064) or 1064)
         chunks = split_call_audio_b64(
             audio_b64,
             codec,

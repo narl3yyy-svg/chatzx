@@ -2,6 +2,16 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.8.7] — 2026-06-28
+
+### Fixed
+- **Hang up both sides** — stop native audio before sending `CALL_END`; remote `CALL_END` resets session and stops engine via WebSocket `call_ended`.
+- **Post-hangup log spam** — no more per-frame `[call] No link` during audio send; auto-end call after 5 link failures.
+- **Ctrl+C hang** — forced `os._exit` timer no longer cancelled in `finally` while `runner.cleanup()` blocks.
+
+### Changed
+- **`chatxz.core.audio`** — consolidated voice module exports (session, engine, jitter).
+
 ## [0.8.6] — 2026-06-28
 
 ### Fixed

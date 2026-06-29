@@ -143,7 +143,7 @@ def test_call_glare_we_win_lexicographic():
     assert mb._call_glare_we_win("00000000-000") is False
 
 
-def test_call_end_resets_state_before_signaling():
+def test_call_end_sends_end_while_active_then_resets():
     from chatxz.core.messaging import MessagingBackend, CALL_END
 
     mb = MessagingBackend.__new__(MessagingBackend)
@@ -163,7 +163,26 @@ def test_call_end_resets_state_before_signaling():
     assert mb.voice_call.state == STATE_IDLE
     assert len(sent) == 1
     assert sent[0][0] == CALL_END
-    assert sent[0][1] == STATE_IDLE
+    assert sent[0][1] == STATE_ACTIVE
+
+
+def test_call_send_audio_auto_ends_without_link():
+    from chatxz.core.messaging import MessagingBackend
+
+    mb = MessagingBackend.__new__(MessagingBackend)
+    mb.voice_call = VoiceCallSession()
+    peer = "jj" * 16
+    mb.voice_call.begin_outgoing(peer, "lan")
+    mb.voice_call.activate()
+    mb.dest_hash_for = lambda h: h
+    mb._call_link_for_peer = lambda *a, **k: None
+    ended = []
+    mb.call_end = lambda call_id=None: ended.append(True) or True
+    for _ in range(4):
+        assert mb.call_send_audio("AAAA", "audio/opus;rate=48000") is False
+    assert len(ended) == 0
+    assert mb.call_send_audio("AAAA", "audio/opus;rate=48000") is False
+    assert len(ended) == 1
 
 
 def test_call_audio_rejects_non_opus_codec():
