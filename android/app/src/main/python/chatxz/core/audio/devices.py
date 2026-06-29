@@ -1,7 +1,7 @@
 """Microphone and speaker device selection for desktop voice calls.
 
-Linux (Arch/Ubuntu): uses pactl to avoid HDMI/monitor capture sources and maps
-PulseAudio default source to the best PyAudio input index.
+Linux (Arch/Ubuntu): uses pactl when a real capture source exists; otherwise opens
+direct ALSA hw devices (bypassing Pulse default/monitor routing).
 """
 
 from __future__ import annotations
@@ -9,7 +9,11 @@ from __future__ import annotations
 import struct
 import subprocess
 import sys
+import threading
 from typing import List, Optional, Tuple
+
+# Set by prepare_linux_audio(): bypass Pulse default for PyAudio device ranking.
+_PULSE_CAPTURE_BYPASS = False
 
 
 def pcm_peak(pcm_s16: bytes) -> int:
@@ -20,12 +24,52 @@ def pcm_peak(pcm_s16: bytes) -> int:
     return max(abs(s) for s in samples) if samples else 0
 
 
+def pulse_available() -> bool:
+    if sys.platform not in ("linux", "linux2"):
+        return False
+    try:
+        proc = subprocess.run(
+            ["pactl", "info"],
+            capture_output=True,
+            timeout=2,
+            check=False,
+        )
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
 def pulse_list_sources() -> List[str]:
     if sys.platform not in ("linux", "linux2"):
         return []
     try:
         proc = subprocess.run(
             ["pactl", "list", "short", "sources"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return []
+        names: List[str] = []
+        for line in (proc.stdout or "").splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                name = parts[1].strip()
+                if name:
+                    names.append(name)
+        return names
+    except Exception:
+        return []
+
+
+def pulse_list_sinks() -> List[str]:
+    if sys.platform not in ("linux", "linux2"):
+        return []
+    try:
+        proc = subprocess.run(
+            ["pactl", "list", "short", "sinks"],
             capture_output=True,
             text=True,
             timeout=2,
@@ -69,6 +113,32 @@ def pulse_best_capture_source() -> Optional[str]:
     return ranked[0][1]
 
 
+def pulse_best_playback_sink() -> Optional[str]:
+    sinks = pulse_list_sinks()
+    ranked: List[Tuple[int, str]] = []
+    for name in sinks:
+        low = name.lower()
+        if ".monitor" in low:
+            continue
+        score = 0
+        if low.startswith("alsa_output"):
+            score += 60
+        for kw in ("analog", "speaker", "headphone", "headset", "usb", "built-in"):
+            if kw in low:
+                score += 25
+        for kw in ("hdmi", "spdif", "iec958"):
+            if kw in low:
+                score -= 50
+        ranked.append((score, name))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda t: t[0], reverse=True)
+    best_score, best = ranked[0]
+    if best_score < 0:
+        return None
+    return best
+
+
 def pulse_default_source() -> Optional[str]:
     if sys.platform not in ("linux", "linux2"):
         return None
@@ -87,6 +157,24 @@ def pulse_default_source() -> Optional[str]:
     except Exception:
         pass
     return pulse_best_capture_source()
+
+
+def pulse_default_sink() -> Optional[str]:
+    if sys.platform not in ("linux", "linux2"):
+        return None
+    try:
+        proc = subprocess.run(
+            ["pactl", "get-default-sink"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return (proc.stdout or "").strip() or None
+    except Exception:
+        pass
+    return None
 
 
 def ensure_pulse_capture_source() -> Optional[str]:
@@ -114,9 +202,38 @@ def ensure_pulse_capture_source() -> Optional[str]:
             )
             print(f"[call-audio] Pulse default source → {best}")
             return best
+        if current:
+            print(
+                f"[call-audio] Pulse has no mic source (default={current}) "
+                "— using direct ALSA capture"
+            )
     except Exception:
         pass
     return pulse_default_source()
+
+
+def ensure_pulse_playback_sink() -> Optional[str]:
+    """Prefer analog speaker output when Pulse default is HDMI."""
+    if sys.platform not in ("linux", "linux2"):
+        return None
+    try:
+        current = pulse_default_sink() or ""
+        low = current.lower()
+        if current and "hdmi" not in low and "spdif" not in low and "iec958" not in low:
+            return current
+        best = pulse_best_playback_sink()
+        if best and best != current:
+            subprocess.run(
+                ["pactl", "set-default-sink", best],
+                capture_output=True,
+                timeout=2,
+                check=False,
+            )
+            print(f"[call-audio] Pulse default sink → {best}")
+            return best
+    except Exception:
+        pass
+    return pulse_default_sink()
 
 
 def alsa_prepare_capture() -> None:
@@ -137,26 +254,59 @@ def alsa_prepare_capture() -> None:
             pass
 
 
-def prepare_linux_audio() -> None:
-    """Best-effort mic/speaker prep before opening PyAudio streams."""
+def pulse_capture_bypass() -> bool:
+    return _PULSE_CAPTURE_BYPASS
+
+
+def prepare_linux_audio() -> str:
+    """Best-effort mic/speaker prep before opening PyAudio streams.
+
+    Returns mode: pulse_ok | pulse_no_mic | alsa_only | other
+    """
+    global _PULSE_CAPTURE_BYPASS
+    _PULSE_CAPTURE_BYPASS = False
     if sys.platform not in ("linux", "linux2"):
-        return
-    pulse = ensure_pulse_capture_source()
-    if not pulse:
-        alsa_prepare_capture()
-        print("[call-audio] ALSA-only audio — unmuted capture, using default device")
+        return "other"
+    if pulse_available():
+        source = ensure_pulse_capture_source()
+        ensure_pulse_playback_sink()
+        if source and ".monitor" not in source.lower():
+            print(f"[call-audio] PulseAudio capture: {source}")
+            return "pulse_ok"
+        _PULSE_CAPTURE_BYPASS = True
+        print("[call-audio] PulseAudio running but no mic — direct ALSA capture")
+        return "pulse_no_mic"
+    alsa_prepare_capture()
+    _PULSE_CAPTURE_BYPASS = True
+    print("[call-audio] ALSA-only audio — unmuted capture, using hw devices")
+    return "alsa_only"
 
 
-def score_device(name: str, *, input_device: bool, pulse_name: Optional[str]) -> int:
+def score_device(
+    name: str,
+    *,
+    input_device: bool,
+    pulse_name: Optional[str],
+    pulse_bypass: bool = False,
+) -> int:
     low = (name or "").lower()
     if not low:
         return -1000
     if any(x in low for x in ("monitor", "loopback", "null", "dummy")):
         return -1000
+    bypass = pulse_bypass or pulse_capture_bypass()
+    if input_device and bypass:
+        if "alt analog" in low:
+            return 98
+        if "analog" in low and "hw:" in low:
+            return 96
+        if low in ("default", "sysdefault"):
+            return 40
     if input_device and "alt analog" in low:
         return 94 if pulse_name else 90
     if low in ("default", "sysdefault"):
-        # Prefer ALSA plug default when PulseAudio is unavailable.
+        if input_device and bypass:
+            return 40
         return 96 if input_device and not pulse_name else 88 if input_device else 25
     score = 20
     if input_device:
@@ -180,6 +330,8 @@ def score_device(name: str, *, input_device: bool, pulse_name: Optional[str]) ->
             if kw in low:
                 score -= 40
     else:
+        if bypass and "hdmi" in low:
+            score -= 60
         for kw in ("speaker", "headphone", "headset", "analog", "usb", "built-in",
                    "internal", "audio-out"):
             if kw in low:
@@ -191,8 +343,9 @@ def score_device(name: str, *, input_device: bool, pulse_name: Optional[str]) ->
 
 
 def rank_devices(pa, *, input_device: bool) -> List[Tuple[int, str, int]]:
-    pulse = pulse_default_source() if input_device else None
-    if input_device:
+    bypass = pulse_capture_bypass()
+    pulse = None
+    if input_device and not bypass:
         ensure_pulse_capture_source()
         pulse = pulse_default_source()
     ranked: List[Tuple[int, str, int]] = []
@@ -203,7 +356,12 @@ def rank_devices(pa, *, input_device: bool) -> List[Tuple[int, str, int]]:
             if int(info.get(ch_key, 0) or 0) < 1:
                 continue
             name = str(info.get("name") or f"device {i}")
-            score = score_device(name, input_device=input_device, pulse_name=pulse)
+            score = score_device(
+                name,
+                input_device=input_device,
+                pulse_name=pulse,
+                pulse_bypass=bypass,
+            )
             if score > -1000:
                 ranked.append((score, i, name))
     except Exception:
@@ -212,13 +370,40 @@ def rank_devices(pa, *, input_device: bool) -> List[Tuple[int, str, int]]:
     return [(idx, name, score) for score, idx, name in ranked]
 
 
+def _probe_read(stream, frame_count: int, timeout: float = 1.5) -> Tuple[Optional[bytes], int, Optional[str]]:
+    """Read one probe buffer with a timeout so ALSA/Pulse cannot hang startup."""
+    result: List[object] = [None, 0, None]
+
+    def _read():
+        try:
+            data = stream.read(frame_count, exception_on_overflow=False)
+            result[0] = data
+            result[1] = pcm_peak(data)
+        except Exception as exc:
+            result[2] = str(exc)
+
+    thread = threading.Thread(target=_read, name="call-audio-probe", daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        return None, -1, "timeout"
+    if result[2]:
+        return None, -1, str(result[2])
+    return result[0], int(result[1] or 0), None
+
+
 def probe_input_device(pa, fmt, rate: int, frame_count: int) -> Tuple[Optional[int], Optional[str], List[Tuple[int, str, int]]]:
     """Return (index, name, full_ranked_list). Picks best device even without probe signal."""
     ranked = rank_devices(pa, input_device=True)
     if not ranked:
         return None, None, []
-    # Prefer default/sysdefault first on ALSA-only systems (routes through plug).
-    default_pick = next((t for t in ranked if t[1].lower() in ("default", "sysdefault")), None)
+    bypass = pulse_capture_bypass()
+    default_pick = None
+    if not bypass:
+        default_pick = next(
+            (t for t in ranked if t[1].lower() in ("default", "sysdefault")),
+            None,
+        )
     best_silent = default_pick or ranked[0]
     for idx, name, score in ranked[:6]:
         stream = None
@@ -233,9 +418,19 @@ def probe_input_device(pa, fmt, rate: int, frame_count: int) -> Tuple[Optional[i
             )
             stream.start_stream()
             peak = 0
+            timed_out = False
             for _ in range(4):
-                data = stream.read(frame_count, exception_on_overflow=False)
-                peak = max(peak, pcm_peak(data))
+                data, sample_peak, err = _probe_read(stream, frame_count)
+                if err == "timeout":
+                    timed_out = True
+                    print(f"[call-audio] Probe [{idx}] timed out: {name[:72]}")
+                    break
+                if err:
+                    print(f"[call-audio] Probe [{idx}] failed: {err}")
+                    break
+                peak = max(peak, sample_peak)
+            if timed_out:
+                break
             print(f"[call-audio] Probe [{idx}] peak={peak}: {name[:72]}")
             if peak > 60:
                 print(f"[call-audio] Selected input [{idx}] score={score}: {name}")
@@ -269,8 +464,13 @@ def pick_output_device(pa) -> Tuple[Optional[int], Optional[str]]:
 def log_audio_devices(pa) -> None:
     try:
         pulse = pulse_default_source()
+        sink = pulse_default_sink()
         if pulse:
             print(f"[call-audio] PulseAudio default source: {pulse}")
+        if sink:
+            print(f"[call-audio] PulseAudio default sink: {sink}")
+        if pulse_capture_bypass():
+            print("[call-audio] Pulse capture bypass active — ranking direct ALSA devices")
         for i in range(min(pa.get_device_count(), 16)):
             info = pa.get_device_info_by_index(i)
             name = str(info.get("name") or "")

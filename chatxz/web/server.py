@@ -3913,6 +3913,7 @@ class ChatWebServer:
             "ok": True,
             "debounced": debounced,
             "transport": transport,
+            "peers": peers,
             "broadcast": lan_broadcast() if do_lan else None,
             "serial_port": serial_port if do_serial else None,
             "serial_announced": bool(serial_sent),
@@ -3952,6 +3953,7 @@ class ChatWebServer:
             "beacon_session_total": result.get("beacon_session_total", 0),
             "lan_ip": result.get("lan_ip"),
             "discovered_count": result.get("discovered_count", 0),
+            "peers": result.get("peers") or [],
         })
 
     async def handle_disconnect(self, request):

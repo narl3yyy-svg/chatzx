@@ -184,3 +184,33 @@ def test_engine_stop_fast_does_not_block():
 def test_prepare_linux_audio_no_crash():
     from chatxz.core.audio.devices import prepare_linux_audio
     prepare_linux_audio()
+
+
+def test_score_device_prefers_hw_when_pulse_bypass():
+    from chatxz.core.audio import devices
+
+    devices._PULSE_CAPTURE_BYPASS = True
+    try:
+        alt = devices.score_device(
+            "HDA Intel PCH: ALC897 Alt Analog (hw:0,2)",
+            input_device=True,
+            pulse_name=None,
+            pulse_bypass=True,
+        )
+        default = devices.score_device(
+            "default", input_device=True, pulse_name=None, pulse_bypass=True
+        )
+        assert alt > default
+    finally:
+        devices._PULSE_CAPTURE_BYPASS = False
+
+
+def test_pulse_best_capture_source_skips_monitor_only(monkeypatch):
+    from chatxz.core.audio import devices
+
+    monkeypatch.setattr(
+        devices,
+        "pulse_list_sources",
+        lambda: ["alsa_output.pci.hdmi-stereo.monitor"],
+    )
+    assert devices.pulse_best_capture_source() is None

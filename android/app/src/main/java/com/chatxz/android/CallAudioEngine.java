@@ -1,6 +1,7 @@
 package com.chatxz.android;
 
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioManager;
@@ -9,6 +10,7 @@ import android.media.AudioTrack;
 import android.media.MediaCodec;
 import android.media.MediaFormat;
 import android.os.Build;
+import android.Manifest;
 import android.util.Base64;
 import android.util.Log;
 import android.util.SparseArray;
@@ -72,17 +74,26 @@ public final class CallAudioEngine {
             return false;
         }
         Context ctx = MainActivity.appContext();
-        if (ctx != null) {
-            audioManager = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
-            if (audioManager != null) {
-                audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
-                audioManager.setSpeakerphoneOn(speakerphone);
-            }
+        if (ctx == null) {
+            Log.w(TAG, "No app context");
+            return false;
+        }
+        if (ctx.checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "RECORD_AUDIO permission not granted");
+            return false;
+        }
+        audioManager = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+        if (audioManager != null) {
+            audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+            audioManager.setSpeakerphoneOn(speakerphone);
         }
         try {
             initEncoder();
             initDecoder();
-            initRecorder();
+            if (!initRecorder()) {
+                throw new IllegalStateException("AudioRecord init failed");
+            }
             initTrack();
             running = true;
             encodePtsUs = 0;
@@ -414,22 +425,42 @@ public final class CallAudioEngine {
         decoder.start();
     }
 
-    private void initRecorder() throws Exception {
+    private boolean initRecorder() {
         int minBuf = AudioRecord.getMinBufferSize(
                 SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT);
-        int buf = Math.max(minBuf, FRAME_SAMPLES * 4);
-        recorder = new AudioRecord(
-                android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                buf);
-        if (recorder.getState() != AudioRecord.STATE_INITIALIZED) {
-            throw new IllegalStateException("AudioRecord init failed");
+        if (minBuf <= 0) {
+            Log.e(TAG, "AudioRecord min buffer size invalid: " + minBuf);
+            return false;
         }
-        recorder.startRecording();
+        int buf = Math.max(minBuf, FRAME_SAMPLES * 4);
+        int[] sources = {
+                android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                android.media.MediaRecorder.AudioSource.MIC,
+                android.media.MediaRecorder.AudioSource.DEFAULT,
+        };
+        for (int source : sources) {
+            releaseRecorder();
+            try {
+                recorder = new AudioRecord(
+                        source,
+                        SAMPLE_RATE,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT,
+                        buf);
+                if (recorder.getState() == AudioRecord.STATE_INITIALIZED) {
+                    recorder.startRecording();
+                    Log.i(TAG, "AudioRecord started (source=" + source + ")");
+                    return true;
+                }
+                Log.w(TAG, "AudioRecord not initialized for source=" + source);
+            } catch (Exception e) {
+                Log.w(TAG, "AudioRecord source=" + source + " failed", e);
+            }
+            releaseRecorder();
+        }
+        return false;
     }
 
     private void initTrack() throws Exception {

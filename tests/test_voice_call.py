@@ -122,13 +122,18 @@ def test_voice_call_not_stale_when_active_recent():
     assert not vc.is_stale()
 
 
-def test_call_id_matches_requires_nonempty_id():
+def test_call_id_matches_empty_id_accepts_same_peer():
     from chatxz.core.messaging import MessagingBackend
 
     mb = MessagingBackend.__new__(MessagingBackend)
+    mb.dest_to_identity = {}
+    mb.identity_to_dest = {}
     mb.voice_call = VoiceCallSession()
-    mb.voice_call.begin_outgoing("ff" * 16)
-    assert mb._call_id_matches("") is False
+    peer = "ff" * 16
+    mb.voice_call.begin_outgoing(peer)
+    assert mb._call_id_matches("") is True
+    assert mb._call_id_matches("", peer) is True
+    assert mb._call_id_matches("", "00" * 16) is False
     assert mb._call_id_matches(mb.voice_call.call_id) is True
     assert mb._call_id_matches("other-id") is False
 

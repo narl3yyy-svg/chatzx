@@ -3254,7 +3254,8 @@ function connectWS() {
 }
 
 window.addEventListener('pagehide', () => {
-  if (callState !== 'idle') endVoiceCall();
+  if (callState !== 'idle') beaconEndVoiceCall();
+  else closeCallAudioResources();
   releaseSharedMic(true);
   closeWS();
 });
@@ -4354,7 +4355,15 @@ function announceSelf(transport) {
         const found = d.discovered_count ? `, ${d.discovered_count} peer(s) seen` : '';
         const debounced = d.debounced ? ' (debounced — wait before tapping again)' : '';
         toast('Announcing on ' + viaLabel + hint + found + debounced);
-        fetch('/api/discover').then(r => r.json()).then(p => renderDiscovered(p.peers)).catch(() => {});
+        if (Array.isArray(d.peers)) {
+          renderDiscovered(d.peers, {authoritative: true});
+        }
+        const refreshPeers = () => fetch('/api/discover').then(r => r.json())
+          .then(p => renderDiscovered(p.peers || [], {authoritative: true}))
+          .catch(() => {});
+        refreshPeers();
+        setTimeout(refreshPeers, 2000);
+        setTimeout(refreshPeers, 5000);
         refreshNetworkStatus();
         return;
       }
@@ -6084,6 +6093,25 @@ function clearCallNativeWatchdog() {
   }
 }
 
+function closeCallAudioResources() {
+  stopCallCapturePipeline();
+  stopCallPlaybackNode();
+  if (callOpusEncoder) {
+    try { callOpusEncoder.close(); } catch (_) {}
+    callOpusEncoder = null;
+  }
+  if (callOpusDecoder) {
+    try { callOpusDecoder.close(); } catch (_) {}
+    callOpusDecoder = null;
+  }
+  callDecodeSeqByTs.clear();
+  callSeqJitter.clear();
+  if (callAudioCtx) {
+    try { callAudioCtx.close(); } catch (_) {}
+    callAudioCtx = null;
+  }
+}
+
 function resetCallUi(opts) {
   stopCallRingtone();
   clearCallNativeWatchdog();
@@ -6096,8 +6124,7 @@ function resetCallUi(opts) {
   callPeer = null;
   callId = null;
   callVia = null;
-  stopCallCapturePipeline();
-  stopCallPlaybackNode();
+  closeCallAudioResources();
   releaseSharedMic(true);
   resetCallRingBuffer();
   callJitterPrimed = false;
@@ -7054,6 +7081,7 @@ function handleCallWS(event, data) {
   }
   if (event === 'ended') {
     if (callId && data.call_id && data.call_id !== callId) return;
+    if (callPeer && peer && !peersMatch(callPeer, peer)) return;
     if (callState !== 'idle') toast('Call ended');
     resetCallUi();
     return;
@@ -7119,13 +7147,26 @@ async function endVoiceCall() {
   const peer = callPeer;
   const via = callVia;
   const id = callId;
-  stopCallCapturePipeline();
   if (isAndroidShell()) {
     window.chatxzAndroid?.setCallActive?.(false);
     window.chatxzAndroid?.setSpeakerphone?.(false);
   }
   resetCallUi();
   await callApi({action: 'end', peer, via, call_id: id}).catch(() => {});
+}
+
+function beaconEndVoiceCall() {
+  if (callState === 'idle') return;
+  const body = JSON.stringify({
+    action: 'end',
+    peer: callPeer,
+    via: callVia,
+    call_id: callId,
+  });
+  try {
+    navigator.sendBeacon('/api/call', new Blob([body], {type: 'application/json'}));
+  } catch (_) {}
+  resetCallUi();
 }
 
 let voiceChunks = [];
@@ -7930,6 +7971,9 @@ function toast(msg) {
 init();
 
 window.addEventListener('beforeunload', () => {
+  if (callState !== 'idle') beaconEndVoiceCall();
+  else closeCallAudioResources();
+  releaseSharedMic(true);
   const retention = document.getElementById('settings-retention')?.value;
   if (retention === 'on_close') {
     navigator.sendBeacon('/api/history/clear', '{}');

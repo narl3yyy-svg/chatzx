@@ -2,6 +2,15 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [0.9.2] — 2026-06-28
+
+### Fixed
+- **Arch audio (Pulse monitor-only)** — detect Pulse with no `alsa_input` source; bypass Pulse default and open direct ALSA `hw` capture/playback; fix HDMI sink default; probe timeout prevents silent engine hang.
+- **Bidirectional hang-up** — accept `CALL_END` with empty `call_id` when peer matches; remote UI resets on `call_ended`.
+- **Android native audio** — `RECORD_AUDIO` permission check; MIC source fallback; `android_call_audio` shim for Java bridge.
+- **Discovery without refresh** — announce API returns peer list; UI authoritative update + delayed re-poll.
+- **Browser freeze after calls** — close AudioContext/Opus codecs on hang-up and page unload; `sendBeacon` hang-up on refresh.
+
 ## [0.9.1] — 2026-06-28
 
 ### Fixed

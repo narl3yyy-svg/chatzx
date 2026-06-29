@@ -5406,13 +5406,15 @@ class MessagingBackend:
             print(f"[call] Send failed: {e}")
             return False
 
-    def _call_id_matches(self, call_id):
+    def _call_id_matches(self, call_id, peer_hash=None):
         cid = (call_id or "").strip()
         active = (self.voice_call.call_id or "").strip()
         if not active:
             return True
         if not cid:
-            return False
+            if peer_hash is not None:
+                return self._call_peer_matches(peer_hash)
+            return True
         return cid == active
 
     def _call_glare_we_win(self, their_call_id):
@@ -5515,7 +5517,9 @@ class MessagingBackend:
         if msg_type == CALL_REJECT:
             if self.voice_call.state == STATE_IDLE:
                 return
-            if not self._call_id_matches(call_id):
+            if not self._call_peer_matches(peer):
+                return
+            if not self._call_id_matches(call_id, peer):
                 return
             reason = payload.get("reason") or ""
             active_cid = self.voice_call.call_id
@@ -5530,7 +5534,9 @@ class MessagingBackend:
         if msg_type == CALL_END:
             if self.voice_call.state == STATE_IDLE:
                 return
-            if not self._call_id_matches(call_id):
+            if not self._call_peer_matches(peer):
+                return
+            if not self._call_id_matches(call_id, peer):
                 return
             active_cid = self.voice_call.call_id
             self.voice_call.reset()
