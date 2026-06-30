@@ -452,6 +452,20 @@ def _pick_directory_tkinter(start):
         return None
 
 
+class _IpcWsReply:
+    """Routes WebSocket replies through the Rust IPC event sink."""
+
+    def __init__(self, daemon):
+        self._daemon = daemon
+
+    async def send_str(self, msg):
+        try:
+            payload = json.loads(msg)
+        except json.JSONDecodeError:
+            payload = {"type": "info", "data": msg}
+        await self._daemon._broadcast(payload)
+
+
 class ChatRnsDaemon:
     def __init__(
         self,
@@ -503,6 +517,127 @@ class ChatRnsDaemon:
         self._progress_throttle_ms = 250
         self._ui_state = {"viewing_peer": None, "hidden": False}
         self._live_scope_ip = None
+        self._event_sink = None
+        self._route_map = self._build_route_map()
+
+    def set_event_sink(self, sink):
+        self._event_sink = sink
+
+    def _build_route_map(self):
+        return [
+            ("GET", "/", self.handle_index),
+            ("GET", "/static/", self.handle_static),
+            ("GET", "/api/identity", self.handle_identity),
+            ("POST", "/api/contacts", self.handle_add_contact),
+            ("DELETE", "/api/contacts/", self.handle_delete_contact),
+            ("POST", "/api/connect", self.handle_connect),
+            ("POST", "/api/request_connect", self.handle_request_connect),
+            ("GET", "/api/rns-interfaces", self.handle_rns_interfaces_get),
+            ("POST", "/api/rns-interfaces/add", self.handle_rns_interfaces_add),
+            ("POST", "/api/rns-interfaces/delete", self.handle_rns_interfaces_delete),
+            ("POST", "/api/rns-interfaces/update", self.handle_rns_interfaces_update),
+            ("GET", "/api/serial-ports", self.handle_serial_ports_get),
+            ("POST", "/api/serial-ports/permission", self.handle_serial_usb_permission),
+            ("POST", "/api/announce", self.handle_announce),
+            ("POST", "/api/path_wake", self.handle_path_wake),
+            ("GET", "/api/lan-transfer/", self.handle_lan_transfer),
+            ("GET", "/api/network-status", self.handle_network_status),
+            ("GET", "/api/network", self.handle_network),
+            ("GET", "/api/interfaces", self.handle_interfaces_get),
+            ("POST", "/api/network/reset", self.handle_network_reset),
+            ("POST", "/api/network/repair", self.handle_network_repair),
+            ("POST", "/api/disconnect", self.handle_disconnect),
+            ("POST", "/api/file", self.handle_file_upload),
+            ("POST", "/api/folder", self.handle_folder_upload),
+            ("POST", "/api/internal/rns/signaling", self.handle_internal_rns_signaling),
+            ("POST", "/api/internal/rns/media", self.handle_internal_rns_media),
+            ("GET", "/api/internal/rns/linked", self.handle_internal_rns_linked),
+            ("POST", "/api/internal/rust/call-event", self.handle_internal_call_event),
+            ("GET", "/api/history", self.handle_history),
+            ("POST", "/api/history/clear", self.handle_history_clear),
+            ("DELETE", "/api/history/", self.handle_delete_message),
+            ("GET", "/api/discover", self.handle_discover),
+            ("GET", "/api/debug", self.handle_debug),
+            ("POST", "/api/debug/export", self.handle_debug_export),
+            ("GET", "/api/settings", self.handle_settings_get),
+            ("POST", "/api/settings", self.handle_settings_post),
+            ("GET", "/api/browse-dir", self.handle_browse_dir),
+            ("POST", "/api/browse-dir", self.handle_browse_dir),
+            ("POST", "/api/transfer/cancel", self.handle_transfer_cancel),
+            ("GET", "/api/file/", self.handle_serve_file),
+            ("GET", "/api/queue", self.handle_queue),
+            ("DELETE", "/api/queue", self.handle_queue_clear),
+            ("POST", "/api/identity/regenerate", self.handle_regenerate_identity),
+            ("GET", "/api/brand-logo", self.handle_brand_logo_get),
+            ("POST", "/api/brand-logo", self.handle_brand_logo_upload),
+            ("DELETE", "/api/brand-logo", self.handle_brand_logo_delete),
+            ("POST", "/api/restart", self.handle_restart),
+            ("GET", "/api/temperature", self.handle_temperature),
+            ("GET", "/api/cpu", self.handle_cpu),
+            ("GET", "/api/health", self.handle_health),
+        ]
+
+    def route_for(self, method, path):
+        method = (method or "GET").upper()
+        path = path or "/"
+        for m, prefix, handler in self._route_map:
+            if m != method:
+                continue
+            if prefix == "/static/" and path.startswith("/static/"):
+                return handler, {"filename": path[len("/static/"):]}
+            if prefix == "/api/contacts/" and path.startswith("/api/contacts/"):
+                return handler, {"hash": path[len("/api/contacts/"):]}
+            if prefix == "/api/history/" and path.startswith("/api/history/"):
+                return handler, {"msg_id": path[len("/api/history/"):]}
+            if prefix == "/api/lan-transfer/" and path.startswith("/api/lan-transfer/"):
+                return handler, {"transfer_id": path[len("/api/lan-transfer/"):]}
+            if prefix == "/api/file/" and path.startswith("/api/file/"):
+                return handler, {"filepath": path[len("/api/file/"):]}
+            if prefix == "/":
+                if path in ("/", ""):
+                    return handler, {}
+                continue
+            if prefix.endswith("/"):
+                if path.startswith(prefix):
+                    return handler, {}
+            elif path == prefix:
+                return handler, {}
+        return None, {}
+
+    async def dispatch_ws(self, data):
+        await self._handle_ws_message(_IpcWsReply(self), data)
+
+    async def dispatch_rns(self, method, params):
+        if method == "send_signaling":
+            if not self.messaging:
+                return {"error": "not_ready"}
+            peer = (params.get("peer") or "").strip()
+            payload = params.get("payload") or ""
+            resolved = self._peer_dest_hash(peer) or peer
+            ok = await self._run_blocking(self.messaging.send_call_signaling, payload, resolved)
+            return {"status": "ok" if ok else "error"}
+        if method == "send_media":
+            if not self.messaging:
+                return {"error": "not_ready"}
+            peer = (params.get("peer") or "").strip()
+            try:
+                packet = bytes.fromhex(params.get("data") or "")
+            except ValueError:
+                return {"error": "invalid hex"}
+            resolved = self._peer_dest_hash(peer) or peer
+            ok = await self._run_blocking(self.messaging.send_media_packet, packet, resolved)
+            return {"status": "ok" if ok else "error"}
+        if method == "peer_linked":
+            if not self.messaging:
+                return {"linked": False}
+            peer = (params.get("peer") or "").strip()
+            if peer:
+                resolved = self._peer_dest_hash(peer) or peer
+                linked = await self._run_blocking(self.messaging._peer_link_active, resolved)
+                return {"linked": bool(linked)}
+            linked = await self._run_blocking(lambda: bool(self.messaging.linked_peers()))
+            return {"linked": linked}
+        return {"error": "unknown_method"}
 
     @staticmethod
     def _clean_hash(h):
@@ -2012,7 +2147,7 @@ class ChatRnsDaemon:
         return peers
 
     def _schedule_peers_broadcast(self, authoritative=False):
-        if not (self.websockets and self._loop):
+        if not (self._event_sink or self.websockets) or not self._loop:
             return
         asyncio.run_coroutine_threadsafe(
             self._broadcast_peers(authoritative=authoritative),
@@ -2020,6 +2155,11 @@ class ChatRnsDaemon:
         )
 
     async def _broadcast(self, data):
+        if self._event_sink:
+            try:
+                await self._event_sink(data)
+            except Exception as exc:
+                print(f"[broadcast] IPC event sink failed: {exc}")
         msg = json.dumps(data)
         for ws in self.websockets.copy():
             if ws.closed:
@@ -2031,7 +2171,7 @@ class ChatRnsDaemon:
                 self.websockets.discard(ws)
 
     def _schedule_contacts_broadcast(self):
-        if not (self.websockets and self._loop):
+        if not (self._event_sink or self.websockets) or not self._loop:
             return
         contacts = list_contacts(self.config_dir)
         asyncio.run_coroutine_threadsafe(
@@ -5130,7 +5270,7 @@ class ChatRnsDaemon:
         last_snapshot = None
         while True:
             await asyncio.sleep(1)
-            if not self.websockets or not self.discovery:
+            if not (self._event_sink or self.websockets) or not self.discovery:
                 continue
             peers = self._scoped_peers()
             snapshot = tuple(
@@ -5591,32 +5731,34 @@ class ChatRnsDaemon:
             time.sleep(0.25)
 
     def run(self):
-        from aiohttp.web_runner import GracefulExit, AppRunner, TCPSite
+        """Headless RNS transport — IPC only, no HTTP server."""
+        from chatxz.rnsd.ipc_server import IpcServer
 
         self._prepare_listen_ports()
-
-        app = web.Application()
-        self._register_routes(app)
-        app.on_startup.append(self._on_startup)
-        app.on_shutdown.append(self._on_shutdown)
-        app.on_cleanup.append(self._on_cleanup)
-
+        ipc_port = int(os.environ.get("CHATXZ_IPC_PORT", str(self.port)))
         print(f"chatxz RNS transport v{APP_VERSION}")
-        print(f"Internal IPC: http://{self.host}:{self.port}")
+        print(f"IPC: tcp://{self.host}:{ipc_port}")
         print(f"Application (Rust): port {self.public_port}")
-        print("[startup] HTTP listening — RNS/network stack starting in background")
+        print("[startup] RNS/network stack starting — no Python HTTP server")
         print("Press Ctrl+C to stop")
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        runner = AppRunner(app, access_log=None)
-        stopping = False
         self._loop = loop
+        ipc = IpcServer(self, host=self.host, port=ipc_port)
+        stopping = False
 
-        async def _start():
-            await runner.setup()
-            site = TCPSite(runner, self.host, self.port, reuse_address=True)
-            await site.start()
+        async def _main():
+            ipc.bind_event_sink()
+            await ipc.start()
+            await self._on_startup(None)
+            try:
+                while not self._shutting_down:
+                    await asyncio.sleep(3600)
+            finally:
+                await self._on_shutdown(None)
+                await self._on_cleanup(None)
+                await ipc.stop()
 
         def _stop_loop(signum=None, frame=None):
             nonlocal stopping
@@ -5643,33 +5785,13 @@ class ChatRnsDaemon:
             except (NotImplementedError, RuntimeError, ValueError):
                 signal.signal(signal.SIGINT, _stop_loop)
                 signal.signal(signal.SIGTERM, _stop_loop)
-            try:
-                signal.signal(signal.SIGTSTP, lambda s, f: print(
-                    "\n[shutdown] Ctrl+Z suspends the server — use Ctrl+C to stop",
-                    flush=True,
-                ))
-            except (AttributeError, ValueError, OSError):
-                pass
 
         try:
-            loop.run_until_complete(_start())
-            try:
-                loop.run_forever()
-            except KeyboardInterrupt:
-                stopping = True
-        except (GracefulExit, KeyboardInterrupt):
+            loop.run_until_complete(_main())
+        except KeyboardInterrupt:
             stopping = True
         finally:
-            if not stopping:
-                stopping = True
             self._shutting_down = True
-            try:
-                loop.run_until_complete(runner.cleanup())
-            except Exception:
-                try:
-                    self._teardown_network_stack()
-                except Exception:
-                    pass
             try:
                 loop.run_until_complete(loop.shutdown_asyncgens())
             except Exception:
@@ -5687,7 +5809,7 @@ def main():
             pass
     parser = argparse.ArgumentParser(description="chatxz RNS transport daemon (internal)")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address")
-    parser.add_argument("--port", type=int, default=8743, help="Internal IPC port")
+    parser.add_argument("--port", type=int, default=8744, help="Internal IPC port (TCP)")
     parser.add_argument("--public-port", type=int, default=8742, help="Rust app HTTP port")
     parser.add_argument("--share", action="store_true", help="Listen on 0.0.0.0 (accessible on LAN)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show RNS debug logs")

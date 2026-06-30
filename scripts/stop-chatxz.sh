@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop chatxz server and release ports 8742 (Rust HTTP), 8743 (Python/RNS), 4242 (RNS UDP).
+# Stop chatxz server and release ports 8742 (Rust HTTP), 8744 (RNS IPC), 4242 (RNS UDP).
 set -euo pipefail
 
 stop_pids() {
@@ -47,7 +47,7 @@ done
 
 sleep 0.4
 
-for port in 8742 8743; do
+for port in 8742 8744; do
   stop_pids TERM $(collect_pids "$port" 0)
 done
 for port in 4242 8743; do
@@ -56,7 +56,7 @@ done
 
 sleep 0.4
 
-for port in 8742 8743; do
+for port in 8742 8744; do
   stop_pids KILL $(collect_pids "$port" 0)
 done
 for port in 4242 8743; do

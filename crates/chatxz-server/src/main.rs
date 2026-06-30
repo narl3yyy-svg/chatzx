@@ -1,10 +1,11 @@
-//! chatxz v1 — Rust application server.
-//! Reticulum transport runs in a headless Python subprocess (chatxz.rnsd).
+//! chatxz v1.0.0 — Rust application server.
+//! Reticulum transport runs in a headless Python subprocess (IPC only, no HTTP).
 
+mod api;
 mod proxy;
-mod rns_client;
+mod rns_ipc;
 mod rnsd_spawn;
-mod ws_proxy;
+mod ws;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -13,14 +14,13 @@ use std::sync::{Arc, Mutex};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, Method, StatusCode, Uri};
+use axum::http::{Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
-use axum::{Json, Router};
+use axum::{body::Body, Json, Router};
 use chatxz_call::{CallManager, CallMode, SharedCallManager};
 use chatxz_media::{MediaKind, FRAME_BYTES};
 use chatxz_protocol::is_media_packet;
-use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::broadcast;
@@ -28,13 +28,10 @@ use tracing::{error, info, warn};
 
 #[derive(Clone)]
 struct AppState {
-    backend: String,
     static_root: PathBuf,
     calls: SharedCallManager,
-    rns: rns_client::RnsClient,
+    ipc: rns_ipc::RnsIpc,
     call_events: broadcast::Sender<String>,
-    media_sockets: Arc<Mutex<HashMap<u64, String>>>,
-    media_next_id: Arc<Mutex<u64>>,
 }
 
 #[tokio::main]
@@ -50,9 +47,9 @@ async fn main() {
     let port: u16 = parse_flag(&args, "--port")
         .and_then(|s| s.parse().ok())
         .unwrap_or(8742);
-    let rnsd_port: u16 = parse_flag(&args, "--rnsd-port")
+    let ipc_port: u16 = parse_flag(&args, "--ipc-port")
         .and_then(|s| s.parse().ok())
-        .unwrap_or(8743);
+        .unwrap_or(8744);
     let root = std::env::var("CHATXZ_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."));
@@ -68,63 +65,49 @@ async fn main() {
         })
         .cloned()
         .collect();
-    let _rnsd = rnsd_spawn::spawn_rnsd(&root, rnsd_port, port, &extra);
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    let _rnsd = rnsd_spawn::spawn_rnsd(&root, ipc_port, port, &extra);
 
-    let backend = format!("http://127.0.0.1:{rnsd_port}");
-    let rns = rns_client::RnsClient::new(&backend);
+    let ipc_addr = format!("127.0.0.1:{ipc_port}");
+    let ipc = wait_for_ipc(&ipc_addr).await;
     let (call_tx, _) = broadcast::channel(64);
 
-    let send_signaling = {
-        let rns = rns.clone();
-        Arc::new(move |peer: &str, payload: &str| {
-            let rns = rns.clone();
-            let peer = peer.to_string();
-            let payload = payload.to_string();
-            tokio::spawn(async move {
-                if let Err(e) = rns.send_signaling(&peer, &payload).await {
-                    warn!(%e, "rns signaling send failed");
-                }
-            });
-        }) as chatxz_call::SendSignalingFn
-    };
+    let ipc_sig = ipc.clone();
+    let send_signaling = Arc::new(move |peer: &str, payload: &str| {
+        let ipc = ipc_sig.clone();
+        let peer = peer.to_string();
+        let payload = payload.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = ipc.send_signaling(&peer, &payload).await {
+                warn!(%e, "rns signaling send failed");
+            }
+        });
+    }) as chatxz_call::SendSignalingFn;
 
-    let send_media = {
-        let rns = rns.clone();
-        Arc::new(move |peer: &str, data: &[u8]| {
-            let rns = rns.clone();
-            let peer = peer.to_string();
-            let data = data.to_vec();
-            tokio::spawn(async move {
-                if let Err(e) = rns.send_media(&peer, &data).await {
-                    warn!(%e, "rns media send failed");
-                }
-            });
-        }) as chatxz_call::SendMediaFn
-    };
+    let ipc_med = ipc.clone();
+    let send_media = Arc::new(move |peer: &str, data: &[u8]| {
+        let ipc = ipc_med.clone();
+        let peer = peer.to_string();
+        let data = data.to_vec();
+        tokio::spawn(async move {
+            if let Err(e) = ipc.send_media(&peer, &data).await {
+                warn!(%e, "rns media send failed");
+            }
+        });
+    }) as chatxz_call::SendMediaFn;
 
-    let peer_linked = Arc::new(|_peer: &str| true) as chatxz_call::PeerLinkedFn;
-
-    let mut manager = CallManager::new(send_signaling, send_media, peer_linked);
+    let mut manager = CallManager::new(send_signaling, send_media);
     let events_tx = call_tx.clone();
     manager.set_event_handler(Arc::new(move |event, view| {
         let data = serde_json::to_value(view).unwrap_or_else(|_| json!({}));
-        let msg = json!({
-            "type": "call",
-            "event": event,
-            "data": data,
-        });
+        let msg = json!({"type": "call", "event": event, "data": data});
         let _ = events_tx.send(msg.to_string());
     }));
 
     let state = AppState {
-        backend: backend.clone(),
-        static_root: static_root.clone(),
+        static_root,
         calls: Arc::new(Mutex::new(manager)),
-        rns,
+        ipc,
         call_events: call_tx,
-        media_sockets: Arc::new(Mutex::new(HashMap::new())),
-        media_next_id: Arc::new(Mutex::new(0)),
     };
 
     let app = Router::new()
@@ -133,20 +116,91 @@ async fn main() {
         .route("/ws/media", get(media_ws))
         .route("/internal/signaling", post(internal_signaling))
         .route("/internal/media", post(internal_media))
-        .route("/health", get(|| async { "ok" }))
-        .fallback(any(proxy::forward))
+        .route("/health", get(health))
+        .fallback(any(fallback))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    info!(%addr, %backend, "chatxz v1 starting (Rust application)");
+    info!(%addr, ipc = %ipc_addr, "chatxz v1.0.0 starting");
     let listener = tokio::net::TcpListener::bind(addr).await.expect("bind");
     axum::serve(listener, app).await.expect("serve");
+}
+
+async fn wait_for_ipc(addr: &str) -> rns_ipc::RnsIpc {
+    for attempt in 1..=60 {
+        match rns_ipc::RnsIpc::connect(addr).await {
+            Ok(ipc) => return ipc,
+            Err(e) => {
+                if attempt == 60 {
+                    error!(%e, "RNS IPC never became ready");
+                    std::process::exit(1);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+        }
+    }
+    unreachable!()
 }
 
 fn parse_flag(args: &[String], flag: &str) -> Option<String> {
     args.iter()
         .position(|a| a == flag)
         .and_then(|i| args.get(i + 1).cloned())
+}
+
+async fn health(State(state): State<AppState>) -> Json<Value> {
+    match state
+        .ipc
+        .http_request("GET", "/api/health", HashMap::new(), HashMap::new(), None)
+        .await
+    {
+        Ok(resp) => {
+            if let Ok(v) = serde_json::from_slice::<Value>(&resp.body) {
+                Json(v)
+            } else {
+                Json(json!({"status": "ok", "rns_ready": true}))
+            }
+        }
+        Err(e) => Json(json!({"status": "rns_error", "error": e})),
+    }
+}
+
+async fn fallback(
+    State(state): State<AppState>,
+    method: Method,
+    uri: Uri,
+    headers: axum::http::HeaderMap,
+    body: Body,
+) -> Response {
+    let path = uri.path();
+    if path.starts_with("/api/") {
+        return match api::forward_api(&state.ipc, method, uri, headers, body).await {
+            Ok(r) => r,
+            Err(s) => s.into_response(),
+        };
+    }
+    if path == "/"
+        || path.starts_with("/static/")
+        || path.ends_with(".js")
+        || path.ends_with(".css")
+        || path.ends_with(".html")
+        || path.ends_with(".json")
+        || path.ends_with(".png")
+        || path.ends_with(".svg")
+        || path.ends_with(".ico")
+        || path.ends_with(".woff2")
+    {
+        let req = axum::http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(body)
+            .unwrap_or_else(|_| axum::http::Request::new(Body::empty()));
+        return match proxy::serve_static(State(state), req).await {
+            Ok(r) => r,
+            Err(s) => s.into_response(),
+        };
+    }
+    StatusCode::NOT_FOUND.into_response()
 }
 
 #[derive(Deserialize)]
@@ -157,7 +211,6 @@ struct CallBody {
     muted: Option<bool>,
     video: Option<bool>,
     screen: Option<bool>,
-    stats: Option<Value>,
 }
 
 async fn call_api(
@@ -166,19 +219,17 @@ async fn call_api(
     Json(body): Json<CallBody>,
 ) -> Json<Value> {
     let peer = body.peer.unwrap_or_default();
-
     match action.as_str() {
         "status" => {
             let linked = if peer.is_empty() {
-                state.rns.any_linked().await.unwrap_or(false)
+                state.ipc.any_linked().await.unwrap_or(false)
             } else {
-                state.rns.peer_linked(&peer).await.unwrap_or(false)
+                state.ipc.peer_linked(&peer).await.unwrap_or(false)
             };
-            let call = state.calls.lock().expect("calls").active_view();
             Json(json!({
                 "status": "ok",
                 "linked": linked,
-                "call": call,
+                "call": state.calls.lock().expect("calls").active_view(),
                 "rust_media": true,
                 "error": if linked || peer.is_empty() { Value::Null } else { json!("not_linked") },
             }))
@@ -187,7 +238,7 @@ async fn call_api(
             if peer.is_empty() {
                 return Json(json!({"error": "peer required"}));
             }
-            if !state.rns.peer_linked(&peer).await.unwrap_or(false) {
+            if !state.ipc.peer_linked(&peer).await.unwrap_or(false) {
                 return Json(json!({"error": "not_linked"}));
             }
             let mode = match body.mode.as_deref().unwrap_or("audio") {
@@ -195,26 +246,17 @@ async fn call_api(
                 "screen" => CallMode::Screen,
                 _ => CallMode::Audio,
             };
-            let call = state.calls.lock().expect("calls").start_call(&peer, mode);
-            match call {
+            match state.calls.lock().expect("calls").start_call(&peer, mode) {
                 Some(c) => Json(json!({"status": "ok", "call": c})),
                 None => Json(json!({"error": "busy"})),
             }
         }
         "accept" => {
-            let ok = state
-                .calls
-                .lock()
-                .expect("calls")
-                .accept_call(body.call_id.as_deref().unwrap_or(""));
+            let ok = state.calls.lock().expect("calls").accept_call(body.call_id.as_deref().unwrap_or(""));
             Json(json!({"status": if ok { "ok" } else { "error" }}))
         }
         "reject" => {
-            state
-                .calls
-                .lock()
-                .expect("calls")
-                .reject_call(body.call_id.as_deref().unwrap_or(""));
+            state.calls.lock().expect("calls").reject_call(body.call_id.as_deref().unwrap_or(""));
             Json(json!({"status": "ok"}))
         }
         "hangup" => {
@@ -222,11 +264,7 @@ async fn call_api(
             Json(json!({"status": "ok"}))
         }
         "update" => {
-            let call = state
-                .calls
-                .lock()
-                .expect("calls")
-                .update_call(body.muted, body.video, body.screen);
+            let call = state.calls.lock().expect("calls").update_call(body.muted, body.video, body.screen);
             Json(json!({"status": "ok", "call": call}))
         }
         _ => Json(json!({"error": "unknown action"})),
@@ -240,11 +278,7 @@ struct InternalSig {
 }
 
 async fn internal_signaling(State(state): State<AppState>, Json(body): Json<InternalSig>) -> StatusCode {
-    state
-        .calls
-        .lock()
-        .expect("calls")
-        .handle_signaling(&body.peer, &body.content);
+    state.calls.lock().expect("calls").handle_signaling(&body.peer, &body.content);
     StatusCode::OK
 }
 
@@ -266,21 +300,12 @@ async fn internal_media(State(state): State<AppState>, Json(body): Json<Internal
         let mut mgr = state.calls.lock().expect("calls");
         mgr.handle_media(&peer, &bytes);
         let relay = chatxz_protocol::MediaPacket::decode(&bytes).map(|pkt| {
-            (
-                pkt.kind as u8,
-                pkt.flags,
-                pkt.sequence,
-                pkt.timestamp_ms,
-                pkt.payload,
-            )
+            (pkt.kind as u8, pkt.flags, pkt.sequence, pkt.timestamp_ms, pkt.payload)
         });
         let pcm = mgr
             .with_active_media(|m| m.pop_audio_opus(now_ms()))
             .flatten()
-            .and_then(|opus| {
-                mgr.with_active_media(|m| m.decode_audio_opus(&opus))
-                    .and_then(|r| r.ok())
-            });
+            .and_then(|opus| mgr.with_active_media(|m| m.decode_audio_opus(&opus)).and_then(|r| r.ok()));
         (pcm, relay)
     };
     if let Some(pcm) = pcm_out {
@@ -310,15 +335,9 @@ async fn broadcast_media(
     payload: &[u8],
 ) -> Result<(), ()> {
     let msg = json!({
-        "type": "media",
-        "peer": peer,
-        "kind": kind,
-        "flags": flags,
-        "seq": seq,
-        "ts": ts,
-        "data": hex::encode(payload),
+        "type": "media", "peer": peer, "kind": kind,
+        "flags": flags, "seq": seq, "ts": ts, "data": hex::encode(payload),
     });
-    // Media WS clients receive via separate task — simplified: stored in global for now
     let _ = state.call_events.send(msg.to_string());
     Ok(())
 }
@@ -329,10 +348,10 @@ struct MediaQuery {
 }
 
 async fn ui_ws(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
-    let backend = state.backend.clone();
+    let ipc = state.ipc.clone();
     let call_events = state.call_events.subscribe();
     ws.on_upgrade(move |socket| async move {
-        ws_proxy::relay_ui_ws(socket, backend, call_events).await;
+        ws::handle_ui_ws(socket, ipc, call_events).await;
     })
 }
 
@@ -346,28 +365,12 @@ async fn media_ws(
 }
 
 async fn handle_media_ws(mut socket: WebSocket, state: AppState, peer_filter: String) {
-    let id = {
-        let mut n = state.media_next_id.lock().expect("id");
-        *n += 1;
-        *n
-    };
-    if !peer_filter.is_empty() {
-        state
-            .media_sockets
-            .lock()
-            .expect("media")
-            .insert(id, peer_filter.clone());
-    }
-
     let mut events = state.call_events.subscribe();
-
     loop {
         tokio::select! {
             incoming = socket.recv() => {
                 match incoming {
-                    Some(Ok(Message::Binary(raw))) => {
-                        process_media_binary(&state, &peer_filter, &raw).await;
-                    }
+                    Some(Ok(Message::Binary(raw))) => process_media_binary(&state, &peer_filter, &raw).await,
                     Some(Ok(Message::Text(text))) => {
                         if text.contains("\"ping\"") {
                             let _ = socket.send(Message::Text(r#"{"type":"pong"}"#.into())).await;
@@ -380,16 +383,13 @@ async fn handle_media_ws(mut socket: WebSocket, state: AppState, peer_filter: St
             }
             evt = events.recv() => {
                 if let Ok(payload) = evt {
-                    if payload.contains("\"type\":\"media\"")
-                        && media_event_for_peer(&payload, &peer_filter)
-                    {
+                    if payload.contains("\"type\":\"media\"") && media_event_for_peer(&payload, &peer_filter) {
                         let _ = socket.send(Message::Text(payload.into())).await;
                     }
                 }
             }
         }
     }
-    state.media_sockets.lock().expect("media").remove(&id);
 }
 
 fn media_event_for_peer(payload: &str, peer_filter: &str) -> bool {
@@ -410,8 +410,7 @@ async fn process_media_binary(state: &AppState, peer_filter: &str, raw: &[u8]) {
     let frame_type = raw[0];
     let ts = u32::from_be_bytes([raw[1], raw[2], raw[3], raw[4]]);
     let mut mgr = state.calls.lock().expect("calls");
-    let active_peer = mgr.active_view().map(|v| v.peer);
-    let Some(peer) = active_peer else { return };
+    let Some(peer) = mgr.active_view().map(|v| v.peer) else { return };
     if !peer_filter.is_empty() && peer_filter != peer {
         return;
     }
@@ -422,14 +421,10 @@ async fn process_media_binary(state: &AppState, peer_filter: &str, raw: &[u8]) {
             Some(media.packetize_audio(&opus, ts))
         }).flatten(),
         2 => mgr.with_active_media(|media| {
-            let keyframe = raw.get(5).copied().unwrap_or(0) == 1;
-            let data = raw.get(6..).unwrap_or(&[]);
-            Some(media.packetize_video(data, ts, keyframe))
+            Some(media.packetize_video(raw.get(6..).unwrap_or(&[]), ts, raw.get(5).copied().unwrap_or(0) == 1))
         }).flatten(),
         3 => mgr.with_active_media(|media| {
-            let keyframe = raw.get(5).copied().unwrap_or(0) == 1;
-            let data = raw.get(6..).unwrap_or(&[]);
-            Some(media.packetize_screen(data, ts, keyframe))
+            Some(media.packetize_screen(raw.get(6..).unwrap_or(&[]), ts, raw.get(5).copied().unwrap_or(0) == 1))
         }).flatten(),
         _ => None,
     };

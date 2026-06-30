@@ -2,29 +2,31 @@
 
 **Encrypted peer-to-peer messaging and calls** over the [Reticulum Network Stack](https://reticulum.network/).
 
-**Version 1.0.0** — full Rust rewrite of voice, video, screen sharing, and the web application.
+**Version 1.0.0** — Rust application with headless RNS transport.
 
 ---
 
 ## Architecture
 
-chatxz is a **Rust application**. The only Python component is a headless **RNS transport daemon** (`chatxz.rnsd`) that wraps Reticulum — it is not a web server and is never started manually.
+chatxz is a **Rust application** on port **8742**. Reticulum runs in a headless Python subprocess that exposes **no HTTP server** — only a local TCP IPC socket for RNS packet I/O.
 
 ```
 ./run.sh web
-    └── chatxz (Rust)          port 8742  ← you use this
-            ├── Web UI, REST API, WebSocket
+    └── chatxz (Rust)              port 8742  ← browser connects here
+            ├── Web UI (static)
+            ├── REST API (Rust)
+            ├── WebSocket (Rust)
             ├── Voice / video / screen (Opus, jitter buffer, PLC)
-            └── spawns → chatxz.rnsd (Python)  port 8743  ← internal only
-                              └── Reticulum links, packet I/O
+            └── IPC ──► chatxz.rnsd (Python)  port 8744  ← RNS only
+                              └── Reticulum links, packet TX/RX
 ```
 
 | Layer | Language | Responsibility |
 |-------|----------|----------------|
-| **Application** | **Rust** | HTTP, WebSocket, calls, media, UI, API |
-| **Transport** | Python + RNS | Encrypted links, announce, packet TX/RX |
+| **Application** | **Rust** | HTTP, WebSocket, calls, media, UI, API routing |
+| **Transport** | Python + RNS | Encrypted links, announce, packet I/O (IPC only) |
 
-There is no Python web server. No hybrid proxy. One binary, one port.
+There is **no Python web server** and **no HTTP proxy** between Rust and Python.
 
 ---
 
@@ -73,6 +75,19 @@ cd android && ./gradlew assembleRelease
 cargo build --release -p chatxz-server   # produces target/release/chatxz
 cargo test
 ```
+
+A clean release build should complete with **zero warnings**.
+
+---
+
+## Ports
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| 8742 | TCP | Rust application (web UI + API) |
+| 8744 | TCP | Internal RNS IPC (localhost only) |
+| 4242 | UDP/TCP | Reticulum network interfaces |
+| 8743 | UDP | LAN discovery beacon |
 
 ---
 

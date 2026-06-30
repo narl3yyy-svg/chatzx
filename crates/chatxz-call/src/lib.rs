@@ -78,29 +78,21 @@ impl CallSession {
 pub type EventCallback = Arc<dyn Fn(&str, CallView) + Send + Sync>;
 pub type SendSignalingFn = Arc<dyn Fn(&str, &str) + Send + Sync>;
 pub type SendMediaFn = Arc<dyn Fn(&str, &[u8]) + Send + Sync>;
-pub type PeerLinkedFn = Arc<dyn Fn(&str) -> bool + Send + Sync>;
-
 pub struct CallManager {
     sessions: HashMap<String, CallSession>,
     active_id: Option<String>,
     send_signaling: SendSignalingFn,
     send_media: SendMediaFn,
-    peer_linked: PeerLinkedFn,
     on_event: Option<EventCallback>,
 }
 
 impl CallManager {
-    pub fn new(
-        send_signaling: SendSignalingFn,
-        send_media: SendMediaFn,
-        peer_linked: PeerLinkedFn,
-    ) -> Self {
+    pub fn new(send_signaling: SendSignalingFn, send_media: SendMediaFn) -> Self {
         Self {
             sessions: HashMap::new(),
             active_id: None,
             send_signaling,
             send_media,
-            peer_linked,
             on_event: None,
         }
     }

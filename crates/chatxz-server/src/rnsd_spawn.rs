@@ -14,27 +14,28 @@ impl Drop for RnsdHandle {
     }
 }
 
-pub fn spawn_rnsd(root: &PathBuf, port: u16, public_port: u16, extra_args: &[String]) -> RnsdHandle {
+pub fn spawn_rnsd(root: &PathBuf, ipc_port: u16, public_port: u16, extra_args: &[String]) -> RnsdHandle {
     let python = resolve_python(root);
     let mut cmd = Command::new(&python);
     cmd.current_dir(root)
         .env("PYTHONPATH", root)
         .env("CHATXZ_ROOT", root)
+        .env("CHATXZ_IPC_PORT", ipc_port.to_string())
         .env("CHATXZ_APP_URL", format!("http://127.0.0.1:{public_port}"))
         .arg("-m")
         .arg("chatxz.rnsd")
         .arg("--port")
-        .arg(port.to_string())
+        .arg(ipc_port.to_string())
         .arg("--public-port")
         .arg(public_port.to_string());
     for arg in extra_args {
         cmd.arg(arg);
     }
-    cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
 
     match cmd.spawn() {
         Ok(child) => {
-            info!(pid = child.id(), %port, "started RNS transport daemon");
+            info!(pid = child.id(), ipc_port, "started RNS transport daemon (IPC)");
             *RNSD_CHILD.lock().expect("rnsd") = Some(child);
         }
         Err(e) => warn!(%e, "failed to spawn RNS daemon — is Python installed?"),

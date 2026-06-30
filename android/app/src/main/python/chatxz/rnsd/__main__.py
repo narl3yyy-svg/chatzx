@@ -1,7 +1,7 @@
 """Entry point: python -m chatxz.rnsd
 
-Runs the Reticulum networking layer on an internal port (default 8743).
-The Rust ``chatxz`` binary is the application; this process is transport only.
+Headless Reticulum transport daemon. Exposes no HTTP server — only a local
+TCP IPC socket for the Rust ``chatxz`` application (default port 8744).
 """
 
 from chatxz.rnsd.service import main
