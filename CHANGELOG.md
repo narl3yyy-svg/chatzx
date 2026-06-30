@@ -2,6 +2,15 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [1.0.1] — 2026-06-29
+
+### Fixed
+- **Call buttons** — voice/video/screen actions now use the open chat peer (`viewingPeer`) instead of the unused `activePeerHash`, so calls work when messaging is connected.
+- **Android CI** — restored missing `MainActivity` call helpers (`appContext`, `setCallActive`, `vibrateIncomingCall`, `stopCallVibrate`, `evaluateJavascript`).
+
+### Added
+- Unit tests for v1 call manager and media engine (`tests/test_calls_v1.py`).
+
 ## [1.0.0] — 2026-06-29
 
 ### Added

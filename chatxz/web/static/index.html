@@ -2754,6 +2754,7 @@ function updatePeerHeader() {
   document.getElementById('disconnect-btn').style.display = linked ? 'block' : 'none';
   setLinkStatus(linked ? 'connected' : 'disconnected', linked ? 'Active' : 'Inactive');
   document.getElementById('input-area').style.display = 'block';
+  if (typeof updateCallUI === 'function') updateCallUI();
 }
 
 function contactNameFor(hash) {

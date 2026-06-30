@@ -13,6 +13,9 @@ import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.view.WindowManager;
 import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.webkit.ValueCallback;
@@ -74,10 +77,13 @@ public class MainActivity extends AppCompatActivity {
     private static boolean serverStarted = false;
     private static boolean webViewLoaded = false;
     private static boolean debugMode = false;
+    private static MainActivity sInstance;
+    private boolean callActive;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        sInstance = this;
 
         Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
             try {
@@ -139,6 +145,50 @@ public class MainActivity extends AppCompatActivity {
 
     public void showMessageNotification(String title, String body, String peerHash) {
         ChatxzNotificationHelper.show(title, body, peerHash);
+    }
+
+    public static Context appContext() {
+        if (sInstance != null) {
+            return sInstance.getApplicationContext();
+        }
+        ChatxzApplication app = ChatxzApplication.getInstance();
+        return app != null ? app.getApplicationContext() : null;
+    }
+
+    public void setCallActive(boolean active) {
+        callActive = active;
+        if (active) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            stopCallVibrate();
+        }
+    }
+
+    public void vibrateIncomingCall() {
+        Vibrator vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+        if (vibrator == null || !vibrator.hasVibrator()) {
+            return;
+        }
+        long[] pattern = new long[]{0, 400, 200, 400, 200, 400};
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0));
+        } else {
+            vibrator.vibrate(pattern, 0);
+        }
+    }
+
+    public void stopCallVibrate() {
+        Vibrator vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+        if (vibrator != null) {
+            vibrator.cancel();
+        }
+    }
+
+    public void evaluateJavascript(String script, ValueCallback<String> callback) {
+        if (webView != null) {
+            webView.evaluateJavascript(script, callback);
+        }
     }
 
     private void captureNotificationPeer(Intent intent) {
@@ -763,6 +813,9 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        if (sInstance == this) {
+            sInstance = null;
+        }
         closeWebSocketBeforeReload();
         if (usbPermissionReceiver != null) {
             try {
