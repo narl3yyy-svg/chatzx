@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — each transport uses its own RNS identity, and messages travel over encrypted links on your LAN (Wi‑Fi, Ethernet, USB serial).
 
-**Current version:** 0.9.17
+**Current version:** 1.0.0
 
 ## How chatxz works (v0.5+)
 
@@ -32,7 +32,6 @@ chatxz treats **LAN** and **USB serial** as **separate endpoints** on the same d
 | **Announce LAN** | RNS announce + UDP beacon on your pinned IPv4 |
 | **Announce Serial** | RNS announce on USB (shown when serial is online) |
 | Tap **Discovered** row | Opens chat on that transport |
-| **↻** (Discovered header) | Refresh discovered peers — re-probe LAN, drop stale hashes |
 | Tap **contact sub-row** | Opens chat on LAN or USB for that saved peer |
 
 ### Settings → Network
@@ -49,38 +48,10 @@ Regenerate identities under **Settings → Profile** (**Regenerate LAN** / **Reg
 
 - **Serial peer missing after Announce** — tap **Announce Serial** (not LAN only); ensure USB serial is online in Settings → Network.
 - **Two rows for one name** — expected when a peer has both LAN and USB; both stay visible in Discovered (v0.5.1+).
-- **Stale discovered peers** — tap **↻** next to Discovered (or bring the app to foreground on Android) to refresh; use **Announce LAN** if no peers appear.
 - **Android sleep** — tap the contact to wake and reconnect (LAN wake is automatic).
 - **Cross-subnet LAN** — pick matching pinned IPv4 on both devices.
 
-**Voice calls:** when connected to a peer, tap **📞** in the chat header for a live duplex **Opus** call over RNS (LAN or USB). Unlike [Stoat](https://github.com/stoatchat/stoatchat) (LiveKit/WebRTC via a server), chatxz sends encrypted Opus frames **peer-to-peer** over your existing RNS link — no voice server, works offline on LAN/USB.
-
-| | **chatxz** | **Stoat** |
-|---|-----------|-----------|
-| Transport | RNS link + `CALL_AUDIO` Opus packets | LiveKit SFU + WebRTC |
-| Device prefs | **Settings → Audio** (saved mic/speaker) | Client-side WebRTC device store |
-| Scale | 1:1 P2P | Many users per voice channel |
-
-All voice code is under `chatxz/core/audio/` — Opus 48 kHz / 20 ms frames, adaptive jitter buffer, threaded capture/playback on desktop. If native audio stalls, the UI falls back to browser Opus. See **[docs/VOICE.md](docs/VOICE.md)**.
-
-### Settings → Audio
-
-| Control | Purpose |
-|---------|---------|
-| **Microphone (native)** | PyAudio input device for calls (`-1` = auto) |
-| **Speaker (native)** | PyAudio output — pick **default** if you listen on HDMI |
-| **Pulse source / sink** | Linux only — `pactl` routing before capture/playback |
-| **Browser microphone** | Fallback when native Opus/PyAudio unavailable |
-| **Default speakerphone** | Android — start calls on loudspeaker vs earpiece |
-
-Tap **↻ Refresh devices** after plugging in a headset. Changes apply on the **next** call.
-
-| Platform | Audio path |
-|----------|------------|
-| Linux / Windows / macOS | `core/audio/engine.py` — libopus + PyAudio; browser WebCodecs fallback |
-| Android | Java `CallAudioEngine` (MediaCodec Opus) + speakerphone toggle |
-
-**Desktop deps:** `./run.sh web` installs PyAudio; system **libopus** required (`pacman -S opus alsa-utils` / `apt install libopus0 alsa-utils`). Linux needs `pactl` (PulseAudio/PipeWire) for HDMI mic/speaker routing.
+**v1.0.0:** Real-time **voice**, **video**, and **screen sharing** calls over RNS — no WebRTC, no external voice servers. Rust media engine with Opus and adaptive jitter buffer.
 
 ## Download
 
@@ -110,7 +81,7 @@ run.bat web --share
 
 Open **http://127.0.0.1:8742**. Logs stay in that cmd window.
 
-**Voice calls & mic:** always open the UI on **this machine** at `http://127.0.0.1:8742` (Windows) or `http://localhost:8742` (macOS/Linux). Browser microphone access is **blocked** on raw LAN IPs like `http://10.0.x.x:8742` even with `--share`. **macOS native voice:** `brew install opus portaudio` then restart `./run.sh web --share`. **Firefox on Mac:** allow `localhost` under Firefox Settings → Privacy → Microphone and macOS System Settings → Privacy → Microphone.
+**Calls:** use `http://127.0.0.1:8742` (Windows) or `http://localhost:8742` (macOS/Linux). Grant microphone/camera when prompted. **Firefox on Mac:** Settings → Privacy & Security → Permissions → Microphone/Camera → allow `localhost`.
 
 **Stop:** **Ctrl+C** — server exits and **all ports close** (8742, 4242, 8743). Nothing keeps listening after `run.bat` ends.
 
@@ -146,12 +117,9 @@ uninstall.bat
 
 1. Download the **`.apk`** from [Releases](https://github.com/narl3yyy-svg/chatxz/releases).
 2. Install and open chatxz.
-3. Grant notification permission when asked. Microphone is requested when you tap 🎤 to record a voice note, or tap **Microphone** in the sidebar **Network** panel.
-4. During a call, use **🔈/🔊** on the call dashboard for speakerphone (earpiece vs loudspeaker).
+3. Grant notification permission when asked. Microphone/camera are requested when you start a call (📞 📹 🖥 in the chat header).
 
 Reinstalling the app creates a **new identity** — update saved contacts after reinstall.
-
-**Update:** install the latest APK from [Releases](https://github.com/narl3yyy-svg/chatxz/releases) or build locally (see Development).
 
 ---
 
@@ -174,7 +142,7 @@ bash scripts/stop-chatxz.sh
 ./run.sh web --share
 ```
 
-**Optional:** `bash scripts/install-macos.sh` — voice support (pyaudio) and Homebrew packages.
+**Optional:** `bash scripts/install-macos.sh` and `bash scripts/build-media.sh` — Opus + Rust media engine for best call quality.
 
 ---
 
@@ -186,7 +154,7 @@ cd chatxz
 ./run.sh web --share
 ```
 
-**Optional:** `bash scripts/install-arch.sh` (Arch) or `scripts/install-ubuntu.sh` (Ubuntu/Debian) for system packages / voice / serial permissions.
+**Optional:** `bash scripts/install-arch.sh` (Arch) or `scripts/install-ubuntu.sh` (Ubuntu/Debian) for system packages / Opus / serial permissions. Run `bash scripts/build-media.sh` for the Rust media engine.
 
 If `git pull` fails with local changes (e.g. `tests/test_platform_interfaces.py`), stash first:
 
@@ -216,11 +184,12 @@ Hub relay behavior is covered in `tests/test_defaults_hub.py` and `tests/test_hu
 2. **Copy your identity hash** from the sidebar (click to copy).
 3. Tap **Announce** (📡) to discover peers instantly, or enable **Auto-announce** in Settings → Network.
 4. **Click a peer** on your selected network/interface or paste a hash in **Connect**.
-5. When **Link: Active** shows in the dock, chat, send files, images, voice notes, and folders.
+5. When **Link: Active** shows in the dock, chat, send files, images, start calls, and share folders.
 
 | Feature | Details |
 |---------|---------|
 | Messaging | Per-peer threads, delivery receipts, offline queue, searchable emoji picker |
+| Calls | Voice, video, screen share over RNS; Opus audio; adaptive jitter buffer; no WebRTC |
 | Files | Any size via encrypted RNS resources; drag & drop; live speed in dock |
 | Network | LAN discovery (UDP LAN or **TCP LAN**), USB serial failover (works across pinned subnets — e.g. 10.0.5.x ↔ 10.0.30.x), pinned NIC/VPN, saved contacts |
 | Privacy | E2E encrypted links (AES-256-CBC); HTTP :8742 is local UI only |
@@ -272,13 +241,21 @@ The core relay already works (`hub_role=server` + TCP listener). Upcoming polish
 
 ```
 Browser  ←WebSocket/HTTP→  Local server (UI only, port 8742)
+         ←/ws/media→       Rust media engine (Opus, jitter buffer)
                                 ↓
                           Reticulum (RNS) — encrypted P2P
                                 ↓
                            Remote peer
 ```
 
-Chat and file payloads never leave the RNS encrypted link. Port 8742 serves only the web interface on your machine.
+Chat, call media, and file payloads travel over encrypted RNS links. Port 8742 serves only the web interface on your machine. No WebRTC STUN/TURN or external voice servers.
+
+### Calls architecture (v1.0.0)
+
+- **Signaling** (`__call` messages): invite, accept, reject, hang up over existing RNS text channel
+- **Media** (`CXMZ` packets): Opus audio and VP8/JPEG video frames packetized with sequence numbers and timestamps
+- **Rust core** (`chatxz-media`): Opus encode/decode, adaptive jitter buffer (20–200 ms), packet-loss concealment
+- **Python fallback**: works without Rust (Android APK); install Rust extension on desktop for best quality
 
 **Data locations**
 
@@ -319,28 +296,6 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
-- **v0.9.13** — **Ctrl+C fix:** Windows `SetConsoleCtrlHandler` + macOS `sigwait` thread; forced `os._exit` in 80ms — no hang on RNS/PortAudio after calls
-- **v0.9.12** — **Symmetric hang-up:** call ends on both sides when either peer hangs up or links drop; stops zombie audio after remote disconnect; CALL_END sent on all active links
-- **v0.9.11** — **Post-call shutdown:** Ctrl+C works on Windows/Mac after voice calls; non-blocking PyAudio teardown; clearer mic hints and faster browser fallback when native capture is unavailable
-- **v0.9.10** — **Call stability:** voice calls survive TCP reconnect blips (~4s grace); auto-install libopus on Windows/Mac via `run.bat` / `./run.sh`
-- **v0.9.9** — **macOS libopus:** Homebrew auto-install + bundle into `chatxz/core/native/macos/`
-- **v0.9.8** — **Win↔Mac voice:** bidirectional Opus; browser mic when native receive-only; playback resampling
-- **v0.9.7** — **Auto voice deps:** `run.bat` / `./run.sh` install PyAudio + libopus; expanded uninstall scripts
-- **v0.9.6** — **Voice mic fix:** Mac/Windows libopus loading; LAN-IP mic banner (use localhost for calls); browser Opus fallback when native unavailable; macOS `brew install opus`
-- **v0.9.5** — **Discovered refresh:** sidebar ↻ re-probes LAN and drops stale peer hashes; authoritative list on Android foreground; voice call audio flush + browser Opus fallback when native stalls
-- **v0.9.4** — **Call reliability:** hang-up no longer deadlocks on ALSA init; invite blocked when link down; macOS `run.sh` empty-array fix
-- **v0.8.3** — **Voice calls fixed:** seq-ordered jitter + PLC on all platforms; Android MediaCodec decode fix; Linux PulseAudio mic selection; speakerphone; keyboard stays open after send
-- **v0.8.2** — **Voice reliability:** PulseAudio-aware mic/output pick; silent-mic browser fallback; call hang-up cleanup
-- **v0.8.1** — **Opus cleanup:** removed μ-law call paths; `docs/VOICE.md` architecture guide
-- **v0.8.0** — **Opus-only calls:** custom libopus + PyAudio on desktop; native Android `CallAudioEngine`; adaptive jitter buffer
-- **v0.6.3** — **Call audio quality:** linear resampling (16 kHz LAN), batched playback, low-latency queue cap
-- **v0.6.2** — **Calls polish:** incoming ringtone + Android vibration; shared mic fixes “busy”; WS audio frames
-- **v0.6.1** — **Call + contact fixes:** PCM call audio (audible duplex); contact delete blocklist; names persist offline
-- **v0.6.0** — **Live voice calls:** duplex audio over RNS on active links; 📞 in chat header, incoming-call UI, `/api/call` + WebSocket events
-- **v0.5.13** — **Dual-hash contact save:** LAN hash no longer copies into USB slot; phantom serial rows filtered
-- **v0.5.12** — **Contact save fix:** serial hash no longer lands in LAN row; wider voice message bubbles
-- **v0.5.11** — **Serial connect scope:** inbound serial links accepted when interface not yet attached; Announce Serial visible when USB configured
-- **v0.5.10** — **Disconnect + contacts:** superseded hashes no longer drop saved contacts; clear history matches all aliases
 - **v0.5.6** — **Contact hash sync:** saved contacts auto-update from Discovered (stale `b903…` → live `342835…` LAN hash); LAN row connect uses discovered hash
 - **v0.5.5** — **Contacts + discovery:** custom contact names persist; LAN/USB save to one contact with distinct hashes; false serial rows for LAN-only peers removed; own hash blocked from contacts
 - **v0.5.4** — **Serial announce fix:** USB hot-add creates serial identity/destination; serial announces stay on `/dev/ttyUSB0` (no LAN broadcast toast); self-hashes filtered from discovery; session reconnect stays on chosen transport

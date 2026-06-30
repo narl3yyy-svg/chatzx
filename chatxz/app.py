@@ -7,7 +7,6 @@ import RNS
 
 from chatxz.core.identity import IdentityManager
 from chatxz.core.messaging import MessagingBackend
-from chatxz.core.voice import VoiceRecorder, VoicePlayer
 from chatxz.utils.helpers import get_config_dir, get_data_dir, format_size, truncate_hash
 
 CONFIG_DIR = get_config_dir()
@@ -23,7 +22,6 @@ class ChatxzApp:
         self.identity_mgr = IdentityManager(self.config_dir)
         self.identity = self.identity_mgr.load_or_create()
         self.messaging = None
-        self.voice_recorder = None
         self.messages = []
         self.connected_hash = None
         self.running = False
@@ -41,7 +39,6 @@ class ChatxzApp:
             self.config_dir,
             on_message=self._on_message
         )
-        self.voice_recorder = VoiceRecorder(self.config_dir)
 
         dest = self.messaging.start()
         my_hash = RNS.hexrep(dest.hash)
@@ -69,9 +66,6 @@ class ChatxzApp:
             print(f"\n[{timestamp}] {sender}: [Image] {fname}")
             if os.path.exists(chat_msg.content):
                 self._display_image_in_term(chat_msg.content)
-        elif chat_msg.msg_type == "voice":
-            fname = chat_msg.file_name or "voice"
-            print(f"\n[{timestamp}] {sender}: [Voice] {fname}")
         elif chat_msg.msg_type == "video":
             fname = chat_msg.file_name or "video"
             fsize = format_size(chat_msg.file_size or 0)
@@ -138,34 +132,6 @@ class ChatxzApp:
         msg_type = media_type_for_filename(file_path)
         return self.messaging.send_file(file_path, msg_type)
 
-    def send_voice(self, duration=None):
-        if not self.messaging or not self.messaging.active_link:
-            print("Not connected to anyone")
-            return False
-        print("Recording voice... (Ctrl+C to stop)")
-        file_path = self.voice_recorder.start_recording()
-        if not file_path:
-            print("No microphone available")
-            return False
-        try:
-            if duration:
-                time.sleep(duration)
-                self.voice_recorder.stop_recording()
-            else:
-                input("Press Enter to stop recording...")
-                self.voice_recorder.stop_recording()
-        except KeyboardInterrupt:
-            self.voice_recorder.stop_recording()
-
-        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-            print(f"Recording saved, sending...")
-            return self.messaging.send_file(file_path, "voice")
-        return False
-
-    def play_voice(self, file_path):
-        if os.path.exists(file_path):
-            VoicePlayer.play(file_path)
-
     def list_contacts(self):
         contacts_dir = os.path.join(self.config_dir, "contacts")
         os.makedirs(contacts_dir, exist_ok=True)
@@ -197,7 +163,6 @@ def main():
     parser.add_argument("--connect", "-c", help="Connect to peer identity hash")
     parser.add_argument("--send", "-s", help="Send a text message")
     parser.add_argument("--file", "-f", help="Send a file")
-    parser.add_argument("--voice", "-v", action="store_true", help="Record and send voice")
     parser.add_argument("--daemon", "-d", action="store_true", help="Run as daemon (listen only)")
     parser.add_argument("--list", "-l", action="store_true", help="List contacts")
     parser.add_argument("--add-contact", help="Add a contact (hash:name)")
@@ -205,7 +170,7 @@ def main():
 
     app = ChatxzApp()
     my_hash = app.start()
-    print(f"chatxz v0.1.0")
+    print(f"chatxz v1.0.0")
     print(f"Your identity: {my_hash}")
     print("---")
 
@@ -242,11 +207,6 @@ def main():
         app.stop()
         return
 
-    if args.voice:
-        app.send_voice()
-        app.stop()
-        return
-
     if args.daemon:
         print(f"Listening for incoming connections as {my_hash}...")
         sys.stdout.flush()
@@ -262,8 +222,6 @@ def main():
     print("  /connect <hash>  - Connect to a peer")
     print("  /send <text>     - Send a message")
     print("  /file <path>     - Send a file")
-    print("  /voice           - Record and send voice")
-    print("  /play <path>     - Play a voice note")
     print("  /contacts        - List contacts")
     print("  /add <hash:name> - Add a contact")
     print("  /help            - Show this help")
@@ -279,7 +237,7 @@ def main():
             if cmd == "/quit":
                 break
             elif cmd == "/help":
-                print("Commands: /connect <hash>, /send <text>, /file <path>, /voice, /play <path>, /contacts, /add <hash:name>, /myid, /help, /quit")
+                print("Commands: /connect <hash>, /send <text>, /file <path>, /contacts, /add <hash:name>, /myid, /help, /quit")
             elif cmd == "/myid":
                 print(f"Your identity: {my_hash}")
             elif cmd.startswith("/connect "):
@@ -294,11 +252,6 @@ def main():
             elif cmd.startswith("/file "):
                 path = cmd[6:].strip()
                 app.send_file(path)
-            elif cmd == "/voice":
-                app.send_voice()
-            elif cmd.startswith("/play "):
-                path = cmd[6:].strip()
-                app.play_voice(path)
             elif cmd == "/contacts":
                 contacts = app.list_contacts()
                 if contacts:

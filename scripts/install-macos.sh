@@ -26,13 +26,11 @@ fi
 PYTHON="$(command -v python3)"
 echo "Using Python: $($PYTHON --version 2>&1) at $PYTHON"
 
-read -p "Install voice support (pyaudio)? [y/N]: " voice_opt
-EXTRA=""
-if [[ "$voice_opt" =~ ^[Yy]$ ]]; then
+read -p "Install Opus for Rust media engine? [Y/n]: " opus_opt
+if [[ ! "$opus_opt" =~ ^[Nn]$ ]]; then
     if command -v brew >/dev/null 2>&1; then
-        brew install opus portaudio || true
+        brew install opus || true
     fi
-    EXTRA="[voice]"
 fi
 
 echo "Installing chatxz..."

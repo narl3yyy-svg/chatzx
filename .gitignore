@@ -17,3 +17,4 @@ chatxz/core/native/
 *.swp
 *.swo
 .DS_Store
+target

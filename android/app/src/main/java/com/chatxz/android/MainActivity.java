@@ -10,16 +10,9 @@ import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
-import android.media.AudioAttributes;
-import android.media.AudioFocusRequest;
-import android.media.AudioManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
-import android.os.VibrationEffect;
-import android.os.PowerManager;
-import android.os.Vibrator;
-import android.os.VibratorManager;
 import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.webkit.ValueCallback;
@@ -63,12 +56,6 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 public class MainActivity extends AppCompatActivity {
-    private static MainActivity appInstance;
-
-    public static Context appContext() {
-        return appInstance != null ? appInstance.getApplicationContext() : null;
-    }
-
     private static final int PERM_REQUEST = 1001;
     private static final int REQ_AUDIO = 1002;
     private static final int REQ_FOLDER = 1003;
@@ -87,14 +74,10 @@ public class MainActivity extends AppCompatActivity {
     private static boolean serverStarted = false;
     private static boolean webViewLoaded = false;
     private static boolean debugMode = false;
-    private AudioManager audioManager;
-    private AudioFocusRequest audioFocusRequest;
-    private PowerManager.WakeLock proximityWakeLock;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        appInstance = this;
 
         Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
             try {
@@ -241,13 +224,6 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Override
-            public void onPermissionRequestCanceled(PermissionRequest request) {
-                if (pendingWebPermissionRequest == request) {
-                    pendingWebPermissionRequest = null;
-                }
-            }
-
-            @Override
             public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback,
                                              FileChooserParams params) {
                 if (filePathCallback != null) {
@@ -311,7 +287,7 @@ public class MainActivity extends AppCompatActivity {
         if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO)) {
             new AlertDialog.Builder(this)
                     .setTitle("Microphone")
-                    .setMessage("chatxz needs microphone access for voice notes and calls.")
+                    .setMessage("chatxz needs microphone access for voice and video calls.")
                     .setPositiveButton("Allow", (d, w) -> ActivityCompat.requestPermissions(
                             this, new String[]{Manifest.permission.RECORD_AUDIO}, REQ_AUDIO))
                     .setNegativeButton("Cancel", null)
@@ -319,116 +295,6 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, REQ_AUDIO);
-    }
-
-    public void setCallActive(boolean active) {
-        if (audioManager == null) {
-            audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
-        }
-        if (audioManager == null) {
-            return;
-        }
-        if (active) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                AudioAttributes attrs = new AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build();
-                audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
-                        .setAudioAttributes(attrs)
-                        .setAcceptsDelayedFocusGain(false)
-                        .build();
-                audioManager.requestAudioFocus(audioFocusRequest);
-            } else {
-                audioManager.requestAudioFocus(
-                        null,
-                        AudioManager.STREAM_VOICE_CALL,
-                        AudioManager.AUDIOFOCUS_GAIN_TRANSIENT);
-            }
-            acquireProximityWakeLock();
-        } else {
-            releaseProximityWakeLock();
-            stopCallVibrate();
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && audioFocusRequest != null) {
-                audioManager.abandonAudioFocusRequest(audioFocusRequest);
-                audioFocusRequest = null;
-            } else {
-                audioManager.abandonAudioFocus(null);
-            }
-        }
-    }
-
-    private void acquireProximityWakeLock() {
-        if (proximityWakeLock != null && proximityWakeLock.isHeld()) {
-            return;
-        }
-        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-        if (pm == null) {
-            return;
-        }
-        try {
-            proximityWakeLock = pm.newWakeLock(
-                    PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
-                    "chatxz:call_proximity");
-            proximityWakeLock.acquire();
-        } catch (Exception ignored) {
-            proximityWakeLock = null;
-        }
-    }
-
-    private void releaseProximityWakeLock() {
-        if (proximityWakeLock == null) {
-            return;
-        }
-        try {
-            if (proximityWakeLock.isHeld()) {
-                proximityWakeLock.release();
-            }
-        } catch (Exception ignored) {
-        }
-        proximityWakeLock = null;
-    }
-
-    public void vibrateIncomingCall() {
-        Vibrator vibrator = null;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            VibratorManager manager = (VibratorManager) getSystemService(VIBRATOR_MANAGER_SERVICE);
-            if (manager != null) {
-                vibrator = manager.getDefaultVibrator();
-            }
-        } else {
-            vibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
-        }
-        if (vibrator == null || !vibrator.hasVibrator()) {
-            return;
-        }
-        long[] pattern = new long[]{0, 500, 250, 500, 900};
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0));
-        } else {
-            vibrator.vibrate(pattern, 0);
-        }
-    }
-
-    public void stopCallVibrate() {
-        Vibrator vibrator = null;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            VibratorManager manager = (VibratorManager) getSystemService(VIBRATOR_MANAGER_SERVICE);
-            if (manager != null) {
-                vibrator = manager.getDefaultVibrator();
-            }
-        } else {
-            vibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
-        }
-        if (vibrator != null) {
-            vibrator.cancel();
-        }
-    }
-
-    public void evaluateJavascript(String script, android.webkit.ValueCallback<String> callback) {
-        if (webView != null) {
-            webView.evaluateJavascript(script, callback);
-        }
     }
 
     public void openAppSettings() {
@@ -540,7 +406,7 @@ public class MainActivity extends AppCompatActivity {
                     this, Manifest.permission.RECORD_AUDIO)) {
                 new AlertDialog.Builder(this)
                         .setTitle("Microphone blocked")
-                        .setMessage("Enable microphone for chatxz in Android Settings for voice notes and calls.")
+                        .setMessage("Enable microphone for chatxz in Android Settings for calls.")
                         .setPositiveButton("Open Settings", (d, w) -> openAppSettings())
                         .setNegativeButton("Cancel", null)
                         .show();
@@ -897,7 +763,6 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
-        releaseProximityWakeLock();
         closeWebSocketBeforeReload();
         if (usbPermissionReceiver != null) {
             try {

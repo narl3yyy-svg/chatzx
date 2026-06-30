@@ -1,8 +1,4 @@
 import os, json, time, base64, mimetypes, asyncio, socket, zipfile, shutil, subprocess, tempfile, signal, re, sys, threading, uuid
-try:
-    import fcntl
-except ImportError:
-    fcntl = None
 from urllib.parse import quote, unquote
 from pathlib import Path
 
@@ -15,17 +11,7 @@ if getattr(sys, "frozen", False):
 
 from chatxz.core.identity import IdentityManager
 from chatxz.core.messaging import HUB_GROUP_PEER, MessagingBackend, is_hub_peer_hash
-from chatxz.core.voice import VoiceRecorder, VoicePlayer
-from chatxz.core.audio import (
-    CallAudioManager,
-    OPUS_CODEC,
-    STATE_ACTIVE,
-    STATE_IDLE,
-    STATE_INCOMING,
-    STATE_OUTGOING,
-    call_audio_available,
-)
-from chatxz.core.audio.prefs import DEFAULT_AUDIO_SETTINGS, merge_audio_defaults, normalize_prefs
+from chatxz.web.call_bridge import CallBridge
 from chatxz.core.discovery import PeerDiscovery
 from chatxz.core.lan_beacon import LanBeacon, BEACON_PORT
 from chatxz.core.contacts import (
@@ -95,8 +81,6 @@ from chatxz.utils.debug_log import (
     list_debug_log_files,
 )
 from chatxz.utils.android_notify import show_message_notification
-from chatxz.utils.linux_signals import LinuxSignalfdShutdown
-from chatxz.utils.shutdown_guard import ShutdownGuard
 from chatxz.utils.platform import (
     effective_display_name,
     host_platform,
@@ -485,9 +469,7 @@ class ChatWebServer:
         self.identity_mgr = IdentityManager(self.config_dir)
         self.identity = None
         self.messaging = None
-        self.voice_recorder = None
-        self.call_audio = CallAudioManager()
-        self._android_call_audio = False
+        self.call_bridge = CallBridge(self)
 
         self.websockets = set()
         self.message_history = self._load_history()
@@ -506,16 +488,6 @@ class ChatWebServer:
         self._shutting_down = False
         self._failover_task = None
         self._background_tasks = []
-        self._shutdown_handler = None
-        self._shutdown_pipe_r = None
-        self._shutdown_pipe_w = None
-        self._shutdown_forced = False
-        self._shutdown_fast = False
-        self._post_call_audio = False
-        self._shutdown_force_timer = None
-        self._linux_signal_shutdown = None
-        self._shutdown_guard = None
-        self._call_stats_last_key = None
         self._progress_last = {}
         self._progress_throttle_ms = 250
         self._ui_state = {"viewing_peer": None, "hidden": False}
@@ -545,13 +517,6 @@ class ChatWebServer:
             task.cancel()
 
     def _teardown_network_stack(self):
-        try:
-            self._hang_up_call()
-        except Exception:
-            try:
-                self._end_call_audio()
-            except Exception:
-                pass
         if self.lan_beacon:
             try:
                 self.lan_beacon.stop()
@@ -1107,7 +1072,7 @@ class ChatWebServer:
             inferred = media_type_for_filename(enriched["file_name"])
             if inferred != "file":
                 enriched["type"] = inferred
-        if enriched.get("content") and enriched.get("type") in ("image", "video", "file", "voice"):
+        if enriched.get("content") and enriched.get("type") in ("image", "video", "file"):
             url = self._file_url(enriched["content"])
             if url:
                 enriched["file_url"] = url
@@ -1390,15 +1355,12 @@ class ChatWebServer:
             "brand_title": "",
             "setup_complete": False,
             "last_release_notes_seen": "",
-            **DEFAULT_AUDIO_SETTINGS,
-            "android_default_speakerphone": True,
         }
         try:
             with open(SETTINGS_FILE) as f:
                 s = json.load(f)
                 for key, val in defaults.items():
                     s.setdefault(key, val)
-                merge_audio_defaults(s)
                 if s.get("auto_announce") and not s.get("lan_announce_interval_s"):
                     s["lan_announce_interval_s"] = 30
                     s["serial_announce_interval_s"] = 30
@@ -1648,10 +1610,10 @@ class ChatWebServer:
             on_progress=self._on_transfer_progress,
             on_link_established=self._on_link_established,
             on_link_closed=self._on_link_closed,
+            on_media_packet=self._on_media_packet,
+            on_call_signaling=self._on_call_signaling,
             on_queue_sent=self._on_queue_sent,
             on_transfer_revoked=self._on_transfer_revoked,
-            on_call_event=self._on_call_event,
-            on_call_teardown=self._end_call_audio,
             display_name=effective_display_name(settings),
             auto_announce=auto_announce,
             receive_dir=received_dir,
@@ -1664,10 +1626,9 @@ class ChatWebServer:
             identity_serial=self.identity_mgr.identity_serial,
             dual_identity_mode=True,
         )
-        self._configure_call_audio()
         self.messaging.lan_announce_interval_s = lan_ann
         self.messaging.serial_announce_interval_s = ser_ann
-        self.voice_recorder = VoiceRecorder(self.config_dir)
+        self.call_bridge.attach()
         dest = self.messaging.start()
         sent_ids = [
             m.get("msg_id") for m in self.message_history
@@ -1780,6 +1741,12 @@ class ChatWebServer:
 
         self._live_scope_ip = self._discovery_scope_ip()
         return my_hash
+
+    def _on_media_packet(self, peer_hash, data):
+        self.call_bridge.on_media_packet(peer_hash, data)
+
+    def _on_call_signaling(self, peer_hash, content):
+        self.call_bridge.on_signaling(peer_hash, content)
 
     def _on_message(self, chat_msg, sender_hash):
         hub_group = bool(getattr(chat_msg, "hub_group", False))
@@ -2380,23 +2347,6 @@ class ChatWebServer:
             return
         peer = self._peer_dest_hash(peer_hash)
         still_linked = bool(self.messaging and peer and self.messaging._peer_link_active(peer))
-        if self.messaging and peer:
-            vc = self.messaging.voice_call
-            if vc.state in (STATE_ACTIVE, STATE_OUTGOING, STATE_INCOMING):
-                if self.messaging._call_peer_matches(peer):
-                    no_call_link = not self.messaging._call_link_for_peer(
-                        peer, vc.transport, prefer_healthy=False,
-                    )
-                    if not still_linked or no_call_link:
-                        threading.Thread(
-                            target=lambda: self._hang_up_call(
-                                vc.call_id, peer, vc.transport,
-                            ),
-                            name="call-link-hangup",
-                            daemon=True,
-                        ).start()
-        if still_linked:
-            return
         removed = 0
         if (
             peer
@@ -2541,262 +2491,6 @@ class ChatWebServer:
                 self._loop
             )
 
-    def _native_call_audio_ready(self):
-        if is_android():
-            return True
-        return call_audio_available()
-
-    def _call_audio_setup_hint(self):
-        if is_android() or call_audio_available():
-            return ""
-        from chatxz.core.audio.opus import opus_unavailable_reason
-        import sys as _sys
-
-        reason = (opus_unavailable_reason() or "libopus or pyaudio not installed").strip()
-        if _sys.platform == "darwin":
-            return (
-                f"Native voice off ({reason}). Re-run: ./run.sh web "
-                "(auto-installs via Homebrew). Or: brew install opus portaudio. "
-                "Browser mic: http://localhost:8742"
-            )
-        if _sys.platform == "win32":
-            return (
-                f"Native voice off ({reason}). Use http://127.0.0.1:8742 for browser mic "
-                "or install libopus (opus.dll on PATH)."
-            )
-        return f"Native voice off ({reason}). Browser Opus works at http://localhost:8742."
-
-    def _audio_device_prefs(self, settings=None):
-        settings = settings or self.load_settings()
-        merge_audio_defaults(settings)
-        return normalize_prefs(settings)
-
-    def _configure_call_audio(self):
-        self.call_audio.configure(
-            send_hook=self._call_audio_send_hook,
-            voice_state=lambda: (
-                self.messaging.voice_call.state if self.messaging else STATE_IDLE
-            ),
-            device_prefs=self._audio_device_prefs(),
-        )
-
-    def _call_audio_send_hook(self, b64, codec):
-        try:
-            if not self.messaging:
-                return False
-            return bool(self.messaging.call_send_audio(b64, codec))
-        except Exception:
-            return False
-
-    def _start_android_call_audio(self):
-        from chatxz.core.audio import android as android_call_audio
-
-        def send_audio(b64, codec):
-            try:
-                return bool(self.messaging.call_send_audio(b64, codec))
-            except Exception:
-                return False
-
-        def play_audio(seq, b64):
-            try:
-                from java import jclass
-                engine = jclass("com.chatxz.android.CallAudioEngine").getInstance()
-                engine.playOpus(int(seq), b64)
-            except Exception as e:
-                print(f"[call-audio] Android playback failed: {e}")
-
-        android_call_audio.register_handlers(send_audio, play_audio)
-        try:
-            from java import jclass
-            ok = bool(jclass("com.chatxz.android.CallAudioEngine").getInstance().start())
-        except Exception as e:
-            print(f"[call-audio] Android engine start failed: {e}")
-            ok = False
-        if ok:
-            self._android_call_audio = True
-            print("[call-audio] Android native Opus engine started")
-            for seq, data, codec in self.call_audio.drain_pending():
-                try:
-                    android_call_audio.play_incoming_opus(seq, data)
-                except Exception:
-                    pass
-        else:
-            android_call_audio.clear_handlers()
-            print("[call-audio] Android native engine unavailable — browser Opus fallback")
-
-    def _stop_android_call_audio(self):
-        from chatxz.core.audio import android as android_call_audio
-        try:
-            from java import jclass
-            jclass("com.chatxz.android.CallAudioEngine").getInstance().stop()
-        except Exception:
-            pass
-        android_call_audio.clear_handlers()
-        self._android_call_audio = False
-
-    def _native_playback_active(self):
-        if getattr(self, "_android_call_audio", False):
-            return True
-        engine = self.call_audio.engine
-        if not engine or not engine.is_running():
-            return False
-        recv = int(getattr(engine, "frames_recv", 0) or 0)
-        played = int(getattr(engine, "playback_frames", 0) or 0)
-        return recv > 0 and played > 3
-
-    def _browser_needs_call_audio_ws(self) -> bool:
-        """Browser Opus fallback only — native duplex must not flood the event loop."""
-        if getattr(self, "_android_call_audio", False):
-            return False
-        engine = self.call_audio.engine
-        if not engine or not engine.is_running():
-            return True
-        if getattr(engine, "send_enabled", False):
-            return False
-        if self._native_playback_active():
-            return False
-        return True
-
-    def _schedule_call_audio_stop(self) -> None:
-        threading.Thread(
-            target=self._end_call_audio,
-            name="call-audio-stop",
-            daemon=True,
-        ).start()
-
-    def _schedule_call_audio_start(self, call_id=None) -> None:
-        threading.Thread(
-            target=lambda: self._begin_call_audio(call_id),
-            name="call-audio-start",
-            daemon=True,
-        ).start()
-
-    def _schedule_call_ws(self, event: str, peer_hash, payload: dict) -> None:
-        if not (self.websockets and self._loop):
-            return
-        data = {"peer": peer_hash or "", **(payload or {})}
-        if event == "audio" and self._native_playback_active():
-            data["native_playback"] = True
-        asyncio.run_coroutine_threadsafe(
-            self._broadcast({"type": f"call_{event}", "data": data}),
-            self._loop,
-        )
-        if event in ("accepted", "ended"):
-            asyncio.run_coroutine_threadsafe(
-                self._broadcast_call_stats(force=(event == "accepted")),
-                self._loop,
-            )
-
-    def _android_call_stats(self):
-        stats = {
-            "engine": "native-opus",
-            "native_android": True,
-            "running": True,
-            "codec": OPUS_CODEC,
-        }
-        try:
-            from java import jclass
-            engine = jclass("com.chatxz.android.CallAudioEngine").getInstance()
-            stats["frames_sent"] = int(engine.getFramesEncoded())
-            stats["frames_recv"] = int(engine.getFramesDecoded())
-        except Exception:
-            pass
-        return stats
-
-    def _begin_call_audio(self, call_id=None):
-        """Single entry for native audio — one engine per call session."""
-        if is_android():
-            if not getattr(self, "_android_call_audio", False):
-                self._start_android_call_audio()
-            return
-        cid = (call_id or "").strip()
-        if not cid and self.messaging:
-            cid = (self.messaging.voice_call.call_id or "").strip()
-        self.call_audio.begin_session(cid or None)
-        if not call_audio_available():
-            print("[call-audio] Native unavailable — install libopus + pyaudio (./run.sh install)")
-            return
-        prefs = self._audio_device_prefs()
-        self.call_audio.set_device_prefs(prefs)
-        self.call_audio.start(device_prefs=prefs)
-
-    def _end_call_audio(self, *, fast: bool = False):
-        """Synchronous stop — must halt console capture/playback immediately."""
-        if getattr(self, "_android_call_audio", False):
-            self._stop_android_call_audio()
-        if fast:
-            self.call_audio.abandon()
-        else:
-            self.call_audio.end_session()
-
-    def _hang_up_call(self, call_id=None, peer=None, via=None):
-        """Stop capture/playback first, then signal CALL_END to the peer."""
-        vc = self.messaging.voice_call if self.messaging else None
-        saved_peer = (peer or (vc.peer_hash if vc else "") or "").strip()
-        saved_cid = (call_id or (vc.call_id if vc else "") or "").strip()
-        saved_via = (
-            via or (vc.transport if vc else "") or "lan"
-        ).strip().lower() or "lan"
-        self._end_call_audio()
-        if not self.messaging:
-            return True
-        ok = self.messaging.call_end(
-            call_id=saved_cid or None,
-            peer_hash=saved_peer or None,
-            transport=saved_via,
-        )
-        if (
-            not ok
-            and saved_peer
-            and self.messaging.voice_call.state != STATE_IDLE
-        ):
-            self.messaging.voice_call.reset()
-            self.messaging._send_call_end_packets(
-                saved_peer, saved_cid, saved_via,
-            )
-            ok = True
-        return ok
-
-    def _deliver_call_audio_frame(self, seq, data, codec):
-        codec = (codec or OPUS_CODEC).strip()
-        if getattr(self, "_android_call_audio", False):
-            from chatxz.core.audio import android as android_call_audio
-            android_call_audio.play_incoming_opus(seq, data)
-            return
-        self.call_audio.deliver_frame(seq, data, codec)
-
-    def _on_call_event(self, event, peer_hash, payload=None):
-        payload = payload or {}
-        if event == "accepted":
-            self._ws_call_audio_sent = 0
-            self._call_stats_last_key = None
-            engine = self.call_audio.engine
-            if not getattr(self, "_android_call_audio", False):
-                if not (engine and engine.is_running()):
-                    self._schedule_call_audio_start(payload.get("call_id"))
-            self._schedule_call_ws(event, peer_hash, payload)
-            return
-        if event in ("ended", "rejected"):
-            self._ws_call_audio_sent = 0
-            self._call_stats_last_key = None
-            self._post_call_audio = True
-            self._shutdown_fast = False
-            self._end_call_audio()
-            self._schedule_call_ws(event, peer_hash, payload)
-            return
-        if event == "audio":
-            seq = int(payload.get("seq") or 0)
-            data = payload.get("data") or ""
-            codec = (payload.get("codec") or OPUS_CODEC).strip()
-            if "opus" not in codec.lower():
-                return
-            self._deliver_call_audio_frame(seq, data, codec)
-            if not self._browser_needs_call_audio_ws():
-                return
-            self._schedule_call_ws(event, peer_hash, payload)
-            return
-        self._schedule_call_ws(event, peer_hash, payload)
-
     def _on_transfer_progress(self, data):
         status = data.get("status", "active")
         transfer_id = data.get("transfer_id")
@@ -2936,10 +2630,6 @@ class ChatWebServer:
             "serial_active": serial_active,
             "serial_configured": serial_configured,
             "serial_in_rns": serial_in_rns,
-            "native_call_audio": self._native_call_audio_ready(),
-            "browser_call_audio": not self._native_call_audio_ready(),
-            "call_audio_hint": self._call_audio_setup_hint(),
-            "call_codec": OPUS_CODEC,
         })
 
     async def handle_add_contact(self, request):
@@ -4026,7 +3716,6 @@ class ChatWebServer:
             "ok": True,
             "debounced": debounced,
             "transport": transport,
-            "peers": peers,
             "broadcast": lan_broadcast() if do_lan else None,
             "serial_port": serial_port if do_serial else None,
             "serial_announced": bool(serial_sent),
@@ -4066,7 +3755,6 @@ class ChatWebServer:
             "beacon_session_total": result.get("beacon_session_total", 0),
             "lan_ip": result.get("lan_ip"),
             "discovered_count": result.get("discovered_count", 0),
-            "peers": result.get("peers") or [],
         })
 
     async def handle_disconnect(self, request):
@@ -4124,18 +3812,7 @@ class ChatWebServer:
 
     async def handle_settings_get(self, request):
         settings = self._apply_hub_settings(self.load_settings())
-        merge_audio_defaults(settings)
         return web.json_response(self._settings_api_payload(settings))
-
-    async def handle_audio_devices_get(self, request):
-        try:
-            from chatxz.core.audio.devices import enumerate_audio_devices
-
-            data = await asyncio.to_thread(enumerate_audio_devices)
-            data["saved"] = self._audio_device_prefs()
-            return web.json_response(data)
-        except Exception as exc:
-            return web.json_response({"error": str(exc)}, status=500)
 
     def _abs_path_hint(self):
         if sys.platform == "win32":
@@ -4396,23 +4073,6 @@ class ChatWebServer:
                 settings["last_release_notes_seen"] = (
                     str(data.get("last_release_notes_seen") or "").strip()
                 )
-            for key in DEFAULT_AUDIO_SETTINGS:
-                if key in data:
-                    val = data.get(key)
-                    if key in ("audio_input_device", "audio_output_device"):
-                        try:
-                            settings[key] = int(val)
-                        except (TypeError, ValueError):
-                            settings[key] = -1
-                    else:
-                        settings[key] = str(val or "").strip()
-            if "android_default_speakerphone" in data:
-                settings["android_default_speakerphone"] = bool(
-                    data.get("android_default_speakerphone")
-                )
-            merge_audio_defaults(settings)
-            if any(k in data for k in DEFAULT_AUDIO_SETTINGS):
-                self.call_audio.set_device_prefs(self._audio_device_prefs(settings))
             hub_changed = any(
                 k in data for k in ("hub_role", "hub_host", "hub_port")
             )
@@ -5067,204 +4727,13 @@ class ChatWebServer:
         return web.json_response({"status": "ok" if cancelled else "noop"})
 
     async def handle_call(self, request):
-        if not self.messaging:
-            return web.json_response({"error": "not ready"}, status=400)
-        try:
-            data = await request.json()
-        except Exception:
-            return web.json_response({"error": "invalid json"}, status=400)
-        action = (data.get("action") or "").strip().lower()
-        peer = (data.get("peer") or "").strip()
-        via = (data.get("via") or data.get("transport") or "").strip().lower()
-        call_id = (data.get("call_id") or "").strip() or None
-        if via not in ("lan", "serial"):
-            via = None
-        if peer and via:
-            transport_hash = self._contact_hash_for_transport(peer, via)
-            if transport_hash:
-                peer = transport_hash
-        peer = self._peer_dest_hash(peer) if peer else ""
+        action = request.match_info.get("action", "status")
+        result = await self.call_bridge.handle_api(request, action)
+        status = 400 if result.get("error") else 200
+        return web.json_response(result, status=status)
 
-        if action == "status":
-            st = self.messaging.call_status()
-            audio_stats = self.call_audio.stats()
-            if audio_stats:
-                st.update(audio_stats)
-            if getattr(self, "_android_call_audio", False):
-                st.update(self._android_call_stats())
-            st["native_call_audio"] = self._native_call_audio_ready()
-            st["browser_call_audio"] = not (
-                self.call_audio.engine
-                or getattr(self, "_android_call_audio", False)
-            )
-            if st.get("browser_call_audio"):
-                st["call_audio_hint"] = self._call_audio_setup_hint()
-            return web.json_response(st)
-
-        if action == "invite":
-            if not peer:
-                return web.json_response({"error": "peer required"}, status=400)
-            transport = via or "lan"
-            linked = await asyncio.to_thread(
-                self.messaging._peer_link_active, peer,
-            )
-            if not linked:
-                return web.json_response({"error": "not linked"}, status=400)
-            cid = await asyncio.to_thread(self.messaging.call_invite, peer, transport)
-            if not cid:
-                return web.json_response({"error": "invite failed"}, status=400)
-            return web.json_response({
-                "status": "ok",
-                "call_id": cid,
-                **self.messaging.call_status(),
-            })
-
-        if action == "accept":
-            ok = await asyncio.to_thread(self.messaging.call_accept, call_id)
-            if not ok:
-                return web.json_response({"error": "accept failed"}, status=400)
-            st = self.messaging.call_status()
-            audio_stats = self.call_audio.stats()
-            if audio_stats:
-                st.update(audio_stats)
-            st["native_call_audio"] = self._native_call_audio_ready()
-            return web.json_response({"status": "ok", **st})
-
-        if action == "reject":
-            reason = (data.get("reason") or "").strip()
-            ok = await asyncio.to_thread(self.messaging.call_reject, call_id, reason)
-            if not ok:
-                return web.json_response({"error": "reject failed"}, status=400)
-            return web.json_response({"status": "ok"})
-
-        if action == "end":
-            ok = await asyncio.to_thread(
-                self._hang_up_call, call_id, peer or None, via or None,
-            )
-            if not ok:
-                return web.json_response({"error": "end failed"}, status=400)
-            return web.json_response({"status": "ok"})
-
-        if action == "audio":
-            audio_b64 = data.get("audio") or data.get("data") or ""
-            if not audio_b64:
-                return web.json_response({"error": "audio required"}, status=400)
-            codec = (data.get("codec") or "audio/webm").strip()
-            ok = await asyncio.to_thread(
-                self.messaging.call_send_audio, audio_b64, codec, call_id,
-            )
-            if not ok:
-                return web.json_response({"error": "audio send failed"}, status=400)
-            return web.json_response({"status": "ok"})
-
-        return web.json_response({"error": "unknown action"}, status=400)
-
-    async def handle_voice_upload(self, request):
-        if not self.messaging:
-            return web.json_response({"error": "not ready"}, status=400)
-        try:
-            data = await request.json()
-            peer_hint = (data.get("peer") or "").strip()
-            if peer_hint:
-                self._ui_state["viewing_peer"] = self._peer_dest_hash(peer_hint)
-            audio_b64 = data.get("audio", "")
-            if not audio_b64:
-                return web.json_response({"error": "no audio data"}, status=400)
-            audio_bytes = base64.b64decode(audio_b64)
-            sent_dir = os.path.join(self.config_dir, "sent")
-            os.makedirs(sent_dir, exist_ok=True)
-            voice_path = os.path.join(sent_dir, f"voice_{int(time.time())}.webm")
-            with open(voice_path, "wb") as f:
-                f.write(audio_bytes)
-
-            queue_target = self._queue_target_hash()
-            linked_to_target = bool(
-                queue_target and self.messaging._peer_link_active(queue_target)
-            )
-            if not linked_to_target or self.messaging._has_active_transfer():
-                voice_name = os.path.basename(voice_path)
-                transfer_id = str(uuid.uuid4())[:12]
-                self.messaging.enqueue(
-                    "voice", voice_path, target_hash=queue_target,
-                    file_name=voice_name,
-                    file_size=len(audio_bytes), file_path=voice_path,
-                    msg_id=transfer_id,
-                )
-                my_hash = self._my_sender_hash()
-                chat_peer = self._peer_dest_hash(queue_target) or self._session_chat_peer()
-                entry = self._enrich_message({
-                    "type": "voice",
-                    "content": voice_path,
-                    "sender": my_hash,
-                    "peer": chat_peer,
-                    "chat_peer": chat_peer,
-                    "timestamp": time.time(),
-                    "file_name": voice_name,
-                    "file_size": len(audio_bytes),
-                    "msg_id": transfer_id,
-                    "status": "queued",
-                }, outgoing=True)
-                self.message_history.append(entry)
-                self._save_history()
-                await self._broadcast({"type": "message", "data": entry})
-                return web.json_response({
-                    "status": "queued",
-                    "msg_id": transfer_id,
-                    "reason": None if not linked_to_target else "transfer in progress",
-                })
-
-            my_hash = self._my_sender_hash()
-            ts = time.time()
-            chat_peer = self._peer_dest_hash(queue_target) or self._session_chat_peer()
-            voice_name = os.path.basename(voice_path)
-            transfer_id = str(uuid.uuid4())[:12]
-            entry = self._enrich_message({
-                "type": "voice",
-                "content": voice_path,
-                "sender": my_hash,
-                "peer": chat_peer,
-                "chat_peer": chat_peer,
-                "timestamp": ts,
-                "file_name": voice_name,
-                "file_size": len(audio_bytes),
-                "msg_id": transfer_id,
-                "status": "sent",
-            }, outgoing=True)
-            self.message_history.append(entry)
-            self._save_history()
-            await self._broadcast({"type": "message", "data": entry})
-
-            result = self.messaging.send_file(
-                voice_path, "voice",
-                progress_callback=self._make_progress_callback(voice_name, len(audio_bytes), transfer_id),
-                transfer_id=transfer_id,
-                target_peer=queue_target,
-            )
-            if result:
-                return web.json_response({"status": "ok"})
-            return web.json_response({"error": "send failed"}, status=400)
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=400)
-
-    async def handle_play_voice(self, request):
-        try:
-            data = await request.json()
-            path = data.get("path", "")
-            received_dir = self._received_dir()
-            sent_dir = self._sent_dir()
-            allowed = None
-            if path:
-                norm = os.path.normpath(path)
-                if norm.startswith(received_dir + os.sep) or norm == received_dir:
-                    allowed = norm
-                elif norm.startswith(sent_dir + os.sep) or norm == sent_dir:
-                    allowed = norm
-            if allowed and os.path.isfile(allowed):
-                VoicePlayer.play(allowed)
-                return web.json_response({"status": "ok"})
-            return web.json_response({"error": "file not found"}, status=404)
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=400)
+    async def handle_media_websocket(self, request):
+        return await self.call_bridge.handle_media_ws(request)
 
     async def handle_serve_file(self, request):
         filepath = unquote(request.match_info["filepath"])
@@ -5292,10 +4761,7 @@ class ChatWebServer:
         if not ct:
             ext = os.path.splitext(full_path)[1].lower().lstrip(".")
             basename = os.path.basename(full_path)
-            if ext == "webm" and basename.startswith("voice_"):
-                ct = "audio/webm"
-            else:
-                ct = {
+            ct = {
                     "webm": "video/webm",
                     "mp4": "video/mp4",
                     "m4v": "video/mp4",
@@ -5502,18 +4968,6 @@ class ChatWebServer:
         finally:
             self.websockets.discard(ws)
             print(f"[ws] Client disconnected ({self._ws_client_count()} total)")
-            if (
-                not self._ws_client_count()
-                and self.messaging
-                and self.messaging.voice_call.state != STATE_IDLE
-            ):
-                try:
-                    await asyncio.to_thread(self._hang_up_call)
-                except Exception:
-                    try:
-                        self._end_call_audio()
-                    except Exception:
-                        pass
         return ws
 
     async def _history_maintenance_loop(self):
@@ -5611,33 +5065,8 @@ class ChatWebServer:
                 last_snapshot = snapshot
                 await self._broadcast({"type": "peers", "data": peers})
 
-    async def _refresh_discovery(self, *, force=False):
-        """Re-probe LAN, evict stale rows, and return the current scoped peer list."""
-        removed = 0
-        if self.discovery:
-            if force:
-                removed = self.discovery.refresh_stale_entries()
-            self.discovery.purge_misclassified_serial()
-            self.discovery.purge_ipless_non_serial()
-        settings = self.load_settings()
-        if self.lan_beacon and lan_discovery_configured(settings.get("rns_interfaces")):
-            try:
-                await asyncio.to_thread(self.lan_beacon.send, 1, is_android())
-            except Exception:
-                pass
-        await asyncio.to_thread(self._probe_discovered_peers)
-        peers = self._scoped_peers()
-        if removed and self.websockets and self._loop:
-            await self._broadcast_peers(authoritative=True)
-        return peers, removed
-
     async def handle_discover(self, request):
-        force = request.rel_url.query.get("refresh", "").lower() in ("1", "true", "yes")
-        authoritative = request.rel_url.query.get("authoritative", "").lower() in ("1", "true", "yes")
-        if force:
-            peers, _ = await self._refresh_discovery(force=True)
-        else:
-            peers = self._scoped_peers()
+        peers = self._scoped_peers()
         if self.active_peer and not any(p.get("hash", "").replace(":", "") == self.active_peer for p in peers):
             peers.append({
                 "hash": self.active_peer,
@@ -5645,27 +5074,7 @@ class ChatWebServer:
                 "app": "chatxz",
                 "connected": True,
             })
-        payload = {"peers": peers}
-        if authoritative or force:
-            payload["authoritative"] = True
-        return web.json_response(payload)
-
-    async def handle_discover_refresh(self, request):
-        peers, removed = await self._refresh_discovery(force=True)
-        if self.active_peer and not any(p.get("hash", "").replace(":", "") == self.active_peer for p in peers):
-            peers.append({
-                "hash": self.active_peer,
-                "name": self.active_peer[:8],
-                "app": "chatxz",
-                "connected": True,
-            })
-        return web.json_response({
-            "status": "ok",
-            "peers": peers,
-            "authoritative": True,
-            "removed": removed,
-            "discovered_count": len(peers),
-        })
+        return web.json_response({"peers": peers})
 
     async def _handle_ws_message(self, ws, data):
         msg_type = data.get("type")
@@ -5869,245 +5278,11 @@ class ChatWebServer:
                 link = link or self.messaging.active_link
                 if link:
                     self.messaging.send_read_receipt(link, msg_id)
-        elif msg_type == "call_audio":
-            if self.messaging:
-                audio_b64 = data.get("audio") or data.get("data") or ""
-                if not audio_b64:
-                    return
-                if getattr(self, "_android_call_audio", False):
-                    return
-                engine = self.call_audio.engine
-                if engine and engine.is_running() and getattr(engine, "send_enabled", False):
-                    return
-                codec = (data.get("codec") or OPUS_CODEC).strip()
-                if "opus" not in codec.lower():
-                    return
-                call_id = (data.get("call_id") or "").strip() or None
-                sent = int(getattr(self, "_ws_call_audio_sent", 0) or 0) + 1
-                self._ws_call_audio_sent = sent
-                if sent <= 2 or sent % 50 == 0:
-                    mode = "fallback" if engine else "browser"
-                    print(f"[call] Opus out #{sent} ({len(audio_b64)} b64, {mode})")
-                await asyncio.to_thread(
-                    self.messaging.call_send_audio,
-                    audio_b64,
-                    codec,
-                    call_id,
-                )
-
-    def _close_shutdown_pipe(self):
-        for fd in (self._shutdown_pipe_r, self._shutdown_pipe_w):
-            if fd is None:
-                continue
-            try:
-                os.close(fd)
-            except Exception:
-                pass
-        self._shutdown_pipe_r = None
-        self._shutdown_pipe_w = None
-
-    def _cancel_shutdown_force_timer(self):
-        timer = self._shutdown_force_timer
-        self._shutdown_force_timer = None
-        if timer:
-            try:
-                timer.cancel()
-            except Exception:
-                pass
-
-    def _schedule_forced_exit(self, signum, delay=0.08):
-        self._cancel_shutdown_force_timer()
-
-        def _force():
-            print("[shutdown] Forcing exit", flush=True)
-            os._exit(130 if signum == signal.SIGINT else 0)
-
-        self._shutdown_force_timer = threading.Timer(delay, _force)
-        self._shutdown_force_timer.daemon = True
-        self._shutdown_force_timer.start()
-
-    def _shutdown_minimal(self):
-        """Non-blocking cleanup — never call PortAudio/RNS teardown here."""
-        try:
-            self._end_call_audio(fast=True)
-        except Exception:
-            pass
-        if self.messaging:
-            self.messaging.shutdown_requested = True
-            try:
-                if self.messaging.voice_call.state != STATE_IDLE:
-                    self.messaging.call_end()
-            except Exception:
-                pass
-
-    def _begin_shutdown(self, signum=signal.SIGINT):
-        """Signal-safe: schedule os._exit; do not block on RNS/PortAudio."""
-        if self._shutdown_forced:
-            os._exit(130 if signum == signal.SIGINT else 0)
-        if self._shutting_down:
-            self._shutdown_forced = True
-            os._exit(130 if signum == signal.SIGINT else 0)
-        self._shutting_down = True
-        self._shutdown_fast = True
-        print("\n[shutdown] Stopping...", flush=True)
-        self._schedule_forced_exit(signum, delay=0.08)
-        threading.Thread(
-            target=self._shutdown_minimal,
-            name="chatxz-shutdown-min",
-            daemon=True,
-        ).start()
-        loop = self._loop
-        if loop and not loop.is_closed() and loop.is_running():
-            try:
-                loop.call_soon_threadsafe(loop.stop)
-            except Exception:
-                pass
-
-    def _handle_os_signal(self, signum=signal.SIGINT):
-        """May run on signalfd/sigwait/console-handler thread."""
-        self._begin_shutdown(signum)
-
-    def _request_shutdown(self, signum=signal.SIGINT):
-        """Run on the event-loop thread (woken by self-pipe)."""
-        self._begin_shutdown(signum)
-
-    def _start_linux_signalfd(self):
-        if sys.platform not in ("linux", "linux2"):
-            return
-        if self._linux_signal_shutdown is None:
-            self._linux_signal_shutdown = LinuxSignalfdShutdown(self._handle_os_signal)
-        self._linux_signal_shutdown.start()
-
-    def _install_shutdown_signals(self):
-        """Self-pipe + signalfd — SIGINT during PortAudio calls (non-main-thread delivery)."""
-        handler = self._shutdown_handler
-        if sys.platform == "win32":
-            if handler:
-                try:
-                    signal.signal(signal.SIGINT, handler)
-                    signal.signal(signal.SIGTERM, handler)
-                except (ValueError, OSError, RuntimeError):
-                    pass
-            if self._shutdown_guard:
-                self._shutdown_guard.refresh()
-            return
-        self._start_linux_signalfd()
-        loop = self._loop
-        if not loop or loop.is_closed():
-            return
-
-        handler = self._shutdown_handler
-        if not handler:
-            return
-
-        if self._shutdown_pipe_r is None:
-            try:
-                r, w = os.pipe()
-                for fd in (r, w):
-                    if fcntl is not None:
-                        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-                        fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-                self._shutdown_pipe_r = r
-                self._shutdown_pipe_w = w
-                try:
-                    signal.set_wakeup_fd(w)
-                except (ValueError, OSError, RuntimeError):
-                    pass
-
-                def _on_shutdown_pipe():
-                    try:
-                        while True:
-                            chunk = os.read(r, 64)
-                            if not chunk:
-                                break
-                    except BlockingIOError:
-                        pass
-                    except Exception:
-                        pass
-                    self._request_shutdown(signal.SIGINT)
-
-                loop.add_reader(r, _on_shutdown_pipe)
-            except Exception:
-                self._close_shutdown_pipe()
-
-        def _sig_notify(signum, frame=None):
-            if self._shutdown_forced:
-                os._exit(130 if signum == signal.SIGINT else 0)
-            w = self._shutdown_pipe_w
-            if w is not None:
-                try:
-                    os.write(w, b"S")
-                    return
-                except Exception:
-                    pass
-            try:
-                self._begin_shutdown(signum)
-            except Exception:
-                os._exit(130 if signum == signal.SIGINT else 0)
-
-        try:
-            signal.signal(signal.SIGINT, _sig_notify)
-            signal.signal(signal.SIGTERM, _sig_notify)
-        except (ValueError, OSError, RuntimeError):
-            pass
-        if self._shutdown_guard:
-            self._shutdown_guard.refresh()
-
-    def _call_stats_snapshot(self):
-        if not self.messaging:
-            return None
-        st = self.messaging.call_status()
-        audio_stats = self.call_audio.stats()
-        if audio_stats:
-            st.update(audio_stats)
-        if getattr(self, "_android_call_audio", False):
-            st.update(self._android_call_stats())
-        return st
-
-    async def _broadcast_call_stats(self, force=False):
-        if not self.messaging:
-            return
-        state = self.messaging.voice_call.state
-        if state not in (STATE_ACTIVE, STATE_OUTGOING):
-            self._call_stats_last_key = None
-            return
-        st = self._call_stats_snapshot()
-        if not st:
-            return
-        key = (
-            st.get("audio_out"),
-            st.get("frames_sent"),
-            st.get("audio_in"),
-            st.get("frames_recv"),
-            st.get("jitter_ms"),
-            st.get("rtt_ms"),
-            state,
-        )
-        if not force and key == self._call_stats_last_key:
-            return
-        self._call_stats_last_key = key
-        if self.websockets and self._loop:
-            await self._broadcast({"type": "call_stats", "data": st})
-
-    async def _call_stats_broadcaster(self):
-        while not self._shutting_down:
-            try:
-                await asyncio.sleep(1.0)
-            except asyncio.CancelledError:
-                break
-            try:
-                await self._broadcast_call_stats()
-            except Exception:
-                pass
-            if self._shutdown_guard:
-                self._shutdown_guard.refresh()
-            self._install_shutdown_signals()
 
     async def _init_rns_background(self):
         try:
             my_hash = await asyncio.to_thread(self.start_rns)
             print(f"[startup] RNS ready, identity: {my_hash}")
-            self._install_shutdown_signals()
             await self._broadcast({"type": "rns_ready", "data": {"hash": my_hash}})
         except (SystemExit, RuntimeError) as e:
             self.rns_init_error = str(e) or "RNS startup failed"
@@ -6132,7 +5307,6 @@ class ChatWebServer:
             self._history_maintenance_loop(),
             self._serial_watchdog_loop(),
             self._queue_retry_loop(),
-            self._call_stats_broadcaster(),
         ):
             task = asyncio.create_task(coro)
             self._background_tasks.append(task)
@@ -6191,19 +5365,17 @@ class ChatWebServer:
         app.router.add_post("/api/disconnect", self.handle_disconnect)
         app.router.add_post("/api/file", self.handle_file_upload)
         app.router.add_post("/api/folder", self.handle_folder_upload)
-        app.router.add_post("/api/call", self.handle_call)
-        app.router.add_post("/api/voice", self.handle_voice_upload)
-        app.router.add_post("/api/play", self.handle_play_voice)
+        app.router.add_post("/api/call/{action}", self.handle_call)
+        app.router.add_get("/api/call/{action}", self.handle_call)
+        app.router.add_get("/ws/media", self.handle_media_websocket)
         app.router.add_get("/api/history", self.handle_history)
         app.router.add_post("/api/history/clear", self.handle_history_clear)
         app.router.add_delete("/api/history/{msg_id}", self.handle_delete_message)
         app.router.add_get("/api/discover", self.handle_discover)
-        app.router.add_post("/api/discover/refresh", self.handle_discover_refresh)
         app.router.add_get("/api/debug", self.handle_debug)
         app.router.add_post("/api/debug/export", self.handle_debug_export)
         app.router.add_get("/api/settings", self.handle_settings_get)
         app.router.add_post("/api/settings", self.handle_settings_post)
-        app.router.add_get("/api/audio-devices", self.handle_audio_devices_get)
         app.router.add_get("/api/browse-dir", self.handle_browse_dir)
         app.router.add_post("/api/browse-dir", self.handle_browse_dir)
         app.router.add_post("/api/transfer/cancel", self.handle_transfer_cancel)
@@ -6332,15 +5504,29 @@ class ChatWebServer:
 
         def _stop_loop(signum=None, frame=None):
             nonlocal stopping
+            if stopping:
+                try:
+                    self._teardown_network_stack()
+                except Exception:
+                    pass
+                os._exit(130 if signum == signal.SIGINT else 0)
             stopping = True
-            self._begin_shutdown(signum or signal.SIGINT)
-
-        self._shutdown_handler = _stop_loop
-        self._shutdown_guard = ShutdownGuard(self._begin_shutdown)
-        self._shutdown_guard.arm()
-        self._install_shutdown_signals()
+            self._shutting_down = True
+            if self.messaging:
+                self.messaging.shutdown_requested = True
+            try:
+                self._teardown_network_stack()
+            except Exception:
+                pass
+            loop.call_soon_threadsafe(loop.stop)
 
         if sys.platform != "win32":
+            try:
+                loop.add_signal_handler(signal.SIGINT, lambda: _stop_loop(signal.SIGINT))
+                loop.add_signal_handler(signal.SIGTERM, lambda: _stop_loop(signal.SIGTERM))
+            except (NotImplementedError, RuntimeError, ValueError):
+                signal.signal(signal.SIGINT, _stop_loop)
+                signal.signal(signal.SIGTERM, _stop_loop)
             try:
                 signal.signal(signal.SIGTSTP, lambda s, f: print(
                     "\n[shutdown] Ctrl+Z suspends the server — use Ctrl+C to stop",
@@ -6361,24 +5547,18 @@ class ChatWebServer:
             if not stopping:
                 stopping = True
             self._shutting_down = True
-            if self._linux_signal_shutdown:
-                try:
-                    self._linux_signal_shutdown.stop()
-                except Exception:
-                    pass
-            if self._shutdown_pipe_r is not None and loop and not loop.is_closed():
-                try:
-                    loop.remove_reader(self._shutdown_pipe_r)
-                except Exception:
-                    pass
-            self._close_shutdown_pipe()
-            # Never block on aiohttp/RNS/PortAudio teardown — os._exit releases ports.
             try:
-                loop.close()
+                loop.run_until_complete(runner.cleanup())
+            except Exception:
+                try:
+                    self._teardown_network_stack()
+                except Exception:
+                    pass
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
             except Exception:
                 pass
-            code = 130 if (stopping or self._shutdown_fast) else 0
-            os._exit(code)
+            loop.close()
 
 
 def main():

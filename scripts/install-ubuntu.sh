@@ -14,10 +14,10 @@ echo "Installing system dependencies..."
 sudo apt update
 sudo apt install -y python3 python3-pip python3-setuptools python3-dev build-essential
 
-# Optional: voice support
-read -p "Install voice support (libopus + pyaudio)? [y/N]: " voice_opt
-if [[ "$voice_opt" =~ ^[Yy]$ ]]; then
-    sudo apt install -y libopus0 portaudio19-dev python3-pyaudio
+# Optional: Opus for Rust media engine
+read -p "Install Opus for Rust media engine? [Y/n]: " opus_opt
+if [[ ! "$opus_opt" =~ ^[Nn]$ ]]; then
+    sudo apt install -y libopus-dev
 fi
 
 # Optional: image display in terminal
@@ -28,11 +28,7 @@ fi
 
 # Install chatxz
 echo "Installing chatxz..."
-if [[ "$voice_opt" =~ ^[Yy]$ ]]; then
-    pip3 install --user ".[voice]"
-else
-    pip3 install --user .
-fi
+pip3 install --user .
 
 read -p "Install system-wide (requires sudo) instead of user? [y/N]: " sys_opt
 if [[ "$sys_opt" =~ ^[Yy]$ ]]; then

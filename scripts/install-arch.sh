@@ -13,9 +13,9 @@ fi
 echo "Installing system dependencies..."
 sudo pacman -S --needed --noconfirm python python-pip python-setuptools base-devel
 
-read -p "Install voice support (libopus + pyaudio)? [y/N]: " voice_opt
-if [[ "$voice_opt" =~ ^[Yy]$ ]]; then
-    sudo pacman -S --needed --noconfirm opus portaudio alsa-utils pulseaudio
+read -p "Install Opus library for Rust media engine? [Y/n]: " opus_opt
+if [[ ! "$opus_opt" =~ ^[Nn]$ ]]; then
+    sudo pacman -S --needed --noconfirm opus
 fi
 
 read -p "Install terminal image viewer (chafa) for screenshot preview? [y/N]: " img_opt

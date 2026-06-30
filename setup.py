@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="chatxz",
-    version="0.9.20",
+    version="1.0.0",
     description="Decentralized chat over Reticulum Network Stack",
     packages=find_packages(),
     python_requires=">=3.10",
@@ -11,9 +11,8 @@ setup(
         "rns>=0.8.0",
     ],
     extras_require={
-        "voice": ["pyaudio"],
         "tui": ["textual>=0.52.0"],
-        "full": ["pyaudio", "textual>=0.52.0"],
+        "full": ["textual>=0.52.0"],
     },
     entry_points={
         "console_scripts": [

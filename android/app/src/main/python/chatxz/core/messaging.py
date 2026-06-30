@@ -133,7 +133,7 @@ _NO_COMPRESS_SUFFIXES = frozenset({
 MESSAGE_TYPE_TEXT = "text"
 MESSAGE_TYPE_FILE = "file"
 MESSAGE_TYPE_IMAGE = "image"
-MESSAGE_TYPE_VOICE = "voice"
+MESSAGE_TYPE_CALL = "__call"
 MESSAGE_TYPE_VIDEO = "video"
 MESSAGE_TYPE_EMOJI = "emoji"
 MESSAGE_TYPE_LONGTEXT = "longtext"
@@ -201,6 +201,7 @@ class ChatMessage:
 class MessagingBackend:
     def __init__(self, identity, config_dir, on_message=None, on_file=None,
                  on_progress=None, on_link_established=None, on_link_closed=None,
+                 on_media_packet=None, on_call_signaling=None,
                  display_name="", auto_announce=False,
                  receive_dir=None, peer_resolver=None, on_queue_sent=None,
                  on_transfer_revoked=None, on_call_event=None,
@@ -219,6 +220,8 @@ class MessagingBackend:
         self.on_progress = on_progress
         self.on_link_established = on_link_established
         self.on_link_closed = on_link_closed
+        self.on_media_packet = on_media_packet
+        self.on_call_signaling = on_call_signaling
         self.on_queue_sent = on_queue_sent
         self.on_transfer_revoked = on_transfer_revoked
         self.on_call_event = on_call_event
@@ -2378,7 +2381,7 @@ class MessagingBackend:
                             remaining.append(entry)
                     else:
                         remaining.append(entry)
-                elif entry["type"] in ("file", "image", "video", "voice"):
+                elif entry["type"] in ("file", "image", "video"):
                     if not include_files:
                         remaining.append(entry)
                         continue
@@ -3896,6 +3899,11 @@ class MessagingBackend:
     def _packet_callback(self, link):
         def callback(message, packet):
             try:
+                if message[:4] == b"CXMZ":
+                    remote_hash = self.dest_hash_for(self._peer_for_link(link))
+                    if remote_hash and self.on_media_packet:
+                        self.on_media_packet(remote_hash, bytes(message))
+                    return
                 chat_msg = ChatMessage.from_json(message.decode("utf-8"))
                 remote_hash = self.dest_hash_for(self._peer_for_link(link))
                 if remote_hash and not self._peer_allowed_by_scope(remote_hash, link=link):
@@ -3974,7 +3982,12 @@ class MessagingBackend:
                 chat_msg.sender = remote_hash
                 print(f"[messaging] Received {chat_msg.msg_type} from {remote_hash[:16]}...")
 
-                if chat_msg.msg_type in (MESSAGE_TYPE_FILE, MESSAGE_TYPE_IMAGE, MESSAGE_TYPE_VIDEO, MESSAGE_TYPE_VOICE, MESSAGE_TYPE_LONGTEXT):
+                if chat_msg.msg_type == MESSAGE_TYPE_CALL:
+                    if self.on_call_signaling and remote_hash:
+                        self.on_call_signaling(remote_hash, chat_msg.content or "")
+                    return
+
+                if chat_msg.msg_type in (MESSAGE_TYPE_FILE, MESSAGE_TYPE_IMAGE, MESSAGE_TYPE_VIDEO, MESSAGE_TYPE_LONGTEXT):
                     with self._pending_lock:
                         queue = self._pending_files.setdefault(link.link_id, [])
                         queue.append(chat_msg)
@@ -5022,6 +5035,42 @@ class MessagingBackend:
             return msg
         except Exception as e:
             print(f"[messaging] Send failed: {e}")
+            return False
+
+    def send_call_signaling(self, text, target_peer=None, link=None):
+        peer = self.dest_hash_for(
+            target_peer or self.active_peer_hash or self._session_peer_hash or ""
+        )
+        if not peer or not self._peer_link_active(peer):
+            return False
+        link = self._queue_send_link(peer, link_hint=link)
+        if not link or not self._link_matches_peer(link, peer):
+            return False
+        msg = ChatMessage(MESSAGE_TYPE_CALL, text)
+        data = msg.to_json().encode("utf-8")
+        try:
+            packet = RNS.Packet(link, data)
+            packet.send()
+            return True
+        except Exception as e:
+            print(f"[messaging] Call signaling send failed: {e}")
+            return False
+
+    def send_media_packet(self, data: bytes, target_peer=None, link=None):
+        peer = self.dest_hash_for(
+            target_peer or self.active_peer_hash or self._session_peer_hash or ""
+        )
+        if not peer or not self._peer_link_active(peer):
+            return False
+        link = self._queue_send_link(peer, link_hint=link)
+        if not link or not self._link_matches_peer(link, peer):
+            return False
+        try:
+            packet = RNS.Packet(link, data)
+            packet.send()
+            return True
+        except Exception as e:
+            print(f"[messaging] Media packet send failed: {e}")
             return False
 
     def _send_long_text(self, msg, text, data, receipt_callback, link=None):

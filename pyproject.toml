@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chatxz"
-version = "0.9.20"
+version = "1.0.0"
 description = "Decentralized chat over Reticulum Network Stack"
 readme = "README.md"
 license = {text = "GPL-3.0-only"}
@@ -15,9 +15,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-voice = ["pyaudio"]
 tui = ["textual>=0.52"]
-full = ["pyaudio", "textual>=0.52"]
+full = ["textual>=0.52"]
 
 [project.scripts]
 chatxz = "chatxz.app:main"
