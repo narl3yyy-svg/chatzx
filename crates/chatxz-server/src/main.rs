@@ -1,8 +1,9 @@
-//! chatxz v2 — Rust-primary server. Calls and media are native Rust;
-//! RNS messaging runs in the Python backend (Reticulum) on an internal port.
+//! chatxz v1 — Rust application server.
+//! Reticulum transport runs in a headless Python subprocess (chatxz.rnsd).
 
 mod proxy;
 mod rns_client;
+mod rnsd_spawn;
 mod ws_proxy;
 
 use std::collections::HashMap;
@@ -49,12 +50,28 @@ async fn main() {
     let port: u16 = parse_flag(&args, "--port")
         .and_then(|s| s.parse().ok())
         .unwrap_or(8742);
-    let backend = parse_flag(&args, "--backend").unwrap_or("http://127.0.0.1:8743".into());
-    let static_root = std::env::var("CHATXZ_ROOT")
+    let rnsd_port: u16 = parse_flag(&args, "--rnsd-port")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(8743);
+    let root = std::env::var("CHATXZ_ROOT")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("chatxz/web/static");
+        .unwrap_or_else(|_| PathBuf::from("."));
+    let static_root = root.join("chatxz/web/static");
 
+    let extra: Vec<String> = args
+        .iter()
+        .filter(|a| {
+            matches!(
+                a.as_str(),
+                "--share" | "--verbose" | "-v" | "--debug" | "-d" | "--force" | "-f"
+            )
+        })
+        .cloned()
+        .collect();
+    let _rnsd = rnsd_spawn::spawn_rnsd(&root, rnsd_port, port, &extra);
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    let backend = format!("http://127.0.0.1:{rnsd_port}");
     let rns = rns_client::RnsClient::new(&backend);
     let (call_tx, _) = broadcast::channel(64);
 
@@ -90,7 +107,6 @@ async fn main() {
 
     let mut manager = CallManager::new(send_signaling, send_media, peer_linked);
     let events_tx = call_tx.clone();
-    let rns_events = rns.clone();
     manager.set_event_handler(Arc::new(move |event, view| {
         let data = serde_json::to_value(view).unwrap_or_else(|_| json!({}));
         let msg = json!({
@@ -99,13 +115,6 @@ async fn main() {
             "data": data,
         });
         let _ = events_tx.send(msg.to_string());
-        let rns = rns_events.clone();
-        let event = event.to_string();
-        tokio::spawn(async move {
-            if let Err(e) = rns.post_call_event(&event, &data).await {
-                warn!(%e, "call event forward failed");
-            }
-        });
     }));
 
     let state = AppState {
@@ -129,7 +138,7 @@ async fn main() {
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    info!(%addr, %backend, "chatxz-server v2 starting (Rust primary)");
+    info!(%addr, %backend, "chatxz v1 starting (Rust application)");
     let listener = tokio::net::TcpListener::bind(addr).await.expect("bind");
     axum::serve(listener, app).await.expect("serve");
 }
@@ -321,8 +330,9 @@ struct MediaQuery {
 
 async fn ui_ws(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     let backend = state.backend.clone();
+    let call_events = state.call_events.subscribe();
     ws.on_upgrade(move |socket| async move {
-        ws_proxy::relay_ui_ws(socket, backend).await;
+        ws_proxy::relay_ui_ws(socket, backend, call_events).await;
     })
 }
 

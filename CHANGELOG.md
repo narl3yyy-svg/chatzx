@@ -2,7 +2,16 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
-## [2.0.1] — 2026-06-29
+## [1.0.0] — 2026-06-29
+
+### Changed — Rust application rewrite
+- **Single Rust binary `chatxz`** is the application (port 8742). Spawns headless `chatxz.rnsd` for Reticulum only.
+- **Deleted** Python web server (`chatxz/web/server.py` → internal `chatxz/rnsd/` transport daemon).
+- **Deleted** `rust_bridge.py`, `rust_launcher.py`, dual-process launch scripts.
+- **Voice/media:** native Rust (`chatxz-media`, `chatxz-call`, CHXZ protocol). All legacy Python audio/call code removed.
+- `./run.sh web` starts one Rust process — not a Python/Rust hybrid the user must orchestrate.
+
+## [2.0.1] — 2026-06-29 (superseded by 1.0.0)
 
 ### Fixed
 - **Web UI WebSocket** — `/ws` now tunnels through Rust to the Python backend (HTTP proxy cannot upgrade WebSockets; messaging/UI was broken).

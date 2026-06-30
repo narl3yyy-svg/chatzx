@@ -6,7 +6,7 @@ license.workspace = true
 description = "chatxz primary HTTP/WebSocket server (Rust)"
 
 [[bin]]
-name = "chatxz-server"
+name = "chatxz"
 path = "src/main.rs"
 
 [dependencies]

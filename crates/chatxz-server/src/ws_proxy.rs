@@ -1,10 +1,15 @@
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
+use tokio::sync::broadcast;
 use tokio_tungstenite::{connect_async, tungstenite::Message as TsMessage};
 use tracing::warn;
 
-/// Bidirectional relay: browser WebSocket ↔ Python backend /ws.
-pub async fn relay_ui_ws(client: WebSocket, backend_http: String) {
+/// Relay browser WebSocket ↔ RNS daemon /ws, plus inject Rust call events.
+pub async fn relay_ui_ws(
+    client: WebSocket,
+    backend_http: String,
+    mut call_events: broadcast::Receiver<String>,
+) {
     let ws_url = backend_http
         .trim_end_matches('/')
         .replace("http://", "ws://")
@@ -14,7 +19,7 @@ pub async fn relay_ui_ws(client: WebSocket, backend_http: String) {
     let backend = match connect_async(&ws_url).await {
         Ok((stream, _)) => stream,
         Err(e) => {
-            warn!(%e, %ws_url, "backend ws connect failed");
+            warn!(%e, %ws_url, "RNS daemon ws connect failed");
             return;
         }
     };
@@ -56,30 +61,41 @@ pub async fn relay_ui_ws(client: WebSocket, backend_http: String) {
     };
 
     let backend_to_client = async {
-        while let Some(msg) = backend_rx.next().await {
-            match msg {
-                Ok(TsMessage::Text(text)) => {
-                    if client_tx.send(Message::Text(text.into())).await.is_err() {
-                        break;
+        loop {
+            tokio::select! {
+                msg = backend_rx.next() => {
+                    match msg {
+                        Some(Ok(TsMessage::Text(text))) => {
+                            if client_tx.send(Message::Text(text.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        Some(Ok(TsMessage::Binary(data))) => {
+                            if client_tx.send(Message::Binary(data.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        Some(Ok(TsMessage::Ping(data))) => {
+                            if client_tx.send(Message::Ping(data.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        Some(Ok(TsMessage::Pong(data))) => {
+                            if client_tx.send(Message::Pong(data.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        Some(Ok(TsMessage::Close(_))) | Some(Err(_)) | None => break,
+                        _ => {}
                     }
                 }
-                Ok(TsMessage::Binary(data)) => {
-                    if client_tx.send(Message::Binary(data.into())).await.is_err() {
-                        break;
+                evt = call_events.recv() => {
+                    if let Ok(payload) = evt {
+                        if client_tx.send(Message::Text(payload.into())).await.is_err() {
+                            break;
+                        }
                     }
                 }
-                Ok(TsMessage::Ping(data)) => {
-                    if client_tx.send(Message::Ping(data.into())).await.is_err() {
-                        break;
-                    }
-                }
-                Ok(TsMessage::Pong(data)) => {
-                    if client_tx.send(Message::Pong(data.into())).await.is_err() {
-                        break;
-                    }
-                }
-                Ok(TsMessage::Close(_)) | Err(_) => break,
-                _ => {}
             }
         }
         let _ = client_tx.close().await;

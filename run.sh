@@ -54,7 +54,7 @@ ensure_venv() {
         exit 1
     fi
 
-    echo "First run: setting up dependencies in .venv ..."
+    echo "First run: setting up RNS transport dependencies in .venv ..."
     if [ -d "$VENV" ]; then
         rm -rf "$VENV"
     fi
@@ -67,7 +67,6 @@ ensure_venv() {
     fi
     if [ "${VENV_CREATE_FAILED:-}" = "1" ]; then
         echo "Failed to create .venv."
-        echo "Ubuntu/Debian: sudo apt install python3-venv python3-pip"
         exit 1
     fi
 
@@ -89,40 +88,35 @@ case "${1:-}" in
         install_deps
         "$PYTHON" -m pip install -e .
         if command -v cargo >/dev/null 2>&1; then
-            echo "[rust] Building chatxz-server..."
+            echo "[rust] Building chatxz application..."
             cargo build --release -p chatxz-server
         else
-            echo "[rust] Install Rust (https://rustup.rs) to build the media server."
+            echo "[rust] Install Rust (https://rustup.rs) to build the application."
         fi
         echo "Done. Run ./run.sh web"
         ;;
     web|server)
         install_deps
+        export CHATXZ_PYTHON="$PYTHON"
         chmod +x "$DIR/scripts/launch-server.sh" 2>/dev/null || true
-        PYTHON="$PYTHON" CHATXZ_ROOT="$DIR" "$DIR/scripts/launch-server.sh" "${@:2}"
+        CHATXZ_PYTHON="$PYTHON" "$DIR/scripts/launch-server.sh" "${@:2}"
         ;;
     cli)
         install_deps
         "$PYTHON" -m chatxz.app "${@:2}"
         ;;
     *)
-        echo "chatxz v2 — Reticulum Chat (Rust media + Python RNS)"
+        echo "chatxz v1 — Rust application + Reticulum transport"
         echo
         echo "Usage: ./run.sh <command> [args]"
         echo
         echo "Commands:"
-        echo "  install          Install Python deps, Rust server, and package"
-        echo "  web [--share] [--verbose] [--debug] [--force]  Start web server"
+        echo "  install          Install RNS deps + build Rust chatxz binary"
+        echo "  web [--share]    Start application (http://localhost:8742)"
         echo "  cli [options]    Start CLI mode"
-        echo
-        echo "Also: ./install.sh (system install)  ./uninstall.sh (remove app data)"
         echo
         echo "Examples:"
         echo "  ./run.sh web"
-        echo "  ./run.sh web --share    # Linux / macOS LAN access"
-        echo "  ./run.sh cli --daemon"
-        echo
-        echo "Windows (cmd):  run.bat web --share"
-        echo "Windows (Git Bash):  ./run.sh web --share"
+        echo "  ./run.sh web --share"
         ;;
 esac

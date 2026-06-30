@@ -1,7 +1,8 @@
-"""Android entry point — starts the full chatxz web server in a background thread."""
+"""Android entry point — starts the Rust chatxz application."""
 
 import os
 import socket
+import subprocess
 import threading
 import time
 import traceback
@@ -22,14 +23,11 @@ try:
 except Exception:
     pass
 
-# Python RNS backend (internal). Rust serves the WebView on PUBLIC_PORT.
-BIND_HOST, PORT = "0.0.0.0", 8743
 PUBLIC_PORT = 8742
-# WebView always loads the local loopback URL (Rust primary).
 WEB_HOST = "127.0.0.1"
-_rust_proc = None
-_server_error = []
+_chatxz_proc = None
 _server_started = False
+_server_error = []
 
 
 def _startup_log_path():
@@ -46,11 +44,25 @@ def _startup_log(msg):
 
 
 def set_debug_mode(flag="0"):
-    """Called from MainActivity before start_server (string avoids Chaquopy bool issues)."""
     if str(flag).strip().lower() in ("1", "true", "yes", "on"):
         os.environ["CHATXZ_DEBUG"] = "1"
     else:
         os.environ.pop("CHATXZ_DEBUG", None)
+
+
+def _find_chatxz_binary():
+    root = os.environ.get("CHATXZ_ROOT", "")
+    candidates = [
+        os.path.join(root, "target", "release", "chatxz"),
+        os.path.join(root, "android", "app", "src", "main", "assets", "bin", "chatxz"),
+    ]
+    files_dir = os.environ.get("CHATXZ_FILES_DIR")
+    if files_dir:
+        candidates.insert(0, os.path.join(files_dir, "chatxz"))
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return None
 
 
 def _wait_for_port(host, port, timeout=90):
@@ -76,12 +88,11 @@ def _wait_for_port(host, port, timeout=90):
 
 
 def start_server():
-    """Called from MainActivity via Chaquopy. Returns (host, port) or (None, error)."""
-    global _server_started
+    global _server_started, _chatxz_proc
     _startup_log("start_server() called")
     if _server_started and _wait_for_port(WEB_HOST, PUBLIC_PORT, timeout=3):
-        _startup_log("reusing existing server")
         return WEB_HOST, str(PUBLIC_PORT)
+
     try:
         from chatxz.utils.platform import android_files_dir, is_android
         files_dir = android_files_dir()
@@ -90,67 +101,41 @@ def start_server():
         if not is_android():
             os.environ["CHATXZ_ANDROID"] = "1"
     except Exception as e:
-        _startup_log(f"platform init failed: {e}")
         return "None", f"Platform init: {type(e).__name__}: {e}"
 
-    debug_mode = os.environ.get("CHATXZ_DEBUG") == "1"
-    _startup_log(f"debug_mode={debug_mode}")
-
-    if debug_mode:
-        try:
-            from chatxz.utils.debug_log import start_debug_capture
-            path = start_debug_capture()
-            if path:
-                _startup_log(f"debug capture enabled: {path}")
-        except Exception as exc:
-            _startup_log(f"debug capture failed: {exc}")
+    bin_path = _find_chatxz_binary()
+    if not bin_path:
+        return "None", "chatxz Rust binary not found — rebuild APK with scripts/build-rust-android.sh"
 
     def _run():
-        global _rust_proc
+        global _chatxz_proc
         try:
-            _startup_log("server thread starting")
-            from chatxz.web.rust_launcher import start_rust_server
-            from chatxz.web.server import ChatWebServer
-            _startup_log("ChatWebServer import ok")
-            _rust_proc = start_rust_server(
-                public_port=PUBLIC_PORT,
-                backend=f"http://127.0.0.1:{PORT}",
+            _startup_log("starting Rust chatxz")
+            env = os.environ.copy()
+            cmd = [bin_path, "--port", str(PUBLIC_PORT)]
+            if os.environ.get("CHATXZ_DEBUG") == "1":
+                cmd.append("--verbose")
+            _chatxz_proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=env,
             )
-            if not _rust_proc:
-                _startup_log("rust server missing — calls require chatxz-server binary")
-            server = ChatWebServer(
-                host=BIND_HOST,
-                port=PORT,
-                verbose=debug_mode,
-                debug=debug_mode,
-                force=False,
-                embedded=True,
-                internal=True,
-                public_port=PUBLIC_PORT,
-            )
-            _startup_log("run_embedded()")
-            server.run_embedded()
+            _startup_log(f"chatxz pid={_chatxz_proc.pid}")
         except Exception:
             err = traceback.format_exc()
             _server_error.append(err)
-            _startup_log(f"server thread error:\n{err}")
+            _startup_log(f"start error:\n{err}")
 
     _server_started = True
-    thread = threading.Thread(target=_run, name="chatxz-server", daemon=True)
-    thread.start()
+    threading.Thread(target=_run, name="chatxz-app", daemon=True).start()
 
-    port_timeout = 120 if debug_mode else 45
-    _startup_log(f"waiting for port {PUBLIC_PORT} (timeout={port_timeout}s)")
-    if not _wait_for_port(WEB_HOST, PUBLIC_PORT, timeout=port_timeout):
+    timeout = 120 if os.environ.get("CHATXZ_DEBUG") == "1" else 45
+    if not _wait_for_port(WEB_HOST, PUBLIC_PORT, timeout=timeout):
         _server_started = False
         if _server_error:
-            err = _server_error[0]
-            _startup_log(f"failed: {err[:500]}")
-            if len(err) > 4000:
-                err = err[-4000:]
-            return "None", err
-        _startup_log("failed: port timeout")
-        return "None", f"Server timeout — port {PUBLIC_PORT} did not open in {port_timeout}s"
+            return "None", _server_error[0][-4000:]
+        return "None", f"Server timeout — port {PUBLIC_PORT} did not open in {timeout}s"
 
-    _startup_log("server ready")
+    _startup_log("chatxz ready")
     return WEB_HOST, str(PUBLIC_PORT)

@@ -39,7 +39,7 @@ collect_pids() {
   echo "$pids"
 }
 
-for pattern in "chatxz-server" "chatxz.web.server" "chatxz.app" "chatxz-web"; do
+for pattern in "chatxz-server" "target/release/chatxz" "chatxz.rnsd" "chatxz.web.server" "chatxz.app" "chatxz-web"; do
   if pgrep -f "$pattern" >/dev/null 2>&1; then
     pkill -f "$pattern" 2>/dev/null || true
   fi

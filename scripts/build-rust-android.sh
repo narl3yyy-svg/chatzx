@@ -20,10 +20,10 @@ fi
 export CC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${TARGET}30-clang"
 export CARGO_TARGET_${TARGET^^}_LINKER="$CC"
 
-echo "Building chatxz-server for $TARGET..."
+echo "Building chatxz for $TARGET..."
 (cd "$ROOT" && cargo build --release -p chatxz-server --target "$TARGET")
 
-BIN="$ROOT/target/$TARGET/release/chatxz-server"
-cp "$BIN" "$OUT_DIR/chatxz-server"
-chmod +x "$OUT_DIR/chatxz-server"
-echo "Bundled: $OUT_DIR/chatxz-server"
+BIN="$ROOT/target/$TARGET/release/chatxz"
+cp "$BIN" "$OUT_DIR/chatxz"
+chmod +x "$OUT_DIR/chatxz"
+echo "Bundled: $OUT_DIR/chatxz"

@@ -1,0 +1,1 @@
+"""Headless Reticulum transport daemon — not a user-facing web server."""

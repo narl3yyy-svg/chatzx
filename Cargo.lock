@@ -168,7 +168,7 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chatxz-call"
-version = "2.0.0"
+version = "1.0.0"
 dependencies = [
  "chatxz-media",
  "chatxz-protocol",
@@ -180,7 +180,7 @@ dependencies = [
 
 [[package]]
 name = "chatxz-media"
-version = "2.0.0"
+version = "1.0.0"
 dependencies = [
  "audiopus",
  "chatxz-protocol",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "chatxz-protocol"
-version = "2.0.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -197,7 +197,7 @@ dependencies = [
 
 [[package]]
 name = "chatxz-server"
-version = "2.0.0"
+version = "1.0.0"
 dependencies = [
  "axum",
  "chatxz-call",
