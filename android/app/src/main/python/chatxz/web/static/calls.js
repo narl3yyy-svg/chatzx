@@ -1,4 +1,4 @@
-/* chatxz v2.0.0 — voice/video/screen calls over RNS via Rust media engine */
+/* chatxz v1.0.0 — voice/video/screen over RNS (Rust media engine) */
 
 let callState = null;
 let mediaWs = null;

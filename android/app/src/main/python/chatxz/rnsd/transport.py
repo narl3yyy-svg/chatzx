@@ -1,4 +1,4 @@
-"""Forward RNS call signaling and media to the Rust primary server."""
+"""Forward RNS call signaling and media to the Rust chatxz application."""
 
 from __future__ import annotations
 
@@ -7,11 +7,11 @@ import os
 import urllib.error
 import urllib.request
 
-RUST_URL = os.environ.get("CHATXZ_RUST_URL", "http://127.0.0.1:8742").rstrip("/")
+APP_URL = os.environ.get("CHATXZ_APP_URL", "http://127.0.0.1:8742").rstrip("/")
 
 
 def _post(path: str, payload: dict, timeout: float = 3.0) -> bool:
-    url = f"{RUST_URL}{path}"
+    url = f"{APP_URL}{path}"
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
@@ -23,7 +23,7 @@ def _post(path: str, payload: dict, timeout: float = 3.0) -> bool:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return 200 <= resp.status < 300
     except urllib.error.URLError as exc:
-        print(f"[rust] POST {path} failed: {exc}")
+        print(f"[rnsd] POST {path} failed: {exc}")
         return False
 
 
