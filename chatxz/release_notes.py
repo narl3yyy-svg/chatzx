@@ -3,6 +3,12 @@
 from chatxz._version import __version__ as CURRENT_VERSION
 
 RELEASE_NOTES = {
+    "2.0.0": [
+        "Full v2 rewrite: voice, video, and screen sharing rebuilt in Rust — legacy Python audio/call code removed.",
+        "Rust chatxz-server handles calls and media on port 8742; Python runs Reticulum messaging on 8743.",
+        "New CHXZ media protocol with Opus, jitter buffer, and packet-loss concealment over RNS links.",
+        "Same launch commands: ./run.sh web and run.bat web — Rust builds automatically on first run.",
+    ],
     "1.0.4": [
         "Connection stability: no more wake spam when already linked — 20s debounce on LAN peer wake.",
         "Link status is server-authoritative — header only shows Connected when the RNS link is actually usable.",

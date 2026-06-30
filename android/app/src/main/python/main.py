@@ -22,10 +22,12 @@ try:
 except Exception:
     pass
 
-# Bind on all interfaces so LAN peers can reach beacon-ingest and file transfer.
-BIND_HOST, PORT = "0.0.0.0", 8742
-# WebView always loads the local loopback URL.
+# Python RNS backend (internal). Rust serves the WebView on PUBLIC_PORT.
+BIND_HOST, PORT = "0.0.0.0", 8743
+PUBLIC_PORT = 8742
+# WebView always loads the local loopback URL (Rust primary).
 WEB_HOST = "127.0.0.1"
+_rust_proc = None
 _server_error = []
 _server_started = False
 
@@ -77,9 +79,9 @@ def start_server():
     """Called from MainActivity via Chaquopy. Returns (host, port) or (None, error)."""
     global _server_started
     _startup_log("start_server() called")
-    if _server_started and _wait_for_port(WEB_HOST, PORT, timeout=3):
+    if _server_started and _wait_for_port(WEB_HOST, PUBLIC_PORT, timeout=3):
         _startup_log("reusing existing server")
-        return WEB_HOST, str(PORT)
+        return WEB_HOST, str(PUBLIC_PORT)
     try:
         from chatxz.utils.platform import android_files_dir, is_android
         files_dir = android_files_dir()
@@ -104,10 +106,18 @@ def start_server():
             _startup_log(f"debug capture failed: {exc}")
 
     def _run():
+        global _rust_proc
         try:
             _startup_log("server thread starting")
+            from chatxz.web.rust_launcher import start_rust_server
             from chatxz.web.server import ChatWebServer
             _startup_log("ChatWebServer import ok")
+            _rust_proc = start_rust_server(
+                public_port=PUBLIC_PORT,
+                backend=f"http://127.0.0.1:{PORT}",
+            )
+            if not _rust_proc:
+                _startup_log("rust server missing — calls require chatxz-server binary")
             server = ChatWebServer(
                 host=BIND_HOST,
                 port=PORT,
@@ -115,6 +125,8 @@ def start_server():
                 debug=debug_mode,
                 force=False,
                 embedded=True,
+                internal=True,
+                public_port=PUBLIC_PORT,
             )
             _startup_log("run_embedded()")
             server.run_embedded()
@@ -128,8 +140,8 @@ def start_server():
     thread.start()
 
     port_timeout = 120 if debug_mode else 45
-    _startup_log(f"waiting for port 8742 (timeout={port_timeout}s)")
-    if not _wait_for_port(WEB_HOST, PORT, timeout=port_timeout):
+    _startup_log(f"waiting for port {PUBLIC_PORT} (timeout={port_timeout}s)")
+    if not _wait_for_port(WEB_HOST, PUBLIC_PORT, timeout=port_timeout):
         _server_started = False
         if _server_error:
             err = _server_error[0]
@@ -138,7 +150,7 @@ def start_server():
                 err = err[-4000:]
             return "None", err
         _startup_log("failed: port timeout")
-        return "None", f"Server timeout — port 8742 did not open in {port_timeout}s"
+        return "None", f"Server timeout — port {PUBLIC_PORT} did not open in {port_timeout}s"
 
     _startup_log("server ready")
-    return WEB_HOST, str(PORT)
+    return WEB_HOST, str(PUBLIC_PORT)

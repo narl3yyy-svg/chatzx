@@ -2,6 +2,20 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [2.0.0] — 2026-06-29
+
+### Changed — full Rust media rewrite
+- **Architecture split:** Rust `chatxz-server` on port **8742** (UI, calls, media); Python RNS backend on **8743** (Reticulum, messaging, discovery only).
+- **Deleted legacy voice stack:** all Python `audio/`, `calls.py`, `media_engine.py`, `call_bridge.py`, Opus/PyAudio paths removed.
+- **New Rust crates:** `chatxz-protocol` (CHXZ v2 framing), `chatxz-media` (Opus, jitter buffer, PLC), `chatxz-call` (signaling state machine).
+- **Media protocol:** `CHXZ` magic replaces `CXMZ`; 480-byte MTU-safe payloads; 10 ms Opus frames @ 48 kHz.
+- **Launch unchanged:** `./run.sh web` and `run.bat web` build Rust and start both processes.
+
+### Added
+- Internal RNS API (`/api/internal/rns/*`) for Rust ↔ Python media/signaling bridge.
+- Android dual-process launch (Rust WebView front + Python RNS backend).
+- `scripts/build-rust-android.sh` for bundling arm64 `chatxz-server` in the APK.
+
 ## [1.0.4] — 2026-06-29
 
 ### Fixed

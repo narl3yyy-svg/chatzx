@@ -30,54 +30,6 @@ deps_core_ok() {
     "$1" -c "import RNS, aiohttp" 2>/dev/null
 }
 
-deps_voice_ok() {
-    "$1" -c "from chatxz.core.audio import call_audio_available; import sys; sys.exit(0 if call_audio_available() else 1)" 2>/dev/null
-}
-
-recreate_venv_with_system_packages() {
-    local SYS_PY
-    SYS_PY="$(system_python)"
-    if [ -z "$SYS_PY" ]; then
-        return 1
-    fi
-    echo "[setup] Recreating .venv with --system-site-packages (apt python3-pyaudio)..."
-    rm -rf "$VENV"
-    if ! "$SYS_PY" -m venv --system-site-packages "$VENV"; then
-        return 1
-    fi
-    "$VENV_PY" -m pip install -q --upgrade pip
-    if ! "$VENV_PY" -m pip install -q "rns>=1.3.0" "aiohttp>=3.9.0"; then
-        return 1
-    fi
-
-    touch "$READY_MARK"
-    PYTHON="$VENV_PY"
-    return 0
-}
-
-install_voice_deps() {
-    local py="$1"
-    if deps_voice_ok "$py"; then
-        return 0
-    fi
-    local SYS_PY
-    SYS_PY="$(system_python)"
-    if [ "$py" = "$VENV_PY" ] && [ -n "$SYS_PY" ] \
-        && "$SYS_PY" -c "import pyaudio" 2>/dev/null \
-        && ! "$py" -c "import pyaudio" 2>/dev/null; then
-        if recreate_venv_with_system_packages && deps_voice_ok "$VENV_PY"; then
-            echo "[setup] Using apt python3-pyaudio via --system-site-packages"
-            return 0
-        fi
-    fi
-    CHATXZ_ROOT="$DIR" PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}" \
-        "$py" "$DIR/scripts/ensure_voice_native.py" || true
-    if deps_voice_ok "$py"; then
-        return 0
-    fi
-    return 1
-}
-
 ensure_venv() {
     if [ -n "${VIRTUAL_ENV:-}" ]; then
         resolve_python
@@ -85,13 +37,11 @@ ensure_venv() {
             echo "Installing dependencies in active virtualenv..."
             "$PYTHON" -m pip install -q "rns>=1.3.0" "aiohttp>=3.9.0"
         fi
-        install_voice_deps "$PYTHON" || true
         return 0
     fi
 
     if [ -x "$VENV_PY" ] && deps_core_ok "$VENV_PY"; then
         PYTHON="$VENV_PY"
-        install_voice_deps "$PYTHON" || true
         touch "$READY_MARK"
         return 0
     fi
@@ -108,7 +58,6 @@ ensure_venv() {
     if [ -d "$VENV" ]; then
         rm -rf "$VENV"
     fi
-    # macOS ships bash 3.2: empty "${array[@]}" with set -u triggers "unbound variable"
     if [ "$(uname -s 2>/dev/null || echo)" = "Linux" ]; then
         if ! "$SYS_PY" -m venv --system-site-packages "$VENV"; then
             VENV_CREATE_FAILED=1
@@ -128,7 +77,6 @@ ensure_venv() {
         echo "Failed to install rns/aiohttp in .venv"
         exit 1
     fi
-    install_voice_deps "$PYTHON" || true
     touch "$READY_MARK"
 }
 
@@ -140,6 +88,12 @@ case "${1:-}" in
     install)
         install_deps
         "$PYTHON" -m pip install -e .
+        if command -v cargo >/dev/null 2>&1; then
+            echo "[rust] Building chatxz-server..."
+            cargo build --release -p chatxz-server
+        else
+            echo "[rust] Install Rust (https://rustup.rs) to build the media server."
+        fi
         echo "Done. Run ./run.sh web"
         ;;
     web|server)
@@ -152,12 +106,12 @@ case "${1:-}" in
         "$PYTHON" -m chatxz.app "${@:2}"
         ;;
     *)
-        echo "chatxz - Reticulum Chat"
+        echo "chatxz v2 — Reticulum Chat (Rust media + Python RNS)"
         echo
         echo "Usage: ./run.sh <command> [args]"
         echo
         echo "Commands:"
-        echo "  install          Install dependencies and package (stays in this folder)"
+        echo "  install          Install Python deps, Rust server, and package"
         echo "  web [--share] [--verbose] [--debug] [--force]  Start web server"
         echo "  cli [options]    Start CLI mode"
         echo
@@ -170,6 +124,5 @@ case "${1:-}" in
         echo
         echo "Windows (cmd):  run.bat web --share"
         echo "Windows (Git Bash):  ./run.sh web --share"
-        echo "  ./run.sh cli --connect <hash> --send hello"
         ;;
 esac

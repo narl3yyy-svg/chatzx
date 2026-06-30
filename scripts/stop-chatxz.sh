@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop chatxz server and release ports 8742 (HTTP), 4242 (RNS), 8743 (beacon).
+# Stop chatxz server and release ports 8742 (Rust HTTP), 8743 (Python/RNS), 4242 (RNS UDP).
 set -euo pipefail
 
 stop_pids() {
@@ -39,7 +39,7 @@ collect_pids() {
   echo "$pids"
 }
 
-for pattern in "chatxz.web.server" "chatxz.app" "chatxz-web"; do
+for pattern in "chatxz-server" "chatxz.web.server" "chatxz.app" "chatxz-web"; do
   if pgrep -f "$pattern" >/dev/null 2>&1; then
     pkill -f "$pattern" 2>/dev/null || true
   fi
@@ -47,7 +47,7 @@ done
 
 sleep 0.4
 
-for port in 8742; do
+for port in 8742 8743; do
   stop_pids TERM $(collect_pids "$port" 0)
 done
 for port in 4242 8743; do
@@ -56,7 +56,7 @@ done
 
 sleep 0.4
 
-for port in 8742; do
+for port in 8742 8743; do
   stop_pids KILL $(collect_pids "$port" 0)
 done
 for port in 4242 8743; do

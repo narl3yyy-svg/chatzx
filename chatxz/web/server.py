@@ -11,7 +11,7 @@ if getattr(sys, "frozen", False):
 
 from chatxz.core.identity import IdentityManager
 from chatxz.core.messaging import HUB_GROUP_PEER, MessagingBackend, is_hub_peer_hash
-from chatxz.web.call_bridge import CallBridge
+from chatxz.web import rust_bridge
 from chatxz.core.discovery import PeerDiscovery
 from chatxz.core.lan_beacon import LanBeacon, BEACON_PORT
 from chatxz.core.contacts import (
@@ -453,13 +453,25 @@ def _pick_directory_tkinter(start):
 
 
 class ChatWebServer:
-    def __init__(self, host="127.0.0.1", port=8742, verbose=False, debug=False, force=False, embedded=False):
+    def __init__(
+        self,
+        host="127.0.0.1",
+        port=8742,
+        verbose=False,
+        debug=False,
+        force=False,
+        embedded=False,
+        internal=False,
+        public_port=None,
+    ):
         self.host = host
         self.port = port
+        self.public_port = int(public_port or port)
         self.verbose = verbose
         self.debug = debug
         self.force = force
         self.embedded = embedded
+        self.internal = internal
         self.config_dir = CONFIG_DIR
         self.data_dir = DATA_DIR
         os.makedirs(self.config_dir, exist_ok=True)
@@ -470,7 +482,6 @@ class ChatWebServer:
         self.identity_mgr = IdentityManager(self.config_dir)
         self.identity = None
         self.messaging = None
-        self.call_bridge = CallBridge(self)
 
         self.websockets = set()
         self.message_history = self._load_history()
@@ -1633,7 +1644,7 @@ class ChatWebServer:
             auto_announce=auto_announce,
             receive_dir=received_dir,
             peer_resolver=self._resolve_incoming_peer,
-            http_port=self.port,
+            http_port=self.public_port,
             lan_transfer_enabled=(self.host in ("0.0.0.0", "::")),
             peer_endpoint_resolver=self._peer_endpoint_for_transfer,
             peer_scope_checker=self._peer_in_discovery_scope,
@@ -1643,7 +1654,6 @@ class ChatWebServer:
         )
         self.messaging.lan_announce_interval_s = lan_ann
         self.messaging.serial_announce_interval_s = ser_ann
-        self.call_bridge.attach()
         dest = self.messaging.start()
         sent_ids = [
             m.get("msg_id") for m in self.message_history
@@ -1758,10 +1768,10 @@ class ChatWebServer:
         return my_hash
 
     def _on_media_packet(self, peer_hash, data):
-        self.call_bridge.on_media_packet(peer_hash, data)
+        rust_bridge.forward_media(peer_hash, data)
 
     def _on_call_signaling(self, peer_hash, content):
-        self.call_bridge.on_signaling(peer_hash, content)
+        rust_bridge.forward_signaling(peer_hash, content)
 
     def _on_message(self, chat_msg, sender_hash):
         hub_group = bool(getattr(chat_msg, "hub_group", False))
@@ -4754,14 +4764,66 @@ class ChatWebServer:
                 await self._remove_history_message(transfer_id)
         return web.json_response({"status": "ok" if cancelled else "noop"})
 
-    async def handle_call(self, request):
-        action = request.match_info.get("action", "status")
-        result = await self.call_bridge.handle_api(request, action)
-        status = 400 if result.get("error") else 200
-        return web.json_response(result, status=status)
+    async def handle_internal_rns_signaling(self, request):
+        if not self.messaging:
+            return web.json_response({"error": "not_ready"}, status=503)
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "bad_json"}, status=400)
+        peer = (data.get("peer") or "").strip()
+        payload = data.get("payload") or ""
+        if not peer or not payload:
+            return web.json_response({"error": "peer and payload required"}, status=400)
+        resolved = self._peer_dest_hash(peer) or peer
+        ok = await self._run_blocking(
+            self.messaging.send_call_signaling, payload, resolved,
+        )
+        return web.json_response({"status": "ok" if ok else "error"})
 
-    async def handle_media_websocket(self, request):
-        return await self.call_bridge.handle_media_ws(request)
+    async def handle_internal_rns_media(self, request):
+        if not self.messaging:
+            return web.json_response({"error": "not_ready"}, status=503)
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "bad_json"}, status=400)
+        peer = (data.get("peer") or "").strip()
+        raw = data.get("data") or ""
+        if not peer or not raw:
+            return web.json_response({"error": "peer and data required"}, status=400)
+        try:
+            packet = bytes.fromhex(raw)
+        except ValueError:
+            return web.json_response({"error": "invalid hex"}, status=400)
+        resolved = self._peer_dest_hash(peer) or peer
+        ok = await self._run_blocking(
+            self.messaging.send_media_packet, packet, resolved,
+        )
+        return web.json_response({"status": "ok" if ok else "error"})
+
+    async def handle_internal_rns_linked(self, request):
+        if not self.messaging:
+            return web.json_response({"linked": False})
+        peer = (request.query.get("peer") or "").strip()
+        if peer:
+            resolved = self._peer_dest_hash(peer) or peer
+            linked = await self._run_blocking(self.messaging._peer_link_active, resolved)
+            return web.json_response({"linked": bool(linked)})
+        linked = await self._run_blocking(lambda: bool(self.messaging.linked_peers()))
+        return web.json_response({"linked": linked})
+
+    async def handle_internal_call_event(self, request):
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "bad_json"}, status=400)
+        event = data.get("event")
+        payload = data.get("data")
+        if not event or payload is None:
+            return web.json_response({"error": "event and data required"}, status=400)
+        await self._broadcast({"type": "call", "event": event, "data": payload})
+        return web.json_response({"status": "ok"})
 
     async def handle_serve_file(self, request):
         filepath = unquote(request.match_info["filepath"])
@@ -5418,9 +5480,10 @@ class ChatWebServer:
         app.router.add_post("/api/disconnect", self.handle_disconnect)
         app.router.add_post("/api/file", self.handle_file_upload)
         app.router.add_post("/api/folder", self.handle_folder_upload)
-        app.router.add_post("/api/call/{action}", self.handle_call)
-        app.router.add_get("/api/call/{action}", self.handle_call)
-        app.router.add_get("/ws/media", self.handle_media_websocket)
+        app.router.add_post("/api/internal/rns/signaling", self.handle_internal_rns_signaling)
+        app.router.add_post("/api/internal/rns/media", self.handle_internal_rns_media)
+        app.router.add_get("/api/internal/rns/linked", self.handle_internal_rns_linked)
+        app.router.add_post("/api/internal/rust/call-event", self.handle_internal_call_event)
         app.router.add_get("/api/history", self.handle_history)
         app.router.add_post("/api/history/clear", self.handle_history_clear)
         app.router.add_delete("/api/history/{msg_id}", self.handle_delete_message)
@@ -5539,8 +5602,11 @@ class ChatWebServer:
         app.on_shutdown.append(self._on_shutdown)
         app.on_cleanup.append(self._on_cleanup)
 
-        print(f"chatxz web server v{APP_VERSION}")
-        print(f"Web interface: http://{self.host}:{self.port}")
+        role = "RNS backend" if self.internal else "web"
+        print(f"chatxz {role} v{APP_VERSION}")
+        print(f"Listening: http://{self.host}:{self.port}")
+        if self.internal:
+            print(f"Public HTTP (Rust): port {self.public_port}")
         print("[startup] HTTP listening — RNS/network stack starting in background")
         print("Press Ctrl+C to stop")
 
@@ -5624,7 +5690,10 @@ def main():
             pass
     parser = argparse.ArgumentParser(description="chatxz web server")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address")
-    parser.add_argument("--port", type=int, default=8742, help="Port")
+    parser.add_argument("--port", type=int, default=None, help="Port (8742 public, 8743 internal)")
+    parser.add_argument("--public-port", type=int, default=8742, help="Public HTTP port (Rust front door)")
+    parser.add_argument("--internal", action="store_true",
+                        help="RNS/messaging backend only (Rust serves the web UI)")
     parser.add_argument("--share", action="store_true", help="Listen on 0.0.0.0 (accessible on LAN)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show RNS debug logs")
     parser.add_argument("--debug", "-d", action="store_true",
@@ -5633,7 +5702,19 @@ def main():
                         help="Stop any existing chatxz server before starting")
     args = parser.parse_args()
     host = "0.0.0.0" if args.share else args.host
-    server = ChatWebServer(host=host, port=args.port, verbose=args.verbose, debug=args.debug, force=args.force)
+    if args.port is None:
+        port = 8743 if args.internal else 8742
+    else:
+        port = args.port
+    server = ChatWebServer(
+        host=host,
+        port=port,
+        verbose=args.verbose,
+        debug=args.debug,
+        force=args.force,
+        internal=args.internal,
+        public_port=args.public_port,
+    )
     try:
         server.run()
     except KeyboardInterrupt:

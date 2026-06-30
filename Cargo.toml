@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/chatxz-protocol",
+    "crates/chatxz-media",
+    "crates/chatxz-call",
+    "crates/chatxz-server",
+]
+
+[workspace.package]
+version = "2.0.0"
+edition = "2021"
+license = "GPL-3.0-only"
+authors = ["chatxz contributors"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+audiopus = "0.2"

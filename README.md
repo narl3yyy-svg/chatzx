@@ -2,7 +2,7 @@
 
 **Encrypted peer-to-peer messaging** over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud relay for 1:1 chat — messages, files, and calls travel over AES-256 encrypted links on your LAN, USB serial, or optional TCP hub.
 
-**Current version: 1.0.4** · [Releases](https://github.com/narl3yyy-svg/chatxz/releases) · [Changelog](CHANGELOG.md)
+**Current version: 2.0.0** · [Releases](https://github.com/narl3yyy-svg/chatxz/releases) · [Changelog](CHANGELOG.md)
 
 ---
 
@@ -11,7 +11,7 @@
 | | |
 |---|---|
 | **Messaging** | Per-peer threads, delivery receipts, offline queue, emoji picker |
-| **Calls** | Voice, video, and screen share over RNS — no WebRTC, no STUN/TURN |
+| **Calls** | Voice, video, and screen share over RNS — Rust media engine, no WebRTC |
 | **Files** | Any size via encrypted RNS resources; large LAN files can use direct HTTP with `--share` |
 | **Discovery** | UDP beacon + RNS announce on your pinned IPv4; saved contacts with custom names |
 | **Transports** | **UDP LAN** or **TCP LAN** on desktop; **TCP LAN** default on Android; **USB serial** for direct cable links |
@@ -25,6 +25,8 @@ Open a chat, wait for **Link: Active**, then message, send files, or tap 📞 �
 
 ### Linux / macOS
 
+Requires **Python 3.10+** and **Rust** ([rustup.rs](https://rustup.rs)).
+
 ```bash
 git clone https://github.com/narl3yyy-svg/chatxz.git
 cd chatxz
@@ -33,7 +35,11 @@ cd chatxz
 
 Open **http://localhost:8742** (or `http://<your-lan-ip>:8742` with `--share`).
 
+First run builds the Rust server (`chatxz-server`) and installs Python RNS dependencies.
+
 ### Windows (cmd only)
+
+Requires **Python 3.10+** and **Rust**.
 
 ```cmd
 git clone https://github.com/narl3yyy-svg/chatxz.git
@@ -45,11 +51,40 @@ Open **http://127.0.0.1:8742**.
 
 ### Android
 
-1. Download **`chatxz-1.0.4.apk`** (or latest) from [GitHub Releases](https://github.com/narl3yyy-svg/chatxz/releases).
+1. Download **`chatxz-2.0.0.apk`** (or latest) from [GitHub Releases](https://github.com/narl3yyy-svg/chatxz/releases).
 2. Install, grant notification permission, complete setup (display name + LAN IPv4).
 3. Tap a discovered peer or saved contact to connect.
 
-Fresh Android installs use **TCP LAN** for stable mobile links. UDP remains available in **Settings → Network** for low-bandwidth mode. **Restart the app** after updating so settings migration applies.
+Android runs the same architecture: **Rust primary** on port 8742 (WebView) and **Python RNS backend** on 8743. Build the APK with `scripts/build-rust-android.sh` to bundle the arm64 `chatxz-server` binary.
+
+---
+
+## Architecture (v2.0.0)
+
+chatxz v2 is a **clean rewrite** of voice, video, and screen sharing in Rust. Python remains only for Reticulum networking and messaging.
+
+```
+Browser ──HTTP/WS──► Rust chatxz-server :8742
+                         │  /api/call/*  /ws/media  (native)
+                         │  static UI, proxy
+                         ▼
+                    Python backend :8743
+                         │  RNS links, messaging, discovery
+                         ▼
+                    Remote peer (CHXZ media + __call signaling)
+```
+
+| Component | Language | Role |
+|-----------|----------|------|
+| `chatxz-server` | **Rust** | Web UI, call API, Opus media, jitter buffer, PLC |
+| `chatxz.web.server` | Python | RNS transport, contacts, file transfer, discovery |
+| `chatxz-protocol` | Rust | `CHXZ` media framing (v2), call signaling JSON |
+| `chatxz-media` | Rust | Opus encode/decode, packetization |
+| `chatxz-call` | Rust | Call state machine (invite/accept/hangup) |
+
+**Media wire format:** `CHXZ` magic, 480-byte max payload per packet (RNS MTU safe). Signaling uses `__call` JSON over the RNS link.
+
+**Launch commands unchanged:** `./run.sh web` and `run.bat web`.
 
 ---
 
@@ -84,46 +119,36 @@ Each device can have **two RNS identities**:
 
 - No automatic transport failover — the row you tap is the path used.
 - LAN and USB can both stay linked to the same peer (separate sub-rows on one contact card).
-- Legacy `identities/identity` migrates to `identity_lan` on upgrade.
 
 ### LAN transport
 
 | Platform | Default | Notes |
 |----------|---------|-------|
 | **Desktop** | UDP LAN | Fast discovery on Wi‑Fi/Ethernet; optional TCP LAN in Settings |
-| **Android** | TCP LAN | Stable on mobile; auto-migrated from UDP on update; UDP optional |
+| **Android** | TCP LAN | Stable on mobile; UDP optional in Settings |
 
-**Phone ↔ desktop:** if the phone uses TCP, the desktop may need **TCP LAN** enabled (Settings → Network → Primary LAN transport) so it listens on TCP 4242. Both sides can use UDP LAN for a simpler desktop-only mesh.
-
-**Firewall (private LAN):** UDP **4242** (RNS), **8743** (beacon), TCP **8742** (web UI), TCP **4242** when using TCP LAN or hub.
-
-### Connection stability (v1.0.4)
-
-- No wake spam when already linked — HTTP peer wake is debounced (20s).
-- Inbound links adopted before duplicate outbound attempts.
-- UI syncs link state from the server on WebSocket reconnect (no false **Connected**).
-- Background failover retries dropped sessions until you tap **Disconnect**.
+**Firewall (private LAN):** UDP **4242** (RNS), **8743** (beacon), TCP **8742** (web UI), TCP **8743** (internal backend), TCP **4242** when using TCP LAN or hub.
 
 ### USB serial
 
-Plug in a USB adapter, set device + baud in Settings → Network, Apply, restart. Use **Announce Serial** and connect via the USB row. Works across pinned subnets (e.g. 10.0.5.x ↔ 10.0.30.x).
+Plug in a USB adapter, set device + baud in Settings → Network, Apply, restart. Use **Announce Serial** and connect via the USB row.
 
 ---
 
-## Voice, video, and screen (v1.0.0+)
+## Voice, video, and screen (v2.0.0)
 
 1. Open a chat with **Link: Active**.
 2. Tap **📞** (voice), **📹** (video), or **🖥** (screen) in the header.
 3. Callee uses the in-page **Accept / Decline** bar.
-4. Hang up on either side ends the call for both (v1.0.2+).
+4. Hang up on either side ends the call for both.
 
-**Architecture**
+**Technical details**
 
-- **Signaling:** `__call` JSON over the RNS link (invite, accept, reject, hangup).
-- **Media:** `CXMZ` packets — Opus audio, JPEG video/screen; chunked for RNS MTU (v1.0.3+).
-- **Engine:** Rust `chatxz-media` with Python fallback; browser ↔ server via `/ws/media`.
+- **Signaling:** `__call` JSON over RNS (invite, accept, reject, hangup, busy).
+- **Media:** `CHXZ` v2 packets — Opus audio (10 ms frames), JPEG video/screen; jitter buffer + packet-loss concealment in Rust.
+- **Browser path:** PCM capture in WebAudio → Rust Opus → RNS → remote Rust decode → PCM playback.
 
-Grant microphone/camera when prompted. Use `http://localhost:8742` (not a random LAN IP) on desktop if the browser blocks permissions.
+Grant microphone/camera when prompted. Use `http://localhost:8742` on desktop if the browser blocks permissions.
 
 ---
 
@@ -137,30 +162,21 @@ A **hub** relays encrypted **group chat** over the internet on **TCP 4242**. It 
 | **Hub client** | Dials your hub host (public IP, DDNS, or VPN) |
 | **Hub off** | P2P only |
 
-Hub server mode reserves TCP 4242 — use **UDP LAN** for local peers while hub is on, or set hub to **Off** to use **TCP LAN** for 1:1 LAN chat.
-
 ---
 
-## How it works
+## Building from source
 
+```bash
+# Desktop
+./run.sh install          # Python deps + Rust release build
+cargo test                # Rust unit tests
+cargo build --release -p chatxz-server
+
+# Android APK (requires Android NDK)
+bash scripts/sync-android.sh
+bash scripts/build-rust-android.sh   # bundles arm64 chatxz-server
+cd android && ./gradlew assembleRelease
 ```
-Browser  ←WebSocket/HTTP→  Local server (UI, port 8742)
-         ←/ws/media→       Media engine (Opus, jitter buffer)
-                                ↓
-                          Reticulum (RNS) — encrypted P2P
-                                ↓
-                           Remote peer
-```
-
-Chat payloads, call media, and files use encrypted RNS links. No external voice servers or WebRTC infrastructure.
-
-**Config & data**
-
-| Platform | Location |
-|----------|----------|
-| Linux / macOS / Windows | `~/.config/chatxz/` |
-| Android | App private storage |
-| Portable (`CHATXZ_PORTABLE`) | `chatxz-data/` beside the app |
 
 ---
 
@@ -168,49 +184,16 @@ Chat payloads, call media, and files use encrypted RNS links. No external voice 
 
 | Problem | Fix |
 |---------|-----|
-| **Connected but messages don't send** | Hard-refresh (`Ctrl+Shift+R`); check header shows **Link: Active**; v1.0.4+ syncs state from server |
-| **Repeated “Waking peer”** | Update to v1.0.4; don't refresh while linked |
-| **Phone one-sided connect** | Restart Android app (TCP migration); enable TCP LAN on desktop peer if needed |
 | **Call buttons greyed out** | Open the peer's chat first; wait for **Link: Active** |
-| **No call audio** | Both sides v1.0.3+; callee must Accept; grant microphone |
+| **No call audio** | Both sides v2.0.0+; callee must Accept; grant microphone |
+| **Rust server missing** | Run `./run.sh install` or `cargo build --release -p chatxz-server` |
 | **Port in use** | `bash scripts/stop-chatxz.sh` then restart |
-| **Serial peer missing** | Tap **Announce Serial**; check USB permissions (Android OTG) |
+| **Android calls fail** | Rebuild APK with `scripts/build-rust-android.sh` |
 
-**Stop server:** `Ctrl+C` in the terminal (releases 8742, 4242, 8743).
-
----
-
-## Development
-
-```bash
-./run.sh web --share --debug    # verbose RNS + chatxz trace
-bash scripts/check.sh           # unit tests + smoke checks before push
-bash scripts/sync-android.sh    # sync Python tree into Android APK
-bash scripts/bump-version.sh 1.0.5   # bump version everywhere
-```
-
-**Build Android APK locally**
-
-```bash
-cd android && ./gradlew assembleRelease
-```
-
-Tag pushes trigger [CI APK builds](.github/workflows/build-apk.yml) on GitHub Actions.
-
----
-
-## Recent releases
-
-- **v1.0.4** — Connection stability: wake debounce, truthful link state, Android TCP LAN default
-- **v1.0.3** — Call audio MTU chunking; Accept/Decline incoming call bar
-- **v1.0.2** — Bilateral hangup, UDP-first call media, low-latency LAN audio
-- **v1.0.1** — Call buttons use open chat peer; Android CI fix
-- **v1.0.0** — Voice/video/screen calls over RNS with Rust media engine
-
-Full history: [CHANGELOG.md](CHANGELOG.md)
+**Stop server:** `Ctrl+C` in the terminal (releases 8742, 8743, 4242).
 
 ---
 
 ## License
 
-[GNU General Public License v3.0](LICENSE) (GPLv3)
+GPL-3.0-only — see [LICENSE](LICENSE).

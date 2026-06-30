@@ -1,4 +1,4 @@
-/* chatxz v1.0.3 — voice/video/screen calls over RNS (no WebRTC) */
+/* chatxz v2.0.0 — voice/video/screen calls over RNS via Rust media engine */
 
 let callState = null;
 let mediaWs = null;
@@ -17,7 +17,7 @@ let lastMediaStatsSent = 0;
 
 const FRAME_MS = 20;
 const SAMPLE_RATE = 48000;
-const FRAME_SAMPLES = 240;  // 10ms @ 48kHz — MTU-safe on RNS links (1064 B)
+const FRAME_SAMPLES = 480;  // 10ms @ 48kHz — matches Rust Opus frame size
 
 function callEl(id) { return document.getElementById(id); }
 

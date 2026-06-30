@@ -1,0 +1,11 @@
+[package]
+name = "chatxz-media"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Opus codec, jitter buffer, and packetization for chatxz calls"
+
+[dependencies]
+audiopus.workspace = true
+chatxz-protocol = { path = "../chatxz-protocol" }
+tracing.workspace = true
