@@ -5,6 +5,9 @@ cd "$DIR"
 export CHATXZ_ROOT="$DIR"
 export PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}"
 export PIP_DISABLE_PIP_VERSION_CHECK=1
+if [ -x "${HOME:-}/.cargo/bin/cargo" ]; then
+    export PATH="${HOME}/.cargo/bin:${PATH}"
+fi
 
 VENV="$DIR/.venv"
 VENV_PY="$VENV/bin/python"

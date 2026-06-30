@@ -7,6 +7,17 @@ set "CHATXZ_BIN=%CD%\target\release\chatxz.exe"
 call "%~dp0stop-chatxz.bat"
 
 if not exist "%CHATXZ_BIN%" (
+  where cargo >nul 2>&1
+  if errorlevel 1 (
+    if exist "%USERPROFILE%\.cargo\bin\cargo.exe" (
+      set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+    ) else (
+      echo [rust] ERROR: cargo not found.
+      echo Install Rust from https://rustup.rs then restart cmd.
+      echo Then: run.bat install ^&^& run.bat web
+      exit /b 1
+    )
+  )
   echo [rust] Building chatxz application...
   cargo build --release -p chatxz-server
   if errorlevel 1 (

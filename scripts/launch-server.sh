@@ -7,6 +7,11 @@ export CHATXZ_ROOT="$DIR"
 export PYTHONPATH="$DIR"
 CHATXZ_BIN="$DIR/target/release/chatxz"
 
+# rustup installs cargo here; often missing from non-login shells
+if [ -x "${HOME:-}/.cargo/bin/cargo" ]; then
+    export PATH="${HOME}/.cargo/bin:${PATH}"
+fi
+
 user_has_group() {
     id -Gn "${USER:?}" 2>/dev/null | tr ' ' '\n' | grep -qx "$1"
 }
@@ -35,8 +40,22 @@ build_rust() {
     if [ -x "$CHATXZ_BIN" ]; then
         return 0
     fi
+    if ! command -v cargo >/dev/null 2>&1; then
+        echo "[rust] ERROR: cargo not found (line 39 build step)."
+        echo ""
+        echo "Install Rust:"
+        echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+        echo "  source \"\$HOME/.cargo/env\"    # or open a new terminal"
+        echo ""
+        echo "Then: ./run.sh install && ./run.sh web"
+        exit 1
+    fi
     echo "[rust] Building chatxz application..."
     (cd "$DIR" && cargo build --release -p chatxz-server)
+    if [ ! -x "$CHATXZ_BIN" ]; then
+        echo "[rust] ERROR: build finished but $CHATXZ_BIN is missing"
+        exit 1
+    fi
 }
 
 launch_with_group() {
