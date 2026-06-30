@@ -45,9 +45,28 @@ pub fn spawn_rnsd(root: &PathBuf, ipc_port: u16, public_port: u16, extra_args: &
 
 pub fn stop_rnsd() {
     if let Some(mut child) = RNSD_CHILD.lock().expect("rnsd").take() {
-        let _ = child.kill();
-        let _ = child.wait();
+        graceful_stop_child(&mut child);
     }
+}
+
+fn graceful_stop_child(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        use std::time::Duration;
+        let pid = child.id();
+        let _ = std::process::Command::new("kill")
+            .arg("-TERM")
+            .arg(pid.to_string())
+            .status();
+        for _ in 0..30 {
+            if child.try_wait().ok().flatten().is_some() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn resolve_python(root: &PathBuf) -> String {

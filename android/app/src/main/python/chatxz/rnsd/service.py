@@ -659,8 +659,12 @@ class ChatRnsDaemon:
             self.messaging.shutdown_requested = True
             self.messaging.running = False
             self.messaging.cancel_all_transfers()
-        for task in list(self._background_tasks):
+        tasks = list(self._background_tasks)
+        for task in tasks:
             task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._background_tasks.clear()
 
     def _teardown_network_stack(self):
         if self.lan_beacon:
@@ -5742,61 +5746,55 @@ class ChatRnsDaemon:
         print("[startup] RNS/network stack starting — no Python HTTP server")
         print("Press Ctrl+C to stop")
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        self._loop = loop
-        ipc = IpcServer(self, host=self.host, port=ipc_port)
-        stopping = False
-
         async def _main():
-            ipc.bind_event_sink()
-            await ipc.start()
-            await self._on_startup(None)
+            ipc = IpcServer(self, host=self.host, port=ipc_port)
+            stop = asyncio.Event()
+            self._loop = asyncio.get_running_loop()
+            force_exit = {"armed": False}
+
+            def _request_stop(signum=None):
+                if force_exit["armed"]:
+                    try:
+                        self._teardown_network_stack()
+                    except Exception:
+                        pass
+                    os._exit(130 if signum == signal.SIGINT else 0)
+                if self._shutting_down:
+                    force_exit["armed"] = True
+                    stop.set()
+                    return
+                self._shutting_down = True
+                if self.messaging:
+                    self.messaging.shutdown_requested = True
+                stop.set()
+
+            if sys.platform != "win32":
+                for sig in (signal.SIGINT, signal.SIGTERM):
+                    try:
+                        self._loop.add_signal_handler(
+                            sig, lambda s=sig: _request_stop(s)
+                        )
+                    except (NotImplementedError, RuntimeError, ValueError):
+                        signal.signal(sig, lambda s, f, _sig=sig: _request_stop(_sig))
+
             try:
-                while not self._shutting_down:
-                    await asyncio.sleep(3600)
+                ipc.bind_event_sink()
+                await ipc.start()
+                await self._on_startup(None)
+                await stop.wait()
             finally:
+                force_exit["armed"] = True
                 await self._on_shutdown(None)
-                await self._on_cleanup(None)
+                try:
+                    await self._on_cleanup(None)
+                except Exception:
+                    self._teardown_network_stack()
                 await ipc.stop()
 
-        def _stop_loop(signum=None, frame=None):
-            nonlocal stopping
-            if stopping:
-                try:
-                    self._teardown_network_stack()
-                except Exception:
-                    pass
-                os._exit(130 if signum == signal.SIGINT else 0)
-            stopping = True
-            self._shutting_down = True
-            if self.messaging:
-                self.messaging.shutdown_requested = True
-            try:
-                self._teardown_network_stack()
-            except Exception:
-                pass
-            loop.call_soon_threadsafe(loop.stop)
-
-        if sys.platform != "win32":
-            try:
-                loop.add_signal_handler(signal.SIGINT, lambda: _stop_loop(signal.SIGINT))
-                loop.add_signal_handler(signal.SIGTERM, lambda: _stop_loop(signal.SIGTERM))
-            except (NotImplementedError, RuntimeError, ValueError):
-                signal.signal(signal.SIGINT, _stop_loop)
-                signal.signal(signal.SIGTERM, _stop_loop)
-
         try:
-            loop.run_until_complete(_main())
-        except KeyboardInterrupt:
-            stopping = True
-        finally:
-            self._shutting_down = True
-            try:
-                loop.run_until_complete(loop.shutdown_asyncgens())
-            except Exception:
-                pass
-            loop.close()
+            asyncio.run(_main())
+        except (KeyboardInterrupt, SystemExit):
+            pass
 
 
 def main():
