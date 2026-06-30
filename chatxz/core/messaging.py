@@ -5056,13 +5056,39 @@ class MessagingBackend:
             print(f"[messaging] Call signaling send failed: {e}")
             return False
 
+    def _queue_media_link(self, peer_hash, link_hint=None):
+        """Prefer UDP/LAN links for real-time call media."""
+        peer = self.dest_hash_for(peer_hash)
+        if not peer or peer == "unknown":
+            return None
+        if link_hint and self._link_matches_peer(link_hint, peer):
+            if self._link_acceptable_for_peer(link_hint, peer):
+                return link_hint
+        best = None
+        best_score = -1
+        for link in self._links_for_peer(peer):
+            if not self._link_matches_peer(link, peer):
+                continue
+            if not self._link_interface_healthy(link):
+                continue
+            if not self._link_acceptable_for_peer(link, peer):
+                continue
+            fam = interface_family(self._link_attached_interface(link))
+            score = {"udp": 100, "lan": 90, "tcp": 50, "serial": 20}.get(fam, 10)
+            if score > best_score:
+                best_score = score
+                best = link
+        if best:
+            return best
+        return self._queue_send_link(peer, link_hint=link_hint)
+
     def send_media_packet(self, data: bytes, target_peer=None, link=None):
         peer = self.dest_hash_for(
             target_peer or self.active_peer_hash or self._session_peer_hash or ""
         )
         if not peer or not self._peer_link_active(peer):
             return False
-        link = self._queue_send_link(peer, link_hint=link)
+        link = self._queue_media_link(peer, link_hint=link)
         if not link or not self._link_matches_peer(link, peer):
             return False
         try:

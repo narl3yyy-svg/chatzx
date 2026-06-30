@@ -207,7 +207,7 @@ class CallManager:
             )
             self._emit("rejected", {"call_id": call_id})
 
-    def hangup(self, call_id: Optional[str] = None):
+    def hangup(self, call_id: Optional[str] = None, notify_peer: bool = True):
         with self._lock:
             cid = call_id or self._active_call_id
             session = self._sessions.pop(cid, None) if cid else None
@@ -215,11 +215,28 @@ class CallManager:
                 self._active_call_id = None
         if session:
             session.hangup()
-            self._send_signaling(
-                session.peer_hash,
-                self._signaling_payload(CALL_HANGUP, call_id=session.call_id),
-            )
-            self._emit("ended", {"call_id": session.call_id})
+            if notify_peer:
+                self._send_signaling(
+                    session.peer_hash,
+                    self._signaling_payload(CALL_HANGUP, call_id=session.call_id),
+                )
+            self._emit("ended", {"call_id": session.call_id, "peer": session.peer_hash})
+
+    def _end_sessions_for_peer(self, peer_hash: str, call_id: Optional[str] = None):
+        ended = []
+        with self._lock:
+            for cid, session in list(self._sessions.items()):
+                if call_id and cid != call_id:
+                    continue
+                if session.peer_hash != peer_hash:
+                    continue
+                session.hangup()
+                ended.append((cid, session.peer_hash))
+                self._sessions.pop(cid, None)
+                if self._active_call_id == cid:
+                    self._active_call_id = None
+        for cid, peer in ended:
+            self._emit("ended", {"call_id": cid, "peer": peer})
 
     def handle_signaling(self, peer_hash: str, content: str):
         try:
@@ -264,9 +281,18 @@ class CallManager:
             session.set_state(CallState.ACTIVE)
             self._emit("accepted", session.to_dict())
         elif action == CALL_REJECT:
-            self.hangup(call_id)
+            with self._lock:
+                ended = self._sessions.pop(call_id, None)
+                if self._active_call_id == call_id:
+                    self._active_call_id = None
+            if ended:
+                ended.set_state(CallState.ENDED)
+                self._emit("rejected", {"call_id": call_id, "peer": peer_hash})
         elif action == CALL_HANGUP:
-            self.hangup(call_id)
+            if session:
+                self.hangup(call_id, notify_peer=False)
+            else:
+                self._end_sessions_for_peer(peer_hash, call_id=call_id)
         elif action == CALL_BUSY:
             session.set_state(CallState.ENDED)
             with self._lock:
@@ -281,7 +307,10 @@ class CallManager:
                 session.video_enabled = bool(data["video"])
             if "screen" in data:
                 session.screen_enabled = bool(data["screen"])
-            self._emit("update", session.to_dict())
+            payload = session.to_dict()
+            if "stats" in data and isinstance(data["stats"], dict):
+                payload["stats"] = data["stats"]
+            self._emit("update", payload)
 
     def handle_media_bytes(self, peer_hash: str, data: bytes):
         if not is_media_packet(data):
@@ -313,14 +342,20 @@ class CallManager:
             session.video_enabled = bool(kwargs["video"])
         if "screen" in kwargs:
             session.screen_enabled = bool(kwargs["screen"])
+        stats = kwargs.get("stats")
+        body = {
+            "call_id": session.call_id,
+            "muted": session.muted,
+            "video": session.video_enabled,
+            "screen": session.screen_enabled,
+        }
+        if isinstance(stats, dict):
+            body["stats"] = stats
         self._send_signaling(
             session.peer_hash,
-            self._signaling_payload(
-                CALL_UPDATE,
-                call_id=session.call_id,
-                muted=session.muted,
-                video=session.video_enabled,
-                screen=session.screen_enabled,
-            ),
+            self._signaling_payload(CALL_UPDATE, **body),
         )
-        self._emit("update", session.to_dict())
+        payload = session.to_dict()
+        if isinstance(stats, dict):
+            payload["stats"] = stats
+        self._emit("update", payload)

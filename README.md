@@ -2,7 +2,7 @@
 
 Encrypted peer-to-peer chat over the [Reticulum Network Stack](https://reticulum.network/). No accounts, no cloud servers — each transport uses its own RNS identity, and messages travel over encrypted links on your LAN (Wi‑Fi, Ethernet, USB serial).
 
-**Current version:** 1.0.1
+**Current version:** 1.0.2
 
 ## How chatxz works (v0.5+)
 
@@ -50,9 +50,11 @@ Regenerate identities under **Settings → Profile** (**Regenerate LAN** / **Reg
 - **Two rows for one name** — expected when a peer has both LAN and USB; both stay visible in Discovered (v0.5.1+).
 - **Android sleep** — tap the contact to wake and reconnect (LAN wake is automatic).
 - **Cross-subnet LAN** — pick matching pinned IPv4 on both devices.
-- **Call buttons greyed out** — open the peer’s chat first; wait until the header shows **Connected** / **Link: Active**. Hard-refresh the browser after `git pull` if you still see “Connect to a peer first” (fixed in v1.0.1).
+- **Call buttons greyed out** — open the peer’s chat first; wait until the header shows **Connected** / **Link: Active**. Hard-refresh (`Ctrl+Shift+R`) after `git pull`.
+- **No audio in call** — both sides need v1.0.2+; grant microphone; callee must **Accept** the incoming prompt.
+- **Call ends on one side only** — fixed in v1.0.2 (hangup propagates to both peers).
 
-**v1.0.0+:** Real-time **voice**, **video**, and **screen sharing** calls over RNS — no WebRTC, no external voice servers. Rust media engine with Opus and adaptive jitter buffer. Open a peer chat with **Link: Active**, then use 📞 📹 🖥 in the chat header (v1.0.1 fixes call buttons when already connected).
+**v1.0.0+:** Real-time **voice**, **video**, and **screen sharing** over encrypted RNS links (UDP preferred on LAN). Open a chat with **Link: Active**, then 📞 📹 🖥 in the header. v1.0.2 adds low-latency LAN audio, bilateral hangup, and adaptive video quality from peer feedback.
 
 ## Download
 
@@ -60,7 +62,7 @@ Regenerate identities under **Settings → Profile** (**Regenerate LAN** / **Reg
 
 | Platform | Run |
 |----------|-----|
-| **Android** | `chatxz-1.0.1.apk` (or latest) from [Releases](https://github.com/narl3yyy-svg/chatxz/releases) — sideload (arm64) |
+| **Android** | `chatxz-1.0.2.apk` (or latest) from [Releases](https://github.com/narl3yyy-svg/chatxz/releases) — sideload (arm64) |
 | **Windows** | `git clone` → **cmd** → `run.bat web --share` |
 | **macOS / Linux** | `git clone` → `./run.sh web --share` |
 
@@ -187,12 +189,12 @@ Hub relay behavior is covered in `tests/test_defaults_hub.py` and `tests/test_hu
 4. **Click a peer** on your selected network/interface or paste a hash in **Connect**.
 5. When **Link: Active** shows in the dock, chat, send files, images, start calls, and share folders.
 
-**Calls (v1.0.0+):** with a chat open and the link **Active**, tap 📞 (voice), 📹 (video), or 🖥 (screen share) in the header. The callee gets an incoming-call prompt; media flows over `/ws/media` and encrypted RNS `CXMZ` packets — not WebRTC.
+**Calls (v1.0.0+):** with a chat open and **Link: Active**, tap 📞 / 📹 / 🖥. Callee accepts the prompt; hang up on either side ends the call for both. LAN media prefers **UDP** with adaptive video quality from peer stats.
 
 | Feature | Details |
 |---------|---------|
 | Messaging | Per-peer threads, delivery receipts, offline queue, searchable emoji picker |
-| Calls | Voice, video, screen share over RNS; Opus audio; adaptive jitter buffer; no WebRTC; requires open chat + active link |
+| Calls | Voice/video/screen over RNS; UDP-first on LAN; low-latency audio; bilateral hangup; adaptive video bitrate |
 | Files | Any size via encrypted RNS resources; drag & drop; live speed in dock |
 | Network | LAN discovery (UDP LAN or **TCP LAN**), USB serial failover (works across pinned subnets — e.g. 10.0.5.x ↔ 10.0.30.x), pinned NIC/VPN, saved contacts |
 | Privacy | E2E encrypted links (AES-256-CBC); HTTP :8742 is local UI only |
@@ -255,10 +257,10 @@ Chat, call media, and file payloads travel over encrypted RNS links. Port 8742 s
 
 ### Calls architecture (v1.0.0+)
 
-- **Signaling** (`__call` messages): invite, accept, reject, hang up over existing RNS text channel
-- **Media** (`CXMZ` packets): Opus audio and VP8/JPEG video frames packetized with sequence numbers and timestamps
-- **Rust core** (`chatxz-media`): Opus encode/decode, adaptive jitter buffer (20–200 ms), packet-loss concealment
-- **Python fallback**: works without Rust (Android APK); install Rust extension on desktop for best quality
+- **Signaling** (`__call` messages): invite, accept, reject, hang up over the active RNS link
+- **Media** (`CXMZ` packets): Opus audio and JPEG video/screen frames with sequence numbers and timestamps
+- **Transport**: call media prefers **UDP/LAN** links; peers exchange stats to adjust video quality
+- **Rust core** (`chatxz-media`): Opus encode/decode, adaptive jitter buffer; Python fallback on Android APK
 
 **Data locations**
 
@@ -299,6 +301,7 @@ On first launch, choose **Normal** or **Debug** mode (Debug enables RNS verbose 
 
 ## Recent changes
 
+- **v1.0.2** — **Calls:** robust link detection, low-latency LAN audio, bilateral hangup, UDP-first media, adaptive video quality; WebSocket reconnect no longer clears link state
 - **v1.0.1** — **Call buttons:** voice/video/screen use the open chat peer (`viewingPeer`) instead of a stale `activePeerHash`; Android CI/APK build fixed (`MainActivity` call helpers)
 - **v1.0.0** — **Calls rewrite:** voice, video, and screen sharing over RNS (no WebRTC); Rust `chatxz-media` engine (Opus, jitter buffer, CXMZ protocol); legacy voice notes and pyaudio removed
 - **v0.5.6** — **Contact hash sync:** saved contacts auto-update from Discovered (stale `b903…` → live `342835…` LAN hash); LAN row connect uses discovered hash

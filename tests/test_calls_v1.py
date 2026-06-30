@@ -166,3 +166,35 @@ def test_parse_packet_rejects_invalid():
     assert parse_packet(b"NOPE") is None
     short = MAGIC + bytes([1, KIND_AUDIO, 0]) + struct.pack(">IIH", 0, 0, 10)
     assert parse_packet(short) is None
+
+
+def test_call_remote_hangup_ends_local_session():
+    mgr, _, _ = _manager()
+    events = []
+    mgr.set_event_handler(lambda ev, data: events.append((ev, data)))
+    mgr.start_call("peerA")
+    call_id = mgr.active_session().call_id
+    mgr.handle_signaling("peerA", json.dumps({"action": CALL_HANGUP, "call_id": call_id}))
+    assert mgr.active_session() is None
+    assert events[-1][0] == "ended"
+
+
+def test_call_hangup_does_not_ping_pong():
+    mgr, signals, _ = _manager()
+    mgr.set_event_handler(lambda *_: None)
+    invite = json.dumps({"action": CALL_INVITE, "call_id": "x1", "mode": "audio"})
+    mgr.handle_signaling("peerB", invite)
+    before = len(signals)
+    mgr.handle_signaling("peerB", json.dumps({"action": CALL_HANGUP, "call_id": "x1"}))
+    assert len(signals) == before
+
+
+def test_media_pop_audio_immediate():
+    session = MediaSession()
+    pcm = b"\x01\x00" * 200
+    pkt = session.packetize_audio(pcm, timestamp_ms=100)
+    session.ingest_packet(pkt)
+    out = session.pop_audio_immediate()
+    assert out is not None
+    decoded, _ = out
+    assert decoded == pcm

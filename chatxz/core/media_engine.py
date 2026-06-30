@@ -159,6 +159,28 @@ class MediaSession:
         _, _, _, _, payload = item
         return payload, payload
 
+    def pop_audio_immediate(self) -> Optional[tuple]:
+        """Low-latency pop for LAN/UDP — skip jitter hold when buffer has audio."""
+        if self._rust:
+            try:
+                r = self._rust.pop_audio(int(time.time() * 1000) + 10000)
+                return r
+            except Exception:
+                return None
+        if not self._jitter._packets:
+            return None
+        seq = (
+            self._jitter._next
+            if self._jitter._next in self._jitter._packets
+            else min(self._jitter._packets)
+        )
+        kind, flags, ts, payload = self._jitter._packets.pop(seq)
+        self._jitter._next = seq + 1
+        if kind != KIND_AUDIO:
+            return None
+        decoded = self.decode_audio_frame(payload)
+        return decoded, payload
+
     def jitter_depth(self) -> int:
         if self._rust:
             return self._rust.jitter_depth()

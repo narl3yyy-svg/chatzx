@@ -2985,7 +2985,11 @@ function connectWS() {
     ws = null;
     console.log('[ws] Disconnected, reconnecting...');
     setWsStatus('disconnected', 'Offline');
-    setLinkStatus('disconnected', 'Inactive');
+    if (linkedPeers.size) {
+      setLinkStatus('disconnected', 'Reconnecting…');
+    } else {
+      setLinkStatus('disconnected', 'Inactive');
+    }
     wsReconnectTimer = setTimeout(connectWS, 2000);
   };
   ws.onerror = (e) => {
@@ -3115,6 +3119,7 @@ function handleWSMessage(msg) {
       } else {
         updatePeerHeader();
       }
+      if (typeof updateCallUI === 'function') updateCallUI();
       pollQueue();
     }
   } else if (msg.type === 'link_closed') {
@@ -3126,6 +3131,7 @@ function handleWSMessage(msg) {
       applyLinkRttToDiscovered(msg.data.peer, null, closedVia);
     }
     updatePeerHeader();
+    if (typeof updateCallUI === 'function') updateCallUI();
     if (!linkedPeers.size) {
       setLinkStatus('disconnected', 'Inactive');
     }
@@ -3138,6 +3144,7 @@ function handleWSMessage(msg) {
       if (msg.linked_peers) syncLinkedPeers(msg.linked_peers);
       if (!viewingPeer || peersMatch(viewingPeer, msg.hash)) openChat(msg.hash, false);
       toast('Connected!');
+      if (typeof updateCallUI === 'function') updateCallUI();
     }
   } else if (msg.type === 'connect_fail') {
     const alreadyLinked = viewingPeer && isPeerLinked(viewingPeer, viewingVia);

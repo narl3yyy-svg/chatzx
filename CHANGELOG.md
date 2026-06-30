@@ -2,6 +2,19 @@
 
 All notable changes to chatxz are documented here. The README lists only the latest release summary.
 
+## [1.0.2] — 2026-06-29
+
+### Fixed
+- **Call link detection** — resolves peer aliases from `linkedPeers` / header status; server validates link before starting a call.
+- **No audio** — immediate LAN audio playback (skip jitter hold); scheduled Web Audio output; media sends during outgoing ring.
+- **Hangup sync** — remote hangup ends the call on both sides without signaling ping-pong.
+- **WebSocket reconnect** — link status no longer flips to Inactive while `linkedPeers` is populated.
+
+### Added
+- **UDP-first media** — `_queue_media_link` prefers UDP/LAN for call packets.
+- **Adaptive video** — peers exchange stats over `/ws/media` to adjust JPEG quality and frame rate.
+- Call simulation tests: remote hangup, hangup ping-pong guard, immediate audio pop.
+
 ## [1.0.1] — 2026-06-29
 
 ### Fixed
